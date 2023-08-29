@@ -1,0 +1,20 @@
+[package]
+name = "powersync_loadable"
+edition.workspace = true
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+
+[lib]
+name = "powersync"
+crate-type = ["cdylib"]
+
+[dependencies]
+powersync_core = { path="../core" }
+sqlite_nostd = { workspace=true }
+
+[features]
+default = ["powersync_core/loadable_extension", "sqlite_nostd/loadable_extension"]

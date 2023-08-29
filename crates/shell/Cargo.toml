@@ -1,0 +1,19 @@
+[package]
+name = "powersync_sqlite"
+edition.workspace = true
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+
+[dependencies]
+powersync_core = { path="../core" }
+sqlite_nostd = { workspace=true }
+
+[features]
+default = ["powersync_core/static", "powersync_core/omit_load_extension", "sqlite_nostd/static", "sqlite_nostd/omit_load_extension"]
+
+[build-dependencies]
+cc = "1.0.46"

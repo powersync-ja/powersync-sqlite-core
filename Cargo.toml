@@ -1,0 +1,37 @@
+[workspace]
+
+members = [
+    "crates/*"
+]
+resolver = "2"
+# We cannot build shell and lodable and the same time
+default-members = ["crates/shell"]
+
+[profile.dev]
+panic = "abort"
+strip = true
+
+[profile.release]
+panic = "abort"
+strip = true
+opt-level = "z"
+lto = true
+
+[profile.wasm]
+inherits = "release"
+# Enabling LTO in WASM build gives:
+# warning: Linking globals named '__rust_alloc_error_handler': symbol multiply defined!
+# error: failed to load bitcode of module "sgnxivc9sns8d6t":
+lto = false
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["JourneyApps"]
+keywords = ["sqlite", "powersync"]
+license = "Private"
+homepage = "https://powersync.co"
+repository = "https://github.com/journeyapps/powersync-rs"
+
+[workspace.dependencies]
+sqlite_nostd = { path="./sqlite-rs-embedded/sqlite_nostd" }

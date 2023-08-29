@@ -1,0 +1,29 @@
+on:
+  push:
+name: "rs-tests"
+jobs:
+  build:
+    name: Testing on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Build lib
+        run: |
+          cargo build -p powersync_loadable --release
+
+      - name: Build sqlite
+        run: |
+          cargo build -p powersync_core --release --features static
+          cargo build -p powersync_sqlite --release
+
+      - name: Test powersync
+        run: |
+          cargo test -p powersync_core --features loadable_extension

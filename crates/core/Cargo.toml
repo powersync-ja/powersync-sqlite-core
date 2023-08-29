@@ -1,0 +1,38 @@
+[package]
+name = "powersync_core"
+edition.workspace = true
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+
+[lib]
+name = "powersync_core"
+crate-type = ["rlib"]
+
+[dependencies]
+sqlite_nostd = { workspace=true }
+bytes = { version = "1.4", default-features = false }
+num-traits = { version = "0.2.15", default-features = false }
+num-derive = "0.3"
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
+
+[dependencies.uuid]
+version = "1.4.1"
+default-features = false
+features = [
+    "v4"
+]
+
+
+[dev-dependencies]
+
+
+[features]
+loadable_extension = ["sqlite_nostd/loadable_extension"]
+static = ["sqlite_nostd/static"]
+omit_load_extension = ["sqlite_nostd/omit_load_extension"]
+
