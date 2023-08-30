@@ -1,7 +1,7 @@
 on:
   push:
   pull_request:
-name: "rs-android"
+name: "ios"
 jobs:
   build:
     name: Building Android on ${{ matrix.os }}
