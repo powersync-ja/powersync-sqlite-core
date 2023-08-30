@@ -1,7 +1,8 @@
 # PowerSync SQLite Extension
 
-This extension is used by PowerSync client SDKs. The APIs here not currently,
-and may change in any release.
+This extension is used by PowerSync client SDKs.
+
+The APIs here not currently stable, and may change in any release. The APIs are intended to be used by PowerSync SDKs only.
 
 # API
 

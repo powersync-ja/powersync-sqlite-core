@@ -16,9 +16,9 @@ function createXcframework() {
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleExecutable</key>
-  <string>powersync</string>
+  <string>powersync-sqlite-core</string>
   <key>CFBundleIdentifier</key>
-  <string>co.powersync</string>
+  <string>co.powersync.sqlitecore</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundlePackageType</key>
@@ -30,25 +30,23 @@ function createXcframework() {
 EOF
 )
   printf "\n\n\t\t===================== create ios device framework =====================\n\n"
-  mkdir -p "${BUILD_DIR}/ios-arm64/powersync.framework"
-  echo "${plist}" > "${BUILD_DIR}/ios-arm64/powersync.framework/Info.plist"
-  cp -f "./target/aarch64-apple-ios/release/libpowersync.dylib" "${BUILD_DIR}/ios-arm64/powersync.framework/powersync"
-  install_name_tool -id "@rpath/powersync.framework/powersync" "${BUILD_DIR}/ios-arm64/powersync.framework/powersync"
+  mkdir -p "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework"
+  echo "${plist}" > "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework/Info.plist"
+  cp -f "./target/aarch64-apple-ios/release/libpowersync.dylib" "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework/powersync"
+  install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync" "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework/powersync"
 
   printf "\n\n\t\t===================== create ios simulator framework =====================\n\n"
-  mkdir -p "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync.framework"
-  echo "${plist}" > "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync.framework/Info.plist"
-  cp -p "./target/powersync-universal-ios-sim.dylib" "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync.framework/powersync"
-  install_name_tool -id "@rpath/powersync.framework/powersync" "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync.framework/powersync"
+  mkdir -p "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework"
+  echo "${plist}" > "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework/Info.plist"
+  cp -p "./target/powersync-universal-ios-sim.dylib" "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework/powersync"
+  install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync" "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework/powersync"
 
   printf "\n\n\t\t===================== create ios xcframework =====================\n\n"
-  rm -rf "${BUILD_DIR}/powersync.xcframework"
-  xcodebuild -create-xcframework -framework "${BUILD_DIR}/ios-arm64/powersync.framework" -framework "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync.framework" -output "${BUILD_DIR}/powersync.xcframework"
+  rm -rf "${BUILD_DIR}/powersync-sqlite-core.xcframework"
+  xcodebuild -create-xcframework -framework "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework" -framework "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework" -output "${BUILD_DIR}/powersync-sqlite-core.xcframework"
 
-  mkdir -p ${DIST_PACKAGE_DIR}
-  cp -Rf "${BUILD_DIR}/powersync.xcframework" "${DIST_PACKAGE_DIR}/powersync.xcframework"
-  cd ${DIST_PACKAGE_DIR}
-  tar -czvf powersync-ios-dylib.xcframework.tar.gz powersync.xcframework
+  cp -Rf "${BUILD_DIR}/powersync-sqlite-core.xcframework" "powersync-sqlite-core.xcframework"
+  tar -cJvf powersync-sqlite-core.xcframework.tar.gz powersync-sqlite-core.xcframework
   rm -rf ${BUILD_DIR}
 }
 
