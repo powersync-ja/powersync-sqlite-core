@@ -24,6 +24,7 @@ jobs:
         run: |
           cargo build -p powersync_core --release --features static
           cargo build -p powersync_sqlite --release
+          cargo build -p sqlite3 --release
 
       - name: Test powersync
         run: |
