@@ -46,7 +46,7 @@ EOF
   xcodebuild -create-xcframework -framework "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework" -framework "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework" -output "${BUILD_DIR}/powersync-sqlite-core.xcframework"
 
   cp -Rf "${BUILD_DIR}/powersync-sqlite-core.xcframework" "powersync-sqlite-core.xcframework"
-  tar -cJvf powersync-sqlite-core.xcframework.tar.gz powersync-sqlite-core.xcframework
+  tar -cJvf powersync-sqlite-core.xcframework.tar.xz powersync-sqlite-core.xcframework
   rm -rf ${BUILD_DIR}
 }
 

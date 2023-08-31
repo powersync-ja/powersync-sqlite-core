@@ -7,3 +7,4 @@ target/
 .idea
 *.xcframework
 *.tar.gz
+*.tar.xz
