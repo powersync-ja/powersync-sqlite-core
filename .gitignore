@@ -5,3 +5,5 @@ dist/
 build/
 target/
 .idea
+*.xcframework
+*.tar.gz
