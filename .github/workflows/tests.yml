@@ -33,6 +33,5 @@ jobs:
           ./target/release/powersync_sqlite ":memory:" "select powersync_rs_version()"
 
       - name: Check loadable extension
-        # This should actually be using a plain sqlite build, but this does seem to expose typical build issues at least.
         run: |
-          ./target/release/powersync_sqlite ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"
+          ./target/release/sqlite3 ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"

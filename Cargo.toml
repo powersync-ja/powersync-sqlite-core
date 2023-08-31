@@ -5,7 +5,7 @@ members = [
 ]
 resolver = "2"
 # We cannot build shell and lodable and the same time
-default-members = ["crates/shell"]
+default-members = ["crates/shell", "crates/sqlite"]
 
 [profile.dev]
 panic = "abort"
