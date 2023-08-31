@@ -27,3 +27,12 @@ jobs:
       - name: Test powersync
         run: |
           cargo test -p powersync_core --features loadable_extension
+
+      - name: Check shell
+        run: |
+          ./target/release/powersync_sqlite ":memory:" "select powersync_rs_version()"
+
+      - name: Check loadable extension
+        # This should actually be using a plain sqlite build, but this does seem to expose typical build issues at least.
+        run: |
+          ./target/release/powersync_sqlite ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"
