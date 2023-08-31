@@ -10,7 +10,7 @@ PowerSync extension for SQLite.
   s.license          = { :type => 'Commercial', :file => 'LICENSE' }
   s.author           = 'Journey Mobile, Inc'
 
-  s.source   = { :http => "https://github.com/journeyapps/powersync-sqlite-core/releases/download/#{s.version}/powersync-sqlite.tar.xz" }
+  s.source   = { :http => "https://github.com/journeyapps/powersync-sqlite-core/releases/download/v#{s.version}/powersync-sqlite-core.xcframework.tar.xz" }
   s.vendored_frameworks  = 'powersync-sqlite-core.xcframework'
 
   s.ios.deployment_target = '11.0'
