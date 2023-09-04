@@ -7,15 +7,21 @@ use core::slice;
 use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
 
-use crate::operations::{clear_remove_ops, delete_bucket, delete_pending_buckets, insert_operation};
+use crate::operations::{clear_remove_ops, delete_bucket, delete_pending_buckets, insert_operation, stream_operation};
 use crate::sync_local::sync_local;
+use crate::sync_types::Checkpoint;
 use crate::vtab_util::*;
 
 #[repr(C)]
 struct VirtualTable {
     base: sqlite::vtab,
     db: *mut sqlite::sqlite3,
+
+    target_checkpoint: Option<Checkpoint>,
+    target_applied: bool,
+    target_validated: bool
 }
+
 
 extern "C" fn connect(
     db: *mut sqlite::sqlite3,
@@ -38,6 +44,9 @@ extern "C" fn connect(
                 zErrMsg: core::ptr::null_mut(),
             },
             db,
+            target_checkpoint: None,
+            target_validated: false,
+            target_applied: false
         }));
         *vtab = tab.cast::<sqlite::vtab>();
         let _ = sqlite::vtab_config(db, 0);
@@ -93,7 +102,10 @@ extern "C" fn update(
         } else if op == "delete_bucket" {
             let result = delete_bucket(db, data);
             vtab_result(vtab, result)
-        } else {
+        } else if op == "stream" {
+            let result = stream_operation(db, data);
+            vtab_result(vtab, result)
+        }  else {
             ResultCode::MISUSE as c_int
         }
     } else {

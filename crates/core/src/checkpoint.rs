@@ -15,55 +15,13 @@ use sqlite_nostd::{Connection, Context, Value};
 
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
-
-#[derive(Serialize, Deserialize)]
-struct Checkpoint {
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
-    last_op_id: i64,
-    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
-    write_checkpoint: Option<i64>,
-    buckets: Vec<BucketChecksum>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct BucketChecksum {
-    bucket: String,
-    checksum: i32,
-}
+use crate::sync_types::Checkpoint;
 
 #[derive(Serialize, Deserialize)]
 struct CheckpointResult {
     valid: bool,
     failed_buckets: Vec<String>,
 }
-
-fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-{
-    let value = json::Value::deserialize(deserializer)?;
-
-    match value {
-        json::Value::String(s) => s.parse::<i64>().map_err(serde::de::Error::custom),
-        _ => Err(serde::de::Error::custom("Expected a string.")),
-    }
-}
-
-fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-{
-    let value = json::Value::deserialize(deserializer)?;
-
-    match value {
-        json::Value::Null => Ok(None),
-        json::Value::String(s) => s.parse::<i64>()
-            .map(Some)
-            .map_err(serde::de::Error::custom),
-        _ => Err(serde::de::Error::custom("Expected a string or null.")),
-    }
-}
-
 
 fn powersync_validate_checkpoint_impl(
     ctx: *mut sqlite::context,
