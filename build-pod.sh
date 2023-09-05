@@ -53,7 +53,7 @@ EOF
 # Make all the non-simulator libs
 # Package into a universal ios lib
 
-rm -r powersync-sqlite-core.xcframework
+rm -rf powersync-sqlite-core.xcframework
 
 cargo build -p powersync_loadable --release --target aarch64-apple-ios -Zbuild-std
 cargo build -p powersync_loadable --release --target aarch64-apple-ios-sim -Zbuild-std
