@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'powersync-sqlite-core'
-  s.version          = '0.1.2'
+  s.version          = '0.1.3'
   s.summary          = 'PowerSync SQLite Extension'
   s.description      = <<-DESC
 PowerSync extension for SQLite.
@@ -16,5 +16,5 @@ PowerSync extension for SQLite.
 
   s.ios.deployment_target = '14.0'
   # osx not supported yet
-  # s.osx.deployment_target = '10.13'
+  s.osx.deployment_target = '10.13'
 end
