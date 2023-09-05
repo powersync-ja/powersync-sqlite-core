@@ -14,7 +14,7 @@ PowerSync extension for SQLite.
   s.vendored_frameworks  = 'powersync-sqlite-core.xcframework'
 
 
-  s.ios.deployment_target = '14.0'
+  s.ios.deployment_target = '11.0'
   # osx not supported yet
   s.osx.deployment_target = '10.13'
 end

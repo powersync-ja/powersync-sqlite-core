@@ -19,19 +19,21 @@ rustflags = [
 ]
 
 
+# For iOS and macOS, we need to specify the minimum/target version.
+# This must match the versions in the podspec file.
 [target.aarch64-apple-ios]
 rustflags = [
-    "-C", "link-arg=-mios-version-min=14.0",
+    "-C", "link-arg=-mios-version-min=11.0",
 ]
 
 [target.aarch64-apple-ios-sim]
 rustflags = [
-    "-C", "link-arg=-miphonesimulator-version-min=14.0",
+    "-C", "link-arg=-miphonesimulator-version-min=11.0",
 ]
 
 [target.x86_64-apple-ios]
 rustflags = [
-    "-C", "link-arg=-miphonesimulator-version-min=14.0",
+    "-C", "link-arg=-miphonesimulator-version-min=11.0",
 ]
 
 
