@@ -28,19 +28,6 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 #[lang = "eh_personality"]
 extern "C" fn eh_personality() {}
 
-#[cfg(target_family = "wasm")]
-#[no_mangle]
-pub fn __rust_alloc_error_handler(_: core::alloc::Layout) -> ! {
-    core::intrinsics::abort()
-}
-
-
-// Not used, but must be defined in some cases. Most notably when using native sqlite3 and loading
-// the extension.
-#[allow(non_upper_case_globals)]
-#[no_mangle]
-pub static mut _Unwind_Resume: *mut core::ffi::c_void = core::ptr::null_mut();
-
 
 #[no_mangle]
 pub extern "C" fn core_init(_dummy: *mut c_char) -> c_int {

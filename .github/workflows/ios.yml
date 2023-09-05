@@ -1,0 +1,40 @@
+on:
+  push:
+  pull_request:
+name: "ios"
+jobs:
+  build:
+    name: Building iOS on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Setup
+        run: |
+          rustup toolchain install nightly-2023-08-28-x86_64-apple-darwin
+          rustup component add rust-src --toolchain nightly-2023-08-28-x86_64-apple-darwin
+          rustup target add \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin \
+            aarch64-apple-ios \
+            aarch64-apple-ios-sim \
+            x86_64-apple-ios
+
+      - name: setup-cocoapods
+        uses: maxim-lobanov/setup-cocoapods@v1
+        with:
+          version: 1.12.1
+
+      - name: Build iOS & macOS xcframework
+        run: |
+          ./build-pod.sh
+
+      - name: Lint pod
+        run: |
+          pod lib lint

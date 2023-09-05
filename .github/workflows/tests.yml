@@ -1,11 +1,12 @@
 on:
   push:
-name: "rs-tests"
+name: "tests"
 jobs:
   build:
     name: Testing on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -23,7 +24,16 @@ jobs:
         run: |
           cargo build -p powersync_core --release --features static
           cargo build -p powersync_sqlite --release
+          cargo build -p sqlite3 --release
 
       - name: Test powersync
         run: |
           cargo test -p powersync_core --features loadable_extension
+
+      - name: Check shell
+        run: |
+          ./target/release/powersync_sqlite ":memory:" "select powersync_rs_version()"
+
+      - name: Check loadable extension
+        run: |
+          ./target/release/sqlite3 ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"

@@ -3,9 +3,12 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 
+use serde::{Deserialize};
+use serde_json as json;
+
 use sqlite::{Connection, ResultCode};
 use sqlite_nostd as sqlite;
-use sqlite_nostd::{ManagedStmt};
+use sqlite_nostd::ManagedStmt;
 
 use crate::error::SQLiteError;
 
@@ -51,6 +54,35 @@ pub fn extract_table_info(db: *mut sqlite::sqlite3, data: &str) -> Result<Manage
     }
     Ok(statement)
 }
+
+
+pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+{
+    let value = json::Value::deserialize(deserializer)?;
+
+    match value {
+        json::Value::String(s) => s.parse::<i64>().map_err(serde::de::Error::custom),
+        _ => Err(serde::de::Error::custom("Expected a string.")),
+    }
+}
+
+pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+{
+    let value = json::Value::deserialize(deserializer)?;
+
+    match value {
+        json::Value::Null => Ok(None),
+        json::Value::String(s) => s.parse::<i64>()
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+        _ => Err(serde::de::Error::custom("Expected a string or null.")),
+    }
+}
+
 
 pub const MAX_OP_ID: &str = "9223372036854775807";
 

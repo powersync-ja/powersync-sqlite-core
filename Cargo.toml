@@ -5,7 +5,7 @@ members = [
 ]
 resolver = "2"
 # We cannot build shell and lodable and the same time
-default-members = ["crates/shell"]
+default-members = ["crates/shell", "crates/sqlite"]
 
 [profile.dev]
 panic = "abort"
@@ -25,7 +25,7 @@ inherits = "release"
 lto = false
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.3"
 edition = "2021"
 authors = ["JourneyApps"]
 keywords = ["sqlite", "powersync"]

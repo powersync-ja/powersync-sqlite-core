@@ -2,6 +2,7 @@
 #![feature(vec_into_raw_parts)]
 #![feature(core_intrinsics)]
 #![feature(error_in_core)]
+#![feature(assert_matches)]
 
 extern crate alloc;
 
@@ -26,6 +27,7 @@ mod vtab_util;
 mod sync_local;
 mod checkpoint;
 mod version;
+mod sync_types;
 
 #[no_mangle]
 pub extern "C" fn sqlite3_powersync_init(

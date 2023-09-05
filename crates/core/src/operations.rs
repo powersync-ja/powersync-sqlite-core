@@ -1,5 +1,8 @@
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json as json;
 
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, ResultCode};
@@ -7,6 +10,8 @@ use uuid::Uuid;
 use crate::error::{SQLiteError, PSResult};
 
 use crate::ext::SafeManagedStmt;
+use crate::sync_types::{BucketChecksum, Checkpoint, StreamingSyncLine};
+use crate::util::*;
 
 // Run inside a transaction
 pub fn insert_operation(
@@ -290,3 +295,14 @@ pub fn delete_bucket(
 
     Ok(())
 }
+
+
+pub fn stream_operation(
+    db: *mut sqlite::sqlite3, data: &str) -> Result<(), SQLiteError> {
+
+    let line: StreamingSyncLine = serde_json::from_str(data)?;
+
+    Ok(())
+}
+
+

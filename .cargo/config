@@ -1,0 +1,49 @@
+# On Linux, if we don't link to gcc_eh, we get can get this error when loading the loadable extension:
+# undefined symbol: _Unwind_Resume
+# This adds around 29KB to the loadable extension.
+# It may also be an option to just define _Unwind_Resume, but it causes crashes on errors on e.g. iOS, so rather avoid it.
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-lgcc_eh",
+]
+
+[target.i686-linux-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-lgcc_eh",
+]
+
+[target.aarch64-linux-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-lgcc_eh",
+]
+
+
+# For iOS and macOS, we need to specify the minimum/target version.
+# This must match the versions in the podspec file.
+[target.aarch64-apple-ios]
+rustflags = [
+    "-C", "link-arg=-mios-version-min=11.0",
+]
+
+[target.aarch64-apple-ios-sim]
+rustflags = [
+    "-C", "link-arg=-miphonesimulator-version-min=11.0",
+]
+
+[target.x86_64-apple-ios]
+rustflags = [
+    "-C", "link-arg=-miphonesimulator-version-min=11.0",
+]
+
+
+[target.x86_64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-mmacosx-version-min=10.13",
+]
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-mmacosx-version-min=10.13",
+]
+
