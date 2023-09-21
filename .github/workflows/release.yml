@@ -1,0 +1,108 @@
+name: release
+on:
+  workflow_dispatch:
+  push:
+jobs:
+  draft_release:
+    if: github.event_name == 'workflow_dispatch'
+    name: Create Draft GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set tag name
+        id: tag
+        run: |
+          tag=$(basename "${{ github.ref }}")
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          body="Release $tag"
+          gh release create --draft "$tag" --title "$tag" --notes "$body"
+
+  publish_android:
+    permissions:
+      contents: read
+      packages: write
+    name: Publish Android
+    needs: [draft_release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26
+
+      - name: Setup
+        run: |
+          rustup toolchain install nightly-2023-08-28-x86_64-unknown-linux-gnu
+          rustup component add rust-src --toolchain nightly-2023-08-28-x86_64-unknown-linux-gnu
+          rustup target add \
+            aarch64-linux-android \
+            armv7-linux-androideabi \
+            x86_64-linux-android \
+            i686-linux-android
+          cargo install cargo-ndk
+
+      - name: Publish for Android
+        run: |
+          cd android
+          ./gradlew publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish_ios_pod:
+    name: Publish iOS
+    needs: [draft_release]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Setup
+        run: |
+          rustup toolchain install nightly-2023-08-28-x86_64-apple-darwin
+          rustup component add rust-src --toolchain nightly-2023-08-28-x86_64-apple-darwin
+          rustup target add \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin \
+            aarch64-apple-ios \
+            aarch64-apple-ios-sim \
+            x86_64-apple-ios
+
+      - name: setup-cocoapods
+        uses: maxim-lobanov/setup-cocoapods@v1
+        with:
+          version: 1.12.1
+
+      - name: Build iOS & macOS xcframework
+        run: |
+          ./build-pod.sh
+
+      - name: Lint pod
+        run: |
+          pod lib lint
+
+      - name: Upload xcframework
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.xz
