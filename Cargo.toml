@@ -31,7 +31,7 @@ authors = ["JourneyApps"]
 keywords = ["sqlite", "powersync"]
 license = "Private"
 homepage = "https://powersync.co"
-repository = "https://github.com/journeyapps/powersync-rs"
+repository = "https://github.com/journeyapps/powersync-sqlite-core"
 
 [workspace.dependencies]
 sqlite_nostd = { path="./sqlite-rs-embedded/sqlite_nostd" }
