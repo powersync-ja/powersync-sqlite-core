@@ -47,7 +47,8 @@ android {
         }
     }
 }
-tasks.withType<JavaCompile> {
+
+tasks.named("preBuild") {
     dependsOn(buildRust)
 }
 
