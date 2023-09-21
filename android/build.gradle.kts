@@ -22,16 +22,11 @@ val buildRust = tasks.register("buildRust", Exec::class.java) {
 
 android {
     compileSdk = 33
-    ndkVersion = "26.0.10792818"
 
     namespace = "co.powersync.sqlitecore"
 
     defaultConfig {
         minSdk = 24
-
-        ndk {
-            abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-        }
     }
 
     sourceSets {
