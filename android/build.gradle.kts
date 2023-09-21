@@ -16,7 +16,6 @@ repositories {
 }
 
 val buildRust = tasks.register("buildRust", Exec::class.java) {
-    System.out.println("foo")
     workingDir("..")
     commandLine("cargo", "ndk", "-t", "armeabi-v7a", "-t", "arm64-v8a", "-t", "x86", "-t", "x86_64", "-o", "./android/build/intermediates/jniLibs", "build", "--release", "-Zbuild-std", "-p", "powersync_loadable")
 }
