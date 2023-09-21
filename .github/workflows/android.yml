@@ -15,9 +15,14 @@ jobs:
         with:
           submodules: true
 
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
       - uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r25c
+          ndk-version: r26
 
       - name: Setup
         run: |

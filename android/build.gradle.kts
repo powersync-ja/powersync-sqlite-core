@@ -22,7 +22,7 @@ val buildRust = tasks.register("buildRust", Exec::class.java) {
 
 android {
     compileSdk = 33
-    ndkVersion = "25.2.9519653"
+    ndkVersion = "26.0.10792818"
 
     namespace = "co.powersync.sqlitecore"
 
