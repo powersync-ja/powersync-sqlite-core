@@ -3,7 +3,7 @@ import java.util.Properties
 plugins {
     id("com.android.library") version "8.0.1"
     id("maven-publish")
-    id("signing")
+//    id("signing")
 }
 
 group = "co.powersync"
@@ -104,19 +104,19 @@ publishing {
     }
 
     repositories {
-        maven {
-            name = "sonatype"
-            url = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-            credentials {
-                username = secretProperties.getProperty("ossrhUsername")
-                password = secretProperties.getProperty("ossrhPassword")
-            }
-        }
-
-        maven {
-            name = "here"
-            url = uri("build/here/")
-        }
+//        maven {
+//            name = "sonatype"
+//            url = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
+//            credentials {
+//                username = secretProperties.getProperty("ossrhUsername")
+//                password = secretProperties.getProperty("ossrhPassword")
+//            }
+//        }
+//
+//        maven {
+//            name = "here"
+//            url = uri("build/here/")
+//        }
 
         maven {
             name = "GitHubPackages"
@@ -128,11 +128,11 @@ publishing {
         }
     }
 }
-
-signing {
-    useGpgCmd()
-    sign(publishing.publications)
-}
+//
+//signing {
+//    useGpgCmd()
+//    sign(publishing.publications)
+//}
 
 tasks.withType<AbstractPublishToMaven>() {
     dependsOn("assembleRelease")
