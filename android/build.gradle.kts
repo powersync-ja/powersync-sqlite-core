@@ -117,6 +117,15 @@ publishing {
             name = "here"
             url = uri("build/here/")
         }
+
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/journeyapps/powersync-sqlite-core")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
+            }
+        }
     }
 }
 
