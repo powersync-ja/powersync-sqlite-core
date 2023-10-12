@@ -17,7 +17,25 @@ repositories {
 
 val buildRust = tasks.register("buildRust", Exec::class.java) {
     workingDir("..")
-    commandLine("cargo", "ndk", "-t", "armeabi-v7a", "-t", "arm64-v8a", "-t", "x86", "-t", "x86_64", "-o", "./android/build/intermediates/jniLibs", "build", "--release", "-Zbuild-std", "-p", "powersync_loadable")
+    commandLine(
+        "cargo",
+        "ndk",
+        "-t",
+        "armeabi-v7a",
+        "-t",
+        "arm64-v8a",
+        "-t",
+        "x86",
+        "-t",
+        "x86_64",
+        "-o",
+        "./android/build/intermediates/jniLibs",
+        "build",
+        "--release",
+        "-Zbuild-std",
+        "-p",
+        "powersync_loadable"
+    )
 }
 
 android {
@@ -93,21 +111,25 @@ publishing {
     }
 
     repositories {
-       maven {
-           name = "sonatype"
-           url = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-           credentials {
-               username = System.getenv("OSSRH_USERNAME")
-               password = System.getenv("OSSRH_PASSWORD")
-           }
-       }
+        if (System.getenv("OSSRH_USERNAME") != null) {
+            maven {
+                name = "sonatype"
+                url = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
+                credentials {
+                    username = System.getenv("OSSRH_USERNAME")
+                    password = System.getenv("OSSRH_PASSWORD")
+                }
+            }
+        }
 
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/journeyapps/powersync-sqlite-core")
-            credentials {
-                username = System.getenv("GITHUB_ACTOR")
-                password = System.getenv("GITHUB_TOKEN")
+        if (System.getenv("GITHUB_ACTOR") != null) {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/journeyapps/powersync-sqlite-core")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
             }
         }
     }
