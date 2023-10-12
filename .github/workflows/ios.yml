@@ -4,12 +4,8 @@ on:
 name: "ios"
 jobs:
   build:
-    name: Building iOS on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
+    name: Building iOS
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
         with:

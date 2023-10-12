@@ -4,20 +4,24 @@ on:
 name: "android"
 jobs:
   build:
-    name: Building Android on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
+    name: Building Android
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: true
 
+      - uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
       - uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r25c
+          ndk-version: r26
+
+      - name: Validate Gradle wrapper
+        uses: gradle/wrapper-validation-action@ccb4328a959376b642e027874838f60f8e596de3
 
       - name: Setup
         run: |
@@ -32,4 +36,6 @@ jobs:
 
       - name: Build for Android
         run: |
-          cargo ndk -t armeabi-v7a -t arm64-v8a -o ./jniLibs build --release -Zbuild-std -p powersync_loadable
+          cd android
+          ./gradlew build
+          ls -lh build/outputs/aar

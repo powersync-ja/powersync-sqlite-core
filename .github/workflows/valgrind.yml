@@ -4,7 +4,7 @@ on:
 name: "valgrind"
 jobs:
   build:
-    name: Testing on ${{ matrix.os }}
+    name: Testing with Valgrind on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -16,7 +16,7 @@ jobs:
           submodules: true
 
       - name: Install valgrind
-        run: sudo apt install -y valgrind
+        run: sudo apt update && sudo apt install -y valgrind
 
       - name: Install Cargo Valgrind
         run: |
