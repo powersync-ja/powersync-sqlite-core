@@ -15,6 +15,5 @@ PowerSync extension for SQLite.
 
 
   s.ios.deployment_target = '11.0'
-  # osx not supported yet
   s.osx.deployment_target = '10.13'
 end

@@ -1,9 +1,9 @@
-import java.util.Properties
+import java.util.Base64
 
 plugins {
     id("com.android.library") version "8.0.1"
     id("maven-publish")
-//    id("signing")
+    id("signing")
 }
 
 group = "co.powersync"
@@ -52,19 +52,6 @@ tasks.named("preBuild") {
     dependsOn(buildRust)
 }
 
-val secretsFile = rootProject.file("local.properties")
-val secretProperties = Properties()
-
-if (secretsFile.exists()) {
-    secretsFile.reader().use { secretProperties.load(it) }
-
-    secretProperties.forEach { key, value ->
-        if (key is String && key.startsWith("signing")) {
-            ext[key] = value
-        }
-    }
-}
-
 publishing {
     publications {
         register<MavenPublication>("maven") {
@@ -106,19 +93,14 @@ publishing {
     }
 
     repositories {
-//        maven {
-//            name = "sonatype"
-//            url = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
-//            credentials {
-//                username = secretProperties.getProperty("ossrhUsername")
-//                password = secretProperties.getProperty("ossrhPassword")
-//            }
-//        }
-//
-//        maven {
-//            name = "here"
-//            url = uri("build/here/")
-//        }
+       maven {
+           name = "sonatype"
+           url = uri("https://oss.sonatype.org/service/local/staging/deploy/maven2/")
+           credentials {
+               username = System.getenv("OSSRH_USERNAME")
+               password = System.getenv("OSSRH_PASSWORD")
+           }
+       }
 
         maven {
             name = "GitHubPackages"
@@ -130,11 +112,17 @@ publishing {
         }
     }
 }
-//
-//signing {
-//    useGpgCmd()
-//    sign(publishing.publications)
-//}
+
+signing {
+    if (System.getenv("GPG_PRIVATE_KEY") == null) {
+        useGpgCmd()
+    } else {
+        var signingKey = String(Base64.getDecoder().decode(System.getenv("GPG_PRIVATE_KEY"))).trim()
+        var signingPassword = System.getenv("GPG_PASSWORD")
+        useInMemoryPgpKeys(signingKey, signingPassword)
+    }
+    sign(publishing.publications)
+}
 
 tasks.withType<AbstractPublishToMaven>() {
     dependsOn("assembleRelease")

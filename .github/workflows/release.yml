@@ -66,6 +66,10 @@ jobs:
           ./gradlew publish
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
 
   publish_ios_pod:
     name: Publish iOS
