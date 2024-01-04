@@ -84,7 +84,16 @@ FOR EACH ROW
 BEGIN
 DELETE FROM {:} WHERE id = OLD.id;
 INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {:}, 'id', OLD.id));
-END", trigger_name, quoted_name, internal_name, type_string);
+INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
+      SELECT '$local',
+              1,
+              'REMOVE',
+              {:},
+              OLD.id,
+              0,
+              0;
+INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES('$local', 1, 0, {:});
+END", trigger_name, quoted_name, internal_name, type_string, type_string, MAX_OP_ID);
         Ok(trigger)
     } else if local_only {
         let trigger = format!("\
