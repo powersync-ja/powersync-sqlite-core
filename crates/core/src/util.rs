@@ -44,6 +44,7 @@ pub fn extract_table_info(db: *mut sqlite::sqlite3, data: &str) -> Result<Manage
     // language=SQLite
     let statement = db.prepare_v2("SELECT
         json_extract(?1, '$.name') as name,
+        ifnull(json_extract(?1, '$.view_name'), json_extract(?1, '$.name')) as view_name,
         json_extract(?1, '$.local_only') as local_only,
         json_extract(?1, '$.insert_only') as insert_only")?;
     statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
