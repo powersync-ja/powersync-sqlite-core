@@ -22,9 +22,10 @@ fn powersync_view_sql_impl(
     let statement = extract_table_info(db, table)?;
 
     let name = statement.column_text(0)?;
-    let local_only = statement.column_int(1)? != 0;
+    let view_name = statement.column_text(1)?;
+    let local_only = statement.column_int(2)? != 0;
 
-    let quoted_name = quote_identifier(name);
+    let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
 
     let stmt2 = db.prepare_v2("select json_extract(e.value, '$.name') as name, json_extract(e.value, '$.type') as type from json_each(json_extract(?, '$.columns')) e")?;
@@ -68,12 +69,13 @@ fn powersync_trigger_delete_sql_impl(
     let statement = extract_table_info(ctx.db_handle(), table)?;
 
     let name = statement.column_text(0)?;
-    let local_only = statement.column_int(1)? != 0;
-    let insert_only = statement.column_int(2)? != 0;
+    let view_name = statement.column_text(1)?;
+    let local_only = statement.column_int(2)? != 0;
+    let insert_only = statement.column_int(3)? != 0;
 
-    let quoted_name = quote_identifier(name);
+    let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
-    let trigger_name = quote_identifier_prefixed("ps_view_delete_", name);
+    let trigger_name = quote_identifier_prefixed("ps_view_delete_", view_name);
     let type_string = quote_string(name);
 
     return if !local_only && !insert_only {
@@ -84,7 +86,16 @@ FOR EACH ROW
 BEGIN
 DELETE FROM {:} WHERE id = OLD.id;
 INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {:}, 'id', OLD.id));
-END", trigger_name, quoted_name, internal_name, type_string);
+INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
+      SELECT '$local',
+              1,
+              'REMOVE',
+              {:},
+              OLD.id,
+              0,
+              0;
+INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES('$local', 1, 0, {:});
+END", trigger_name, quoted_name, internal_name, type_string, type_string, MAX_OP_ID);
         Ok(trigger)
     } else if local_only {
         let trigger = format!("\
@@ -116,12 +127,13 @@ fn powersync_trigger_insert_sql_impl(
     let statement = extract_table_info(ctx.db_handle(), table)?;
 
     let name = statement.column_text(0)?;
-    let local_only = statement.column_int(1)? != 0;
-    let insert_only = statement.column_int(2)? != 0;
+    let view_name = statement.column_text(1)?;
+    let local_only = statement.column_int(2)? != 0;
+    let insert_only = statement.column_int(3)? != 0;
 
-    let quoted_name = quote_identifier(name);
+    let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
-    let trigger_name = quote_identifier_prefixed("ps_view_insert_", name);
+    let trigger_name = quote_identifier_prefixed("ps_view_insert_", view_name);
     let type_string = quote_string(name);
 
     let local_db = ctx.db_handle();
@@ -199,12 +211,13 @@ fn powersync_trigger_update_sql_impl(
     let statement = extract_table_info(ctx.db_handle(), table)?;
 
     let name = statement.column_text(0)?;
-    let local_only = statement.column_int(1)? != 0;
-    let insert_only = statement.column_int(2)? != 0;
+    let view_name = statement.column_text(1)?;
+    let local_only = statement.column_int(2)? != 0;
+    let insert_only = statement.column_int(3)? != 0;
 
-    let quoted_name = quote_identifier(name);
+    let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
-    let trigger_name = quote_identifier_prefixed("ps_view_update_", name);
+    let trigger_name = quote_identifier_prefixed("ps_view_update_", view_name);
     let type_string = quote_string(name);
 
     let db = ctx.db_handle();
