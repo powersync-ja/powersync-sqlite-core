@@ -25,6 +25,8 @@ function createXcframework() {
   <string>FMWK</string>
   <key>CFBundleSignature</key>
   <string>????</string>
+  <key>MinimumOSVersion</key>
+  <string>11.0</string>
 </dict>
 </plist>
 EOF
