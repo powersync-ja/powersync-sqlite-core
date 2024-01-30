@@ -27,6 +27,10 @@ function createXcframework() {
   <string>????</string>
   <key>MinimumOSVersion</key>
   <string>11.0</string>
+  <key>CFBundleVersion</key>
+  <string>0.1.5</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.5</string>
 </dict>
 </plist>
 EOF
