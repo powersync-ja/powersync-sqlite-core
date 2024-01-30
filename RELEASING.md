@@ -27,8 +27,7 @@ The above does the following:
 
 1. Create a draft GitHub release.
 2. Build the xcframework for iOS and macOS, and upload to GitHub (attached to the above release).
-3. Publish the cocoapod for iOS and macOS.
-4. Build and publish an Android aar to Sonatype staging.
+3. Build and publish an Android aar to Sonatype staging.
 
 Once that is done, go to the Maven staging repository, and "Close", wait, and "Release" the
 repository:
@@ -38,3 +37,9 @@ https://s01.oss.sonatype.org/#stagingRepositories
 Docs: https://central.sonatype.org/publish/release/
 
 Go to GitHub Releases on the repository, update the description, then "Publish Release".
+
+Publish the cocoapod:
+
+```sh
+pod trunk push powersync-sqlite-core.podspec
+```
