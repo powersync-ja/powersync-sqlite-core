@@ -125,7 +125,7 @@ publishing {
         if (System.getenv("GITHUB_ACTOR") != null) {
             maven {
                 name = "GitHubPackages"
-                url = uri("https://maven.pkg.github.com/journeyapps/powersync-sqlite-core")
+                url = uri("https://maven.pkg.github.com/powersync-ja/powersync-sqlite-core")
                 credentials {
                     username = System.getenv("GITHUB_ACTOR")
                     password = System.getenv("GITHUB_TOKEN")
