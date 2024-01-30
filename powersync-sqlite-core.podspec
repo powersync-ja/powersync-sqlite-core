@@ -6,11 +6,11 @@ Pod::Spec.new do |s|
 PowerSync extension for SQLite.
                        DESC
 
-  s.homepage         = 'https://github.com/journeyapps/powersync-sqlite-core'
+  s.homepage         = 'https://github.com/powersync-ja/powersync-sqlite-core'
   s.license          = 'Apache License, Version 2.0'
   s.author           = 'Journey Mobile, Inc.'
 
-  s.source   = { :http => "https://github.com/journeyapps/powersync-sqlite-core/releases/download/v#{s.version}/powersync-sqlite-core.xcframework.tar.xz" }
+  s.source   = { :http => "https://github.com/powersync-ja/powersync-sqlite-core/releases/download/v#{s.version}/powersync-sqlite-core.xcframework.tar.xz" }
   s.vendored_frameworks  = 'powersync-sqlite-core.xcframework'
 
 

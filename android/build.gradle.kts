@@ -84,7 +84,7 @@ publishing {
             pom {
                 name.set(project.name)
                 description.set(project.description)
-                url.set("https://github.com/journeyapps/powersync-sqlite-core")
+                url.set("https://github.com/powersync-ja/powersync-sqlite-core")
 
                 developers {
                     developer {
@@ -102,9 +102,9 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:github.com/journeyapps/powersync-sqlite-core.git")
-                    developerConnection.set("scm:git:ssh://github.com/journeyapps/powersync-sqlite-core.git")
-                    url.set("https://github.com/journeyapps/powersync-sqlite-core")
+                    connection.set("scm:git:github.com/powersync-ja/powersync-sqlite-core.git")
+                    developerConnection.set("scm:git:ssh://github.com/powersync-ja/powersync-sqlite-core.git")
+                    url.set("https://github.com/powersync-ja/powersync-sqlite-core")
                 }
             }
         }
@@ -125,7 +125,7 @@ publishing {
         if (System.getenv("GITHUB_ACTOR") != null) {
             maven {
                 name = "GitHubPackages"
-                url = uri("https://maven.pkg.github.com/journeyapps/powersync-sqlite-core")
+                url = uri("https://maven.pkg.github.com/powersync-ja/powersync-sqlite-core")
                 credentials {
                     username = System.getenv("GITHUB_ACTOR")
                     password = System.getenv("GITHUB_TOKEN")
