@@ -205,7 +205,7 @@ delete_trigger_sql = gen.delete_trigger_sql,
 insert_trigger_sql = gen.insert_trigger_sql,
 update_trigger_sql = gen.update_trigger_sql
 FROM (SELECT
-      json_extract(json_each.value, '$.name') as name,
+      ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.value, '$.name')) as name,
                    powersync_view_sql(json_each.value) as sql,
                    powersync_trigger_delete_sql(json_each.value) as delete_trigger_sql,
                    powersync_trigger_insert_sql(json_each.value) as insert_trigger_sql,
@@ -229,7 +229,7 @@ INSERT INTO powersync_views(
     update_trigger_sql
 )
 SELECT
-json_extract(json_each.value, '$.name') as name,
+ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.value, '$.name')) as name,
              powersync_view_sql(json_each.value) as sql,
              powersync_trigger_delete_sql(json_each.value) as delete_trigger_sql,
              powersync_trigger_insert_sql(json_each.value) as insert_trigger_sql,
@@ -241,7 +241,7 @@ json_extract(json_each.value, '$.name') as name,
     // language=SQLite
     db.exec_text("\
 DELETE FROM powersync_views WHERE name NOT IN (
-    SELECT json_extract(json_each.value, '$.name')
+    SELECT ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.value, '$.name'))
                         FROM json_each(json_extract(?, '$.tables'))
             )", schema).into_db_result(db)?;
 
