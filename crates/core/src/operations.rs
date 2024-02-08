@@ -6,7 +6,6 @@ use serde_json as json;
 
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, ResultCode};
-use uuid::Uuid;
 use crate::error::{SQLiteError, PSResult};
 
 use crate::ext::SafeManagedStmt;
@@ -263,7 +262,7 @@ pub fn delete_pending_buckets(
 pub fn delete_bucket(
     db: *mut sqlite::sqlite3, name: &str) -> Result<(), SQLiteError> {
 
-    let id = Uuid::new_v4();
+    let id = gen_uuid();
     let new_name = format!("$delete_{}_{}", name, id.hyphenated().to_string());
 
     // language=SQLite
