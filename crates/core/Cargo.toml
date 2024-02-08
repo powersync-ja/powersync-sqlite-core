@@ -33,4 +33,7 @@ features = []
 loadable_extension = ["sqlite_nostd/loadable_extension"]
 static = ["sqlite_nostd/static"]
 omit_load_extension = ["sqlite_nostd/omit_load_extension"]
+# Enable to use the getrandom crate instead of sqlite3_randomness
+# Enable for Windows builds; do not enable for WASM
+getrandom = ["uuid/v4"]
 

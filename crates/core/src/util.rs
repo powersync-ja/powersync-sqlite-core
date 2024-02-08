@@ -85,6 +85,18 @@ pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Opt
     }
 }
 
+// Use getrandom crate to generate UUID
+#[cfg(feature = "getrandom")]
+pub fn gen_uuid() -> Uuid {
+    let id = Uuid::new_v4();
+    id
+}
+
+// Default - use sqlite3_randomness to generate UUID
+// This uses ChaCha20 PRNG, with /dev/urandom as a seed on unix.
+// On Windows, it uses custom logic for the seed, which may not be secure.
+// Rather avoid this version for Windows builds.
+#[cfg(not(feature = "getrandom"))]
 pub fn gen_uuid() -> Uuid {
     let mut random_bytes: [u8; 16] = [0; 16];
     sqlite::randomness(&mut random_bytes);
