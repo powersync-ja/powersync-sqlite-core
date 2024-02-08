@@ -13,7 +13,7 @@ powersync_core = { path="../core" }
 sqlite_nostd = { workspace=true }
 
 [features]
-default = ["powersync_core/static", "powersync_core/omit_load_extension", "powersync_core/getrandom", "sqlite_nostd/static", "sqlite_nostd/omit_load_extension"]
+default = ["powersync_core/static", "powersync_core/omit_load_extension", "sqlite_nostd/static", "sqlite_nostd/omit_load_extension"]
 
 [build-dependencies]
 cc = "1.0.46"
