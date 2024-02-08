@@ -8,6 +8,7 @@ use serde_json as json;
 
 use sqlite::{Connection, ResultCode};
 use sqlite_nostd as sqlite;
+use uuid::{Builder,Uuid};
 use sqlite_nostd::ManagedStmt;
 
 use crate::error::SQLiteError;
@@ -84,6 +85,12 @@ pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Opt
     }
 }
 
+pub fn gen_uuid() -> Uuid {
+    let mut random_bytes: [u8; 16] = [0; 16];
+    sqlite::randomness(&mut random_bytes);
+    let id = Builder::from_random_bytes(random_bytes).into_uuid();
+    id
+}
 
 pub const MAX_OP_ID: &str = "9223372036854775807";
 

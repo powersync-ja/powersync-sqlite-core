@@ -25,4 +25,5 @@ fn main() {
     cfg.compile("sqlite-ps");
 
     println!("cargo:rustc-link-lib=readline");
+    println!("cargo:rustc-link-lib=c");
 }

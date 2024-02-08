@@ -9,16 +9,17 @@ use core::slice;
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
-use uuid::Uuid;
 
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
+use crate::util::*;
+
 
 fn uuid_v4_impl(
     _ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
 ) -> Result<String, ResultCode> {
-    let id = Uuid::new_v4();
+    let id = gen_uuid();
     Ok(id.hyphenated().to_string())
 }
 
