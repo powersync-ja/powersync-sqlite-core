@@ -31,6 +31,12 @@ SELECT powersync_init();
 
 # Building and running
 
+Initialize submodules recursively
+
+```
+git submodule update --init --recursive
+```
+
 ```sh
 # Build the shell
 cargo build -t powersync_sqlite
