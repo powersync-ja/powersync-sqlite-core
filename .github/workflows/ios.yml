@@ -13,8 +13,8 @@ jobs:
 
       - name: Setup
         run: |
-          rustup toolchain install nightly-2023-08-28-x86_64-apple-darwin
-          rustup component add rust-src --toolchain nightly-2023-08-28-x86_64-apple-darwin
+          rustup toolchain install nightly-2024-05-18-x86_64-apple-darwin
+          rustup component add rust-src --toolchain nightly-2024-05-18-x86_64-apple-darwin
           rustup target add \
             x86_64-apple-darwin \
             aarch64-apple-darwin \
