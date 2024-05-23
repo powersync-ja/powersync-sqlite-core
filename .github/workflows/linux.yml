@@ -22,7 +22,7 @@ jobs:
         run: |
           cargo build -p powersync_loadable --release
           ls -l target/release
-          mv "target/release/libisar.so" "libisar_linux_x64.so"
+          mv "target/release/libpowersync.so" "libpowersync_x64.so"
 
       - name: Upload binary
         uses: svenstaro/upload-release-action@v2
