@@ -48,7 +48,7 @@ jobs:
 
       - name: Setup
         run: |
-          cargo build -p powersync_loadable --release
+          cargo build -p powersync_loadable --release --target aarch64-unknown-linux-gnu
           mv "target/release/libpowersync.so" "libpowersync_aarch64.so"
 
       - name: Upload binary
