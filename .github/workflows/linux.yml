@@ -27,6 +27,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
           file: libpowersync_x64.so
           asset_name: libpowersync_x64.so
           tag: v0.1.6
@@ -55,6 +56,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
           file: libpowersync_aarch64.so
           asset_name: libpowersync_aarch64.so
           tag: v0.1.6
