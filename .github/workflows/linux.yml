@@ -21,7 +21,7 @@ jobs:
       - name: Setup
         run: |
           cargo build -p powersync_loadable --release
-          mv "target/x86_64-unknown-linux-gnu/release/libisar.so" "libisar_linux_x64.so"
+          mv "target/release/x86_64-unknown-linux-gnu/release/libisar.so" "libisar_linux_x64.so"
 
       - name: Upload binary
         uses: svenstaro/upload-release-action@v2
