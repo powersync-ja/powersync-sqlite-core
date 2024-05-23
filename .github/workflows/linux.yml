@@ -3,8 +3,8 @@ on:
   pull_request:
 name: "linux"
 jobs:
-  build:
-    name: Building Linux
+  build_x86_64:
+    name: Building Linux x86_64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -29,4 +29,32 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: libpowersync_x64.so
           asset_name: libpowersync_x64.so
-          tag: 0.1.6
+          tag: v0.1.6
+
+  build_aarch64:
+    name: Building Linux aarch64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Setup
+        run: |
+          cargo build -p powersync_loadable --release
+          mv "target/release/libpowersync.so" "libpowersync_aarch64.so"
+
+      - name: Upload binary
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: libpowersync_aarch64.so
+          asset_name: libpowersync_aarch64.so
+          tag: v0.1.6
