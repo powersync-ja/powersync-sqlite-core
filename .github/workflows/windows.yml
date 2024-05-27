@@ -37,6 +37,8 @@ jobs:
       - name: Setup
         run: |
           cargo build -p powersync_loadable --release --target x86_64-pc-windows-msvc -Zbuild-std -v
+          ls "target/x86_64-pc-windows-msvc"
+          ls "target/x86_64-pc-windows-msvc/release"
           mv "target/x86_64-pc-windows-msvc/release/libpowersync.dll" "libpowersync_x64.dll"
 
       - name: Upload binary
