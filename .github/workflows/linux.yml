@@ -16,12 +16,9 @@ jobs:
         with:
           toolchain: nightly-2024-05-18
           components: rust-src
-          targets: x86_64-unknown-linux-gnu
 
-      - name: Setup
-        run: |
-          cargo build -p powersync_loadable --release
-          mv "target/release/libpowersync.so" "libpowersync_x64.so"
+      - name: Build binaries
+        run: bash tool/build_linux.sh x64
 
       - name: Upload binary
         uses: svenstaro/upload-release-action@v2
@@ -32,25 +29,8 @@ jobs:
           asset_name: libpowersync_x64.so
           tag: v0.1.6
 
-  build_aarch64:
-    name: Building Linux aarch64
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly-2024-05-18
-          components: rust-src
-          targets: aarch64-unknown-linux-gnu
-
-      - name: Setup
-        run: |
-          cargo build -p powersync_loadable --release --target aarch64-unknown-linux-gnu
-          mv "target/release/libpowersync.so" "libpowersync_aarch64.so"
+      - name: Build binaries
+        run: bash tool/build_linux.sh
 
       - name: Upload binary
         uses: svenstaro/upload-release-action@v2
