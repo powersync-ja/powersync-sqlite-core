@@ -11,7 +11,13 @@ jobs:
         with:
           submodules: true
 
-      - name: Build binary x64
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binaries
         run: bash tool/build_linux.sh x64
 
       - name: Upload binary
@@ -21,16 +27,4 @@ jobs:
           overwrite: true
           file: libpowersync_x64.so
           asset_name: libpowersync_x64.so
-          tag: v0.1.6
-
-      - name: Build binary aarch64
-        run: bash tool/build_linux.sh
-
-      - name: Upload binary
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          overwrite: true
-          file: libpowersync_aarch64.so
-          asset_name: libpowersync_aarch64.so
           tag: v0.1.6
