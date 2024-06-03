@@ -17,7 +17,7 @@ jobs:
           toolchain: nightly-2024-05-18
           components: rust-src
 
-      - name: Build binaries
+      - name: Build binary x64
         run: bash tool/build_linux.sh x64
 
       - name: Upload binary
@@ -29,7 +29,7 @@ jobs:
           asset_name: libpowersync_x64.so
           tag: v0.1.6
 
-      - name: Build binaries
+      - name: Build binary aarch64
         run: bash tool/build_linux.sh
 
       - name: Upload binary

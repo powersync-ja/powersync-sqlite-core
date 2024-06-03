@@ -16,12 +16,11 @@ jobs:
         with:
           toolchain: nightly-2024-05-18
           components: rust-src
-          targets: x86_64-pc-windows-msvc
 
-      - name: Setup
+      - name: Build binary
         run: bash tool/build_windows.sh x64
 
-      - name: Upload binary
+      - name: Upload binary x64
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -30,7 +29,7 @@ jobs:
           asset_name: powersync_x64.dll
           tag: v0.1.6
 
-      - name: Setup
+      - name: Build binary aarch64
         run: bash tool/build_windows.sh
 
       - name: Upload binary
