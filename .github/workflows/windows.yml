@@ -18,26 +18,10 @@ jobs:
           components: rust-src
           targets: x86_64-pc-windows-msvc
 
-      # - name: Install Perl
-      #   uses: shogo82148/actions-setup-perl@v1
-      #   with:
-      #     distribution: strawberry
-      #     perl-version: "5.32"
-
-      # - name: Install make with Chocolatey
-      #   shell: bash
-      #   run: choco install make
-
-      # - name: Set Windows environment variables
-      #   shell: pwsh
-      #   run: |
-      #     echo "LIBCLANG_PATH=$((gcm clang).source -replace "clang.exe")" >> $env:GITHUB_ENV
-      #     echo "OPENSSL_SRC_PERL=C:/Strawberry/perl/bin/perl" >> $env:GITHUB_ENV
-
       - name: Setup
         run: |
-          cargo build -p powersync_loadable --release --target x86_64-pc-windows-msvc -Zbuild-std
-          mv "target/x86_64-pc-windows-msvc/release/powersync.dll" "powersync_x64.dll"
+          cargo build -p powersync_loadable --release
+          mv "target/release/powersync.dll" "powersync_x64.dll"
 
       - name: Upload binary
         uses: svenstaro/upload-release-action@v2

@@ -39,12 +39,15 @@ git submodule update --init --recursive
 
 ```sh
 # Build the shell
-cargo build -t powersync_sqlite
+cargo build -p powersync_sqlite
 ./target/debug/powersync_sqlite test.db "select powersync_rs_version()"
 
 # Build the loadable extension
 cargo build -p powersync_loadable
-sqlite3 ":memory:" ".load ./target/debug/libpowersync" "select powersync_rs_version()"
+sqlite3 ":memory:" ".load ./target/debug/libpowersync" "select powersync_rs_version()" #This requires sqlite3 installed
+
+# Build the release loadable extension
+cargo build -p powersync_loadable --release
 
 # Build for iOS
 ./all-ios-loadable.sh
