@@ -1,6 +1,7 @@
 on:
   push:
-  pull_request:
+    tags:
+      - "*"
 name: "linux"
 jobs:
   build_x86_64:
@@ -27,4 +28,4 @@ jobs:
           overwrite: true
           file: libpowersync_x64.so
           asset_name: libpowersync_x64.so
-          tag: v0.1.6
+          tag: ${{ github.ref_name }}
