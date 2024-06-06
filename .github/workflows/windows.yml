@@ -1,0 +1,16 @@
+on:
+  push:
+    tags:
+      - "*"
+name: "windows"
+jobs:
+  build_windows:
+    name: Building Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Build binary
+        run: bash tool/build_windows.sh x64

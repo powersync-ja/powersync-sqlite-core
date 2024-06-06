@@ -1,0 +1,22 @@
+on:
+  push:
+    tags:
+      - "*"
+name: "linux"
+jobs:
+  build_x86_64:
+    name: Building Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binaries
+        run: bash tool/build_linux.sh x64

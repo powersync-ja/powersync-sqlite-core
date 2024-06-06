@@ -42,8 +42,8 @@ jobs:
 
       - uses: actions/setup-java@v3
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: "temurin"
+          java-version: "17"
 
       - uses: nttld/setup-ndk@v1
         with:
@@ -110,3 +110,51 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.xz
+
+  publish_linux_x86_64:
+    name: Publish Linux x86_64
+    needs: [draft_release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binaries
+        run: bash tool/build_linux.sh x64
+
+      - name: Upload binary
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
+          file: libpowersync_x64.so
+          asset_name: libpowersync_x64.so
+          tag: ${{ needs.draft_release.outputs.tag }}
+
+  publish_windows_x64:
+    name: Publish Widnows x64
+    needs: [draft_release]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Build binary
+        run: bash tool/build_windows.sh x64
+
+      - name: Upload binary x64
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
+          file: powersync_x64.dll
+          asset_name: powersync_x64.dll
+          tag: ${{ needs.draft_release.outputs.tag }}
