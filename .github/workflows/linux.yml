@@ -20,12 +20,3 @@ jobs:
 
       - name: Build binaries
         run: bash tool/build_linux.sh x64
-
-      - name: Upload binary
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          overwrite: true
-          file: libpowersync_x64.so
-          asset_name: libpowersync_x64.so
-          tag: ${{ github.ref_name }}

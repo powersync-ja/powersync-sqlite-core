@@ -3,6 +3,7 @@ if [ "$1" = "x64" ]; then
   cargo build -p powersync_loadable --release
   mv "target/release/powersync.dll" "powersync_x64.dll"
 else
+  #Note: aarch64-pc-windows-msvc has not been tested.
   rustup target add aarch64-pc-windows-msvc
   cargo build -p powersync_loadable --release
   mv "target/release/powersync.dll" "powersync_aarch64.dll"
