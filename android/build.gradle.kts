@@ -44,7 +44,7 @@ android {
     namespace = "co.powersync.sqlitecore"
 
     defaultConfig {
-        minSdk = 24
+        minSdk = 21
     }
 
     sourceSets {
