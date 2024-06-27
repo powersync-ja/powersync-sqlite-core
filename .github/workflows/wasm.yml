@@ -1,0 +1,23 @@
+on:
+  push:
+name: "wasm"
+jobs:
+  build:
+    name: Building WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binaries
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build -p powersync_loadable --target wasm32-unknown-unknown --profile wasm
+          mv "target/wasm32-unknown-unknown/wasm/powersync.wasm" "powersync.wasm"

@@ -24,7 +24,8 @@ serde = { version = "1.0", default-features = false, features = ["alloc", "deriv
 version = "1.4.1"
 default-features = false
 features = [
-    "v4"
+    "v4",
+    "js",
 ]
 
 

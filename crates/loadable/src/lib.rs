@@ -20,6 +20,7 @@ use sqlite_nostd::SQLite3Allocator;
 static ALLOCATOR: SQLite3Allocator = SQLite3Allocator {};
 
 // Custom Panic handler for WASM and other no_std builds
+#[cfg(not(target_family = "wasm"))]
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {

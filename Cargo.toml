@@ -22,7 +22,7 @@ inherits = "release"
 # Enabling LTO in WASM build gives:
 # warning: Linking globals named '__rust_alloc_error_handler': symbol multiply defined!
 # error: failed to load bitcode of module "sgnxivc9sns8d6t":
-lto = false
+lto = "thin"
 
 [workspace.package]
 version = "0.1.7"
