@@ -8,6 +8,7 @@ use serde_json as json;
 
 use sqlite::{Connection, ResultCode};
 use sqlite_nostd as sqlite;
+use uuid::{Builder,Uuid};
 use sqlite_nostd::ManagedStmt;
 
 use crate::error::SQLiteError;
@@ -84,6 +85,25 @@ pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Opt
     }
 }
 
+// Use getrandom crate to generate UUID.
+// This is not available in all WASM builds - use the default in those cases.
+#[cfg(feature = "getrandom")]
+pub fn gen_uuid() -> Uuid {
+    let id = Uuid::new_v4();
+    id
+}
+
+// Default - use sqlite3_randomness to generate UUID
+// This uses ChaCha20 PRNG, with /dev/urandom as a seed on unix.
+// On Windows, it uses custom logic for the seed, which may not be secure.
+// Rather avoid this version for most builds.
+#[cfg(not(feature = "getrandom"))]
+pub fn gen_uuid() -> Uuid {
+    let mut random_bytes: [u8; 16] = [0; 16];
+    sqlite::randomness(&mut random_bytes);
+    let id = Builder::from_random_bytes(random_bytes).into_uuid();
+    id
+}
 
 pub const MAX_OP_ID: &str = "9223372036854775807";
 
