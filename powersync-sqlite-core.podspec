@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'powersync-sqlite-core'
-  s.version          = '0.1.6'
+  s.version          = '0.1.7'
   s.summary          = 'PowerSync SQLite Extension'
   s.description      = <<-DESC
 PowerSync extension for SQLite.

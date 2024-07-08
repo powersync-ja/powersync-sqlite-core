@@ -18,6 +18,11 @@ rustflags = [
     "-C", "link-arg=-lgcc_eh",
 ]
 
+[target.aarch64-unknown-linux-gnu]
+rustflags = [
+    "-C", "link-arg=-lgcc_eh",
+]
+
 
 # For iOS and macOS, we need to specify the minimum/target version.
 # This must match the versions in the podspec file.
