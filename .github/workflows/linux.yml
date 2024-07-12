@@ -2,6 +2,7 @@ on:
   push:
     tags:
       - "*"
+  workflow_dispatch:
 name: "linux"
 jobs:
   build_x86_64:
@@ -20,3 +21,40 @@ jobs:
 
       - name: Build binaries
         run: bash tool/build_linux.sh x64
+
+      - name: Upload binary
+        if: github.event_name == 'workflow_dispatch'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
+          file: libpowersync_x64.so
+          asset_name: libpowersync_x64.so
+          tag: ${{ github.ref_name }}
+
+  build_aarch64:
+    name: Building Linux aarch64
+    runs-on: ubuntu-arm64
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binaries
+        run: bash tool/build_linux.sh aarch64
+
+      - name: Upload binary
+        if: github.event_name == 'workflow_dispatch'
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
+          file: libpowersync_aarch64.so
+          asset_name: libpowersync_aarch64.so
+          tag: ${{ github.ref_name }}
