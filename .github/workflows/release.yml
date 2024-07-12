@@ -158,3 +158,24 @@ jobs:
           file: powersync_x64.dll
           asset_name: powersync_x64.dll
           tag: ${{ needs.draft_release.outputs.tag }}
+
+  publish_macOS:
+    name: Publish macOS
+    needs: [draft_release]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Build binary
+        run: bash tool/build_macos.sh aarch64
+
+      - name: Upload binary aarch64
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          overwrite: true
+          file: libpowersync_aarch64.dylib
+          asset_name: libpowersync_aarch64.dylib
+          tag: ${{ needs.draft_release.outputs.tag }}
