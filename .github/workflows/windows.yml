@@ -15,7 +15,6 @@ jobs:
       - name: Build binary
         run: bash tool/build_windows.sh x64
 
-      - uses: actions/checkout@v3
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'
         uses: ./.github/actions/upload
