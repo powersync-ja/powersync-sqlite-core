@@ -129,6 +129,7 @@ jobs:
       - name: Build binaries
         run: bash tool/build_linux.sh x64
 
+      - uses: actions/checkout@v3
       - name: Upload binary
         uses: ./.github/actions/upload
         with:
@@ -154,6 +155,7 @@ jobs:
       - name: Build binaries
         run: bash tool/build_linux.sh aarch64
 
+      - uses: actions/checkout@v3
       - name: Upload binary
         uses: ./.github/actions/upload
         with:
@@ -173,6 +175,7 @@ jobs:
       - name: Build binary
         run: bash tool/build_windows.sh x64
 
+      - uses: actions/checkout@v3
       - name: Upload binary
         uses: ./.github/actions/upload
         with:
@@ -192,6 +195,7 @@ jobs:
       - name: Build binary
         run: bash tool/build_macos.sh aarch64
 
+      - uses: actions/checkout@v3
       - name: Upload binary
         uses: ./.github/actions/upload
         with:

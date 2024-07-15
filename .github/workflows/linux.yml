@@ -22,6 +22,7 @@ jobs:
       - name: Build binaries
         run: bash tool/build_linux.sh x64
 
+      - uses: actions/checkout@v3
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'
         uses: ./.github/actions/upload
@@ -47,6 +48,7 @@ jobs:
       - name: Build binaries
         run: bash tool/build_linux.sh aarch64
 
+      - uses: actions/checkout@v3
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'
         uses: ./.github/actions/upload
