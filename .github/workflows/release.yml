@@ -130,12 +130,35 @@ jobs:
         run: bash tool/build_linux.sh x64
 
       - name: Upload binary
-        uses: svenstaro/upload-release-action@v2
+        uses: ./.github/actions/upload
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          overwrite: true
-          file: libpowersync_x64.so
-          asset_name: libpowersync_x64.so
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          file-name: libpowersync_x64.so
+          tag: ${{ needs.draft_release.outputs.tag }}
+
+  publish_linux_aarch64:
+    name: Publish Linux aarch64
+    needs: [draft_release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binaries
+        run: bash tool/build_linux.sh aarch64
+
+      - name: Upload binary
+        uses: ./.github/actions/upload
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          file-name: libpowersync_aarch64.so
           tag: ${{ needs.draft_release.outputs.tag }}
 
   publish_windows_x64:
@@ -150,13 +173,11 @@ jobs:
       - name: Build binary
         run: bash tool/build_windows.sh x64
 
-      - name: Upload binary x64
-        uses: svenstaro/upload-release-action@v2
+      - name: Upload binary
+        uses: ./.github/actions/upload
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          overwrite: true
-          file: powersync_x64.dll
-          asset_name: powersync_x64.dll
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          file-name: powersync_x64.dll
           tag: ${{ needs.draft_release.outputs.tag }}
 
   publish_macOS:
@@ -171,11 +192,9 @@ jobs:
       - name: Build binary
         run: bash tool/build_macos.sh aarch64
 
-      - name: Upload binary aarch64
-        uses: svenstaro/upload-release-action@v2
+      - name: Upload binary
+        uses: ./.github/actions/upload
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          overwrite: true
-          file: libpowersync_aarch64.dylib
-          asset_name: libpowersync_aarch64.dylib
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          file-name: libpowersync_aarch64.dylib
           tag: ${{ needs.draft_release.outputs.tag }}
