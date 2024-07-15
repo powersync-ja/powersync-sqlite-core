@@ -1,0 +1,24 @@
+name: "Upload binary file"
+description: "Upload binary file to GitHub releases"
+inputs:
+  repo-token:
+    required: true
+    description: "The secret created for the workflow run"
+  file-name:
+    required: true
+    description: "The file name to be uploaded"
+  tag:
+    required: false
+    description: "The short ref name of the branch or tag that triggered the workflow run."
+    default: ${{ github.ref_name }}
+runs:
+  using: "composite"
+  steps:
+    - name: Upload binary
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ inputs.repo-token }}
+        overwrite: true
+        file: ${{ inputs.file-name }}
+        asset_name: ${{ inputs.file-name }}
+        tag: ${{ inputs.tag }}
