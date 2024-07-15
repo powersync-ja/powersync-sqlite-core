@@ -20,5 +20,5 @@ jobs:
         uses: ./.github/actions/upload
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: powersync_x64.so
+          file-name: powersync_x64.dll
           tag: ${{ github.ref_name }}
