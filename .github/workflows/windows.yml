@@ -2,6 +2,8 @@ on:
   push:
     tags:
       - "*"
+  pull_request:
+  workflow_dispatch:
 name: "windows"
 jobs:
   build_windows:
