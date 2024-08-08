@@ -183,7 +183,7 @@ jobs:
   publish_windows_aarch64:
     name: Publish Windows aarch64
     needs: [draft_release]
-    runs-on: windows-latest
+    runs-on: windows-arm64
     steps:
       - uses: actions/checkout@v3
         with:
