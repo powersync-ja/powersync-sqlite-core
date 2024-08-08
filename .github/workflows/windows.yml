@@ -22,3 +22,28 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           file-name: powersync_x64.dll
           tag: ${{ github.ref_name }}
+
+  build_aarch64:
+    name: Building Windows aarch64
+    runs-on: windows-arm64
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binaries
+        run: bash tool/build_windows.sh aarch64
+
+      - name: Upload binary
+        if: github.event_name == 'workflow_dispatch'
+        uses: ./.github/actions/upload
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          file-name: powersync_aarch64.so
+          tag: ${{ github.ref_name }}
