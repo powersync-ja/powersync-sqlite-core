@@ -74,13 +74,6 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
     bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
     bucket_statement.exec()?;
 
-    // language=SQLite
-    let bucket_target_statement = db.prepare_v2("\
-UPDATE ps_buckets
-    SET target_op = MAX(ifnull(cast(json_extract(?, '$.target') as integer), 0), ps_buckets.target_op)
-    WHERE name = ?")?;
-    bucket_target_statement.bind_text(2, bucket, sqlite::Destructor::STATIC)?;
-
     let mut first_op: Option<i64> = None;
     let mut last_op: Option<i64> = None;
 
@@ -134,13 +127,6 @@ UPDATE ps_buckets
             insert_statement.bind_int(8, checksum)?;
             insert_statement.bind_int(9, superseded)?;
             insert_statement.exec()?;
-
-            if op == "MOVE" {
-                if let Ok(data) = op_data {
-                    bucket_target_statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
-                    bucket_target_statement.exec()?;
-                }
-            }
         } else if op == "CLEAR" {
             // Any remaining PUT operations should get an implicit REMOVE
             // language=SQLite
