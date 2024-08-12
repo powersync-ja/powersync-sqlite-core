@@ -45,6 +45,7 @@ pub fn insert_bucket_operations(
     bucket: &str,
     data: &str,
 ) -> Result<(), SQLiteError> {
+    // Statement to insert new operations (only for PUT and REMOVE).
     // language=SQLite
     let iterate_statement = db.prepare_v2(
         "\
@@ -60,6 +61,7 @@ FROM json_each(?) e",
     )?;
     iterate_statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
 
+    // Statement to supersede (replace) operations with the same key.
     // language=SQLite
     let supersede_statement = db.prepare_v2(
         "\
@@ -76,13 +78,15 @@ RETURNING op_id, hash",
 INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, superseded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)")?;
     insert_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
 
+    // We do an ON CONFLICT UPDATE simply so that the RETURNING bit works for existing rows.
+    // We can consider splitting this into separate SELECT and INSERT statements.
     // language=SQLite
     let bucket_statement = db.prepare_v2(
         "INSERT INTO ps_buckets(name)
                             VALUES(?)
-                            ON CONFLICT DO UPDATE
-                                SET last_applied_op = last_applied_op
-                            RETURNING last_applied_op",
+                        ON CONFLICT DO UPDATE
+                            SET last_applied_op = last_applied_op
+                        RETURNING last_applied_op",
     )?;
     bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
     bucket_statement.step()?;
@@ -91,7 +95,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
     // operations when last_applied_op = 0.
     // We do still need to do the "supersede_statement" step for this case, since a REMOVE
     // operation can supersede another PUT operation we're syncing at the same time.
-    let mut is_empty = bucket_statement.column_int64(0)? == 0;
+    let mut last_applied_op = bucket_statement.column_int64(0)?;
 
     bucket_statement.reset()?;
 
@@ -121,16 +125,23 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
 
             let mut superseded = false;
 
-            while (supersede_statement.step()? == ResultCode::ROW) {
+            while supersede_statement.step()? == ResultCode::ROW {
                 // Superseded (deleted) a previous operation, add the checksum
+                let superseded_op = supersede_statement.column_int64(0)?;
                 let supersede_checksum = supersede_statement.column_int(1)?;
                 add_checksum = add_checksum.wrapping_add(supersede_checksum);
-                // Superseded an operation, only skip if the bucket was empty
-                superseded = true;
+
+                if superseded_op <= last_applied_op {
+                    // Superseded an operation previously applied - we cannot skip removes
+                    // For initial sync, last_applied_op = 0, so this is always false.
+                    // For subsequent sync, this is only true if the row was previously
+                    // synced, not when it was first synced in the current batch.
+                    superseded = true;
+                }
             }
             supersede_statement.reset()?;
 
-            let should_skip_remove = (is_empty || !superseded) && op == "REMOVE";
+            let should_skip_remove = !superseded && op == "REMOVE";
             if (should_skip_remove) {
                 // If a REMOVE statement did not replace (supersede) any previous
                 // operations, we do not need to persist it.
@@ -185,7 +196,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
             clear_statement2.exec()?;
 
             add_checksum = 0;
-            is_empty = true;
+            last_applied_op = 0;
         }
     }
 
