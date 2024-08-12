@@ -63,13 +63,11 @@ FROM json_each(?) e",
     // language=SQLite
     let supersede_statement = db.prepare_v2(
         "\
-UPDATE ps_oplog SET
-        superseded = 1,
-        op = 2,
-        data = NULL
+DELETE FROM ps_oplog
     WHERE ps_oplog.superseded = 0
     AND unlikely(ps_oplog.bucket = ?1)
-    AND ps_oplog.key = ?2",
+    AND ps_oplog.key = ?2
+RETURNING op_id, hash",
     )?;
     supersede_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
 
@@ -110,21 +108,39 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
 
         last_op = Some(op_id);
 
-        let mut key: String = "".to_string();
-
         if op == "PUT" || op == "REMOVE" {
+            let key: String;
             if let (Ok(object_type), Ok(object_id)) = (object_type.as_ref(), object_id.as_ref()) {
                 let subkey = iterate_statement.column_text(6).unwrap_or("null");
-                let populated_key = format!("{}/{}/{}", &object_type, &object_id, subkey);
-
-                supersede_statement.bind_text(2, &populated_key, sqlite::Destructor::STATIC)?;
-                supersede_statement.exec()?;
-
-                key = populated_key;
+                key = format!("{}/{}/{}", &object_type, &object_id, subkey);
+            } else {
+                key = String::from("");
             }
-        }
 
-        if op == "PUT" || (op == "REMOVE" && !is_empty) {
+            supersede_statement.bind_text(2, &key, sqlite::Destructor::STATIC)?;
+
+            let mut superseded = false;
+
+            while (supersede_statement.step()? == ResultCode::ROW) {
+                // Superseded (deleted) a previous operation, add the checksum
+                let supersede_checksum = supersede_statement.column_int(1)?;
+                add_checksum = add_checksum.wrapping_add(supersede_checksum);
+                // Superseded an operation, only skip if the bucket was empty
+                superseded = true;
+            }
+            supersede_statement.reset()?;
+
+            let should_skip_remove = (is_empty || !superseded) && op == "REMOVE";
+            if (should_skip_remove) {
+                // If a REMOVE statement did not replace (supersede) any previous
+                // operations, we do not need to persist it.
+                // The same applies if the bucket was not synced to the local db yet,
+                // even if it did supersede another operation.
+                // Handle the same as MOVE.
+                add_checksum = add_checksum.wrapping_add(checksum);
+                continue;
+            }
+
             let opi = if op == "PUT" { 3 } else { 4 };
             insert_statement.bind_int64(2, op_id)?;
             insert_statement.bind_int(3, opi)?;
@@ -149,7 +165,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
 
             insert_statement.bind_int(8, checksum)?;
             insert_statement.exec()?;
-        } else if op == "MOVE" || (is_empty && op == "REMOVE") {
+        } else if op == "MOVE" {
             add_checksum = add_checksum.wrapping_add(checksum);
         } else if op == "CLEAR" {
             // Any remaining PUT operations should get an implicit REMOVE
