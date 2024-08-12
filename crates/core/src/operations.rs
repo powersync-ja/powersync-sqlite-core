@@ -79,9 +79,23 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
     insert_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
 
     // language=SQLite
-    let bucket_statement = db.prepare_v2("INSERT OR IGNORE INTO ps_buckets(name) VALUES(?)")?;
+    let bucket_statement = db.prepare_v2(
+        "INSERT INTO ps_buckets(name)
+                            VALUES(?)
+                            ON CONFLICT DO UPDATE
+                                SET last_applied_op = last_applied_op
+                            RETURNING last_applied_op",
+    )?;
     bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
-    bucket_statement.exec()?;
+    bucket_statement.step()?;
+
+    // This is an optimization for initial sync - we can avoid persisting individual REMOVE
+    // operations when last_applied_op = 0.
+    // We do still need to do the "supersede_statement" step for this case, since a REMOVE
+    // operation can supersede another PUT operation we're syncing at the same time.
+    let mut is_empty = bucket_statement.column_int64(0)? == 0;
+
+    bucket_statement.reset()?;
 
     let mut last_op: Option<i64> = None;
     let mut add_checksum: i32 = 0;
@@ -96,24 +110,28 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
 
         last_op = Some(op_id);
 
+        let mut key: String = "".to_string();
+
         if op == "PUT" || op == "REMOVE" {
-            let key: String;
             if let (Ok(object_type), Ok(object_id)) = (object_type.as_ref(), object_id.as_ref()) {
                 let subkey = iterate_statement.column_text(6).unwrap_or("null");
-                key = format!("{}/{}/{}", &object_type, &object_id, subkey);
-                supersede_statement.bind_text(2, &key, sqlite::Destructor::STATIC)?;
-                supersede_statement.exec()?;
-            } else {
-                key = String::from("");
-            }
+                let populated_key = format!("{}/{}/{}", &object_type, &object_id, subkey);
 
+                supersede_statement.bind_text(2, &populated_key, sqlite::Destructor::STATIC)?;
+                supersede_statement.exec()?;
+
+                key = populated_key;
+            }
+        }
+
+        if op == "PUT" || (op == "REMOVE" && !is_empty) {
             let opi = if op == "PUT" { 3 } else { 4 };
             insert_statement.bind_int64(2, op_id)?;
             insert_statement.bind_int(3, opi)?;
-            if key == "" {
-                insert_statement.bind_null(4)?;
-            } else {
+            if key != "" {
                 insert_statement.bind_text(4, &key, sqlite::Destructor::STATIC)?;
+            } else {
+                insert_statement.bind_null(4)?;
             }
 
             if let (Ok(object_type), Ok(object_id)) = (object_type, object_id) {
@@ -131,7 +149,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
 
             insert_statement.bind_int(8, checksum)?;
             insert_statement.exec()?;
-        } else if op == "MOVE" {
+        } else if op == "MOVE" || (is_empty && op == "REMOVE") {
             add_checksum = add_checksum.wrapping_add(checksum);
         } else if op == "CLEAR" {
             // Any remaining PUT operations should get an implicit REMOVE
@@ -151,6 +169,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
             clear_statement2.exec()?;
 
             add_checksum = 0;
+            is_empty = true;
         }
     }
 
