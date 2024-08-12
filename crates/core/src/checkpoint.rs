@@ -1,8 +1,7 @@
 extern crate alloc;
 
-
 use alloc::format;
-use alloc::string::{String};
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;
 use core::slice;
@@ -34,7 +33,8 @@ fn powersync_validate_checkpoint_impl(
     let db = ctx.db_handle();
 
     // language=SQLite
-    let statement = db.prepare_v2("WITH
+    let statement = db.prepare_v2(
+        "WITH
 bucket_list(bucket, lower_op_id, checksum) AS (
   SELECT
         json_extract(json_each.value, '$.bucket') as bucket,
@@ -57,7 +57,8 @@ FROM bucket_list
      bucket_list.bucket = oplog.bucket AND
      oplog.op_id <= CAST(json_extract(?1, '$.last_op_id') as INTEGER) AND
      oplog.op_id > bucket_list.lower_op_id
-GROUP BY bucket_list.bucket")?;
+GROUP BY bucket_list.bucket",
+    )?;
 
     statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
 
@@ -65,6 +66,7 @@ GROUP BY bucket_list.bucket")?;
 
     while statement.step()? == ResultCode::ROW {
         let name = statement.column_text(0)?;
+        // checksums with column_int are wrapped to i32 by SQLite
         let add_checksum = statement.column_int(1)?;
         let oplog_checksum = statement.column_int(2)?;
         let _count = statement.column_int(3)?;
@@ -72,7 +74,8 @@ GROUP BY bucket_list.bucket")?;
         let _last_applied_op = statement.column_int64(5)?;
         let expected_checksum = statement.column_int(6)?;
 
-        let checksum = oplog_checksum + add_checksum;
+        // wrapping add is like +, but safely overflows
+        let checksum = oplog_checksum.wrapping_add(add_checksum);
 
         if checksum != expected_checksum {
             failures.push(String::from(name));
@@ -87,7 +90,11 @@ GROUP BY bucket_list.bucket")?;
     Ok(json::to_string(&result)?)
 }
 
-create_sqlite_text_fn!(powersync_validate_checkpoint, powersync_validate_checkpoint_impl, "powersync_validate_checkpoint");
+create_sqlite_text_fn!(
+    powersync_validate_checkpoint,
+    powersync_validate_checkpoint_impl,
+    "powersync_validate_checkpoint"
+);
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     db.create_function_v2(
@@ -103,5 +110,3 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 
     Ok(())
 }
-
-
