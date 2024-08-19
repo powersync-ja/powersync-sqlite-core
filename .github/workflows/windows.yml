@@ -30,12 +30,19 @@ jobs:
     runs-on: windows-arm64
     steps:
       - name: Install Git
+        shell: pwsh
         run: |
-          Set-ExecutionPolicy Bypass -Scope Process -Force
-          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          .\tool\install_choco.ps1
           choco install -y --no-progress git
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Build binaries
+        run: |
+          .\tool\install_choco.ps1
           choco install -y --no-progress rustup.install
 
           $env:ChocolateyInstall = Convert-Path "$((Get-Command choco).Path)\..\.."   
@@ -45,12 +52,6 @@ jobs:
           rustup toolchain install nightly-2024-05-18-aarch64-pc-windows-msvc
           rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-pc-windows-msvc
 
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-
-      - name: Build binaries
-        run: |
           rustup target add aarch64-pc-windows-msvc
           cargo build -p powersync_loadable --release
           mv "target/release/powersync.dll" "powersync_aarch64.dll"
