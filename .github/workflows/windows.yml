@@ -38,16 +38,13 @@ jobs:
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - uses: actions/checkout@v3
-
-      - name: Checkout submodules
-        run: |
-          git submodule update --init --recursive
-
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly-2024-05-18
-          components: rust-src
+          submodules: true
+
+      - name: Setup
+        run: |
+          rustup toolchain install nightly-2024-05-18-aarch64-pc-windows-msvc
+          rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-pc-windows-msvc
 
       - name: Build binaries
         run: bash tool/build_windows.sh aarch64
