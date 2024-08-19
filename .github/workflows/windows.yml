@@ -45,6 +45,10 @@ jobs:
         run: |
           C:\ProgramData\chocolatey\choco.exe install -y --no-progress rustup.install
 
+          $env:ChocolateyInstall = Convert-Path "$((Get-Command C:\ProgramData\chocolatey\choco.exe).Path)\..\.."   
+          Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+          refreshenv
+
           rustup toolchain install nightly-2024-05-18-aarch64-pc-windows-msvc
           rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-pc-windows-msvc
 
