@@ -36,16 +36,13 @@ jobs:
           iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           choco install -y --no-progress git
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          choco install -y --no-progress rustup.install
+          rustup toolchain install nightly-2024-05-18-aarch64-pc-windows-msvc
+          rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-pc-windows-msvc
 
       - uses: actions/checkout@v3
         with:
           submodules: true
-
-      - name: Install Rust
-        run: |
-          choco install -y --no-progress rustup.install
-          rustup toolchain install nightly-2024-05-18-aarch64-pc-windows-msvc
-          rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-pc-windows-msvc
 
       - name: Build binaries
         run: sh tool/build_windows.sh aarch64
