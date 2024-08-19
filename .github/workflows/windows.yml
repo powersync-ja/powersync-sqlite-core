@@ -41,10 +41,10 @@ jobs:
         with:
           submodules: true
 
-      - name: Setup
-        run: |
-          rustup toolchain install nightly-2024-05-18-aarch64-pc-windows-msvc
-          rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-pc-windows-msvc
+      # - name: Setup
+      #   run: |
+      #     rustup toolchain install nightly-2024-05-18-aarch64-pc-windows-msvc
+      #     rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-pc-windows-msvc
 
       - name: Build binaries
         run: bash tool/build_windows.sh aarch64
