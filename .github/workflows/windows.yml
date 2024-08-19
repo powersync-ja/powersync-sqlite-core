@@ -50,7 +50,10 @@ jobs:
           submodules: true
 
       - name: Build binaries
-        run: sh tool/build_windows.sh aarch64
+        run: |
+          rustup target add aarch64-pc-windows-msvc
+          cargo build -p powersync_loadable --release
+          mv "target/release/powersync.dll" "powersync_aarch64.dll"
 
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'
