@@ -48,6 +48,7 @@ jobs:
 
       - name: Build binaries
         run: bash tool/build_windows.sh aarch64
+        shell: bash
 
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'
