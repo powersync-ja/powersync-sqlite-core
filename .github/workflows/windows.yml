@@ -29,6 +29,14 @@ jobs:
     name: Building Windows aarch64
     runs-on: windows-arm64
     steps:
+      - name: Install Git
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          choco install -y --no-progress git
+          echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - uses: actions/checkout@v3
 
       - name: Checkout submodules
