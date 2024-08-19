@@ -30,7 +30,6 @@ jobs:
     runs-on: windows-arm64
     steps:
       - name: Install Git
-        shell: pwsh
         run: |
           .\tool\install_choco.ps1
           choco install -y --no-progress git
