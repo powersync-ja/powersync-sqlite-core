@@ -12,7 +12,7 @@ use sqlite_nostd::{Connection, Context};
 
 use crate::error::{PSResult, SQLiteError};
 use crate::util::quote_identifier;
-use crate::{create_auto_tx_function, create_sqlite_text_fn};
+use crate::{create_auto_tx_function, create_sqlite_optional_text_fn, create_sqlite_text_fn};
 
 fn powersync_drop_view_impl(
     ctx: *mut sqlite::context,
@@ -254,6 +254,61 @@ INSERT INTO ps_migration(id, down_migrations) VALUES(3, json_array(json_object('
 create_auto_tx_function!(powersync_init_tx, powersync_init_impl);
 create_sqlite_text_fn!(powersync_init, powersync_init_tx, "powersync_init");
 
+fn powersync_clear_impl(
+    ctx: *mut sqlite::context,
+    args: &[*mut sqlite::value],
+) -> Result<String, SQLiteError> {
+    let local_db = ctx.db_handle();
+
+    let clear_local = args[0].int();
+
+    // language=SQLite
+    local_db.exec_safe(
+        "\
+DELETE FROM ps_oplog;
+DELETE FROM ps_crud;
+DELETE FROM ps_buckets;
+DELETE FROM ps_untyped;
+DELETE FROM ps_kv WHERE key != 'client_id';
+",
+    )?;
+
+    let table_glob = if clear_local != 0 {
+        "ps_data_*"
+    } else {
+        "ps_data__*"
+    };
+
+    let tables_stmt = local_db
+        .prepare_v2("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB ?1")?;
+    tables_stmt.bind_text(1, table_glob, sqlite::Destructor::STATIC);
+
+    let mut tables: Vec<String> = alloc::vec![];
+
+    while tables_stmt.step()? == ResultCode::ROW {
+        let name = tables_stmt.column_text(0)?;
+        tables.push(name.to_string());
+    }
+
+    for name in tables {
+        let quoted = quote_identifier(&name);
+        // The first delete statement deletes a single row, to trigger an update notification for the table.
+        // The second delete statement uses the truncate optimization to delete the remainder of the data.
+        let delete_sql = format!(
+            "\
+DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} LIMIT 1);
+DELETE FROM {table};",
+            table = quoted
+        );
+        local_db.exec_safe(&delete_sql)?;
+    }
+
+    Ok(String::from(""))
+}
+
+create_auto_tx_function!(powersync_clear_tx, powersync_clear_impl);
+create_sqlite_text_fn!(powersync_clear, powersync_clear_tx, "powersync_clear");
+
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     // This entire module is just making it easier to edit sqlite_master using queries.
     // The primary interfaces exposed are:
@@ -307,6 +362,18 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         sqlite::UTF8,
         None,
         Some(powersync_init),
+        None,
+        None,
+        None,
+    )?;
+
+    // Initialize the extension internal tables.
+    db.create_function_v2(
+        "powersync_clear",
+        1,
+        sqlite::UTF8,
+        None,
+        Some(powersync_clear),
         None,
         None,
         None,
