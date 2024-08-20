@@ -12,7 +12,7 @@ use sqlite_nostd::{Connection, Context};
 
 use crate::error::{PSResult, SQLiteError};
 use crate::util::quote_identifier;
-use crate::{create_auto_tx_function, create_sqlite_optional_text_fn, create_sqlite_text_fn};
+use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 fn powersync_drop_view_impl(
     ctx: *mut sqlite::context,
@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         current_version_stmt.reset()?;
 
         let down_migrations_stmt = local_db.prepare_v2("select e.value ->> 'sql' as sql from (select id, down_migrations from ps_migration where id > ?1 order by id desc limit 1) m, json_each(m.down_migrations) e")?;
-        down_migrations_stmt.bind_int(1, CODE_VERSION);
+        down_migrations_stmt.bind_int(1, CODE_VERSION)?;
 
         let mut down_sql: Vec<String> = alloc::vec![];
 
@@ -281,7 +281,7 @@ DELETE FROM ps_kv WHERE key != 'client_id';
 
     let tables_stmt = local_db
         .prepare_v2("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB ?1")?;
-    tables_stmt.bind_text(1, table_glob, sqlite::Destructor::STATIC);
+    tables_stmt.bind_text(1, table_glob, sqlite::Destructor::STATIC)?;
 
     let mut tables: Vec<String> = alloc::vec![];
 

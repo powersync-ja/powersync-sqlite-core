@@ -2,24 +2,20 @@ extern crate alloc;
 
 use alloc::format;
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use core::ffi::c_int;
 use core::slice;
 
-use serde::{Deserialize, Serialize};
-use serde_json as json;
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
-use sqlite_nostd::{Connection, Context, Value};
+use sqlite_nostd::{Connection, Context};
 
 use crate::create_sqlite_optional_text_fn;
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
-use crate::sync_types::Checkpoint;
 
 fn powersync_client_id_impl(
     ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
+    _args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
     let db = ctx.db_handle();
 
@@ -45,7 +41,7 @@ create_sqlite_text_fn!(
 
 fn powersync_last_synced_at_impl(
     ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
+    _args: &[*mut sqlite::value],
 ) -> Result<Option<String>, SQLiteError> {
     let db = ctx.db_handle();
 
