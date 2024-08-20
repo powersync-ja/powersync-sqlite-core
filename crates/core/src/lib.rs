@@ -11,23 +11,24 @@ use core::ffi::{c_char, c_int};
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 
+mod checkpoint;
+mod client_id;
+mod crud_vtab;
+mod diff;
+mod error;
+mod ext;
+mod macros;
+mod operations;
+mod operations_vtab;
+mod schema_management;
+mod sync_local;
+mod sync_types;
 mod util;
 mod uuid;
-mod views;
-mod view_admin;
-mod macros;
-mod diff;
-mod schema_management;
-mod operations_vtab;
-mod operations;
-mod ext;
-mod error;
-mod crud_vtab;
-mod vtab_util;
-mod sync_local;
-mod checkpoint;
 mod version;
-mod sync_types;
+mod view_admin;
+mod views;
+mod vtab_util;
 
 #[no_mangle]
 pub extern "C" fn sqlite3_powersync_init(
@@ -43,7 +44,7 @@ pub extern "C" fn sqlite3_powersync_init(
         code as c_int
     } else {
         ResultCode::OK as c_int
-    }
+    };
 }
 
 fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
@@ -53,6 +54,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::diff::register(db)?;
     crate::view_admin::register(db)?;
     crate::checkpoint::register(db)?;
+    crate::client_id::register(db)?;
 
     crate::schema_management::register(db)?;
     crate::operations_vtab::register(db)?;
@@ -61,12 +63,17 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     Ok(())
 }
 
-
 extern "C" {
     #[cfg(feature = "static")]
     #[allow(non_snake_case)]
     pub fn sqlite3_auto_extension(
-        xEntryPoint: Option<extern "C" fn(*mut sqlite::sqlite3, *mut *mut c_char, *mut sqlite::api_routines) -> c_int>,
+        xEntryPoint: Option<
+            extern "C" fn(
+                *mut sqlite::sqlite3,
+                *mut *mut c_char,
+                *mut sqlite::api_routines,
+            ) -> c_int,
+        >,
     ) -> ::core::ffi::c_int;
 }
 
