@@ -12,6 +12,7 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context, Value};
 
+use crate::create_sqlite_optional_text_fn;
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
 use crate::sync_types::Checkpoint;
@@ -39,7 +40,30 @@ fn powersync_client_id_impl(
 create_sqlite_text_fn!(
     powersync_client_id,
     powersync_client_id_impl,
-    "powersync_client_id"
+    "powersync_last_synced_at"
+);
+
+fn powersync_last_synced_at_impl(
+    ctx: *mut sqlite::context,
+    args: &[*mut sqlite::value],
+) -> Result<Option<String>, SQLiteError> {
+    let db = ctx.db_handle();
+
+    // language=SQLite
+    let statement = db.prepare_v2("select value from ps_kv where key = 'last_synced_at'")?;
+
+    if statement.step()? == ResultCode::ROW {
+        let client_id = statement.column_text(0)?;
+        return Ok(Some(client_id.to_string()));
+    } else {
+        return Ok(None);
+    }
+}
+
+create_sqlite_optional_text_fn!(
+    powersync_last_synced_at,
+    powersync_last_synced_at_impl,
+    "powersync_last_synced_at"
 );
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
@@ -49,6 +73,16 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         sqlite::UTF8 | sqlite::DETERMINISTIC,
         None,
         Some(powersync_client_id),
+        None,
+        None,
+        None,
+    )?;
+    db.create_function_v2(
+        "powersync_last_synced_at",
+        0,
+        sqlite::UTF8 | sqlite::DETERMINISTIC,
+        None,
+        Some(powersync_last_synced_at),
         None,
         None,
         None,

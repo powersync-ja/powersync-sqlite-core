@@ -12,11 +12,11 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 
 mod checkpoint;
-mod client_id;
 mod crud_vtab;
 mod diff;
 mod error;
 mod ext;
+mod kv;
 mod macros;
 mod operations;
 mod operations_vtab;
@@ -54,7 +54,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::diff::register(db)?;
     crate::view_admin::register(db)?;
     crate::checkpoint::register(db)?;
-    crate::client_id::register(db)?;
+    crate::kv::register(db)?;
 
     crate::schema_management::register(db)?;
     crate::operations_vtab::register(db)?;

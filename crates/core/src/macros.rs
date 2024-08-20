@@ -1,4 +1,3 @@
-
 #[macro_export]
 macro_rules! create_sqlite_text_fn {
     ($fn_name:ident, $fn_impl_name:ident, $description:literal) => {
@@ -31,6 +30,41 @@ macro_rules! create_sqlite_text_fn {
     };
 }
 
+#[macro_export]
+macro_rules! create_sqlite_optional_text_fn {
+    ($fn_name:ident, $fn_impl_name:ident, $description:literal) => {
+        extern "C" fn $fn_name(
+            ctx: *mut sqlite::context,
+            argc: c_int,
+            argv: *mut *mut sqlite::value,
+        ) {
+            let args = sqlite::args!(argc, argv);
+
+            let result = $fn_impl_name(ctx, args);
+
+            if let Err(err) = result {
+                let SQLiteError(code, message) = SQLiteError::from(err);
+                if message.is_some() {
+                    ctx.result_error(&format!("{:} {:}", $description, message.unwrap()));
+                } else {
+                    let error = ctx.db_handle().errmsg().unwrap();
+                    if error == "not an error" {
+                        ctx.result_error(&format!("{:}", $description));
+                    } else {
+                        ctx.result_error(&format!("{:} {:}", $description, error));
+                    }
+                }
+                ctx.result_error_code(code);
+            } else if let Ok(r) = result {
+                if let Some(s) = r {
+                    ctx.result_text_transient(&s);
+                } else {
+                    ctx.result_null();
+                }
+            }
+        }
+    };
+}
 
 // Wrap a function in an auto-transaction.
 // Gives the equivalent of SQLite's auto-commit behaviour, except that applies to all statements
