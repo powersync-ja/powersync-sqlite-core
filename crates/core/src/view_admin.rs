@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         return Err(SQLiteError::from(ResultCode::ABORT));
     }
 
-    const CODE_VERSION: i32 = 2;
+    const CODE_VERSION: i32 = 3;
 
     let mut current_version = current_version_stmt.column_int(0)?;
 
@@ -236,6 +236,16 @@ ALTER TABLE ps_crud ADD COLUMN tx_id INTEGER;
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(2, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 2', 'params', json_array()), json_object('sql', 'DROP TABLE ps_tx', 'params', json_array()), json_object('sql', 'ALTER TABLE ps_crud DROP COLUMN tx_id', 'params', json_array())));
 ").into_db_result(local_db)?;
+    }
+
+    if current_version < 3 {
+        // language=SQLite
+        local_db.exec_safe("\
+CREATE TABLE ps_kv(key TEXT PRIMARY KEY NOT NULL, value BLOB);
+INSERT INTO ps_kv(key, value) values('client_id', uuid());
+
+INSERT INTO ps_migration(id, down_migrations) VALUES(3, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 3'), json_object('sql', 'DROP TABLE ps_kv')));
+    ").into_db_result(local_db)?;
     }
 
     Ok(String::from(""))
