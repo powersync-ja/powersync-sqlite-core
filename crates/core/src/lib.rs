@@ -1,5 +1,6 @@
 #![no_std]
 #![feature(vec_into_raw_parts)]
+#![allow(internal_features)]
 #![feature(core_intrinsics)]
 #![feature(error_in_core)]
 #![feature(assert_matches)]
