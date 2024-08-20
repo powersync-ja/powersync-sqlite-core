@@ -1,7 +1,8 @@
 extern crate alloc;
 
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::ffi::c_int;
 use core::slice;
 
@@ -9,9 +10,9 @@ use sqlite::{ResultCode, Value};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::{create_auto_tx_function, create_sqlite_text_fn};
 use crate::error::{PSResult, SQLiteError};
 use crate::util::quote_identifier;
+use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 fn powersync_drop_view_impl(
     ctx: *mut sqlite::context,
@@ -62,7 +63,9 @@ fn powersync_internal_table_name_impl(
     let local_db = ctx.db_handle();
 
     // language=SQLite
-    let stmt1 = local_db.prepare_v2("SELECT json_extract(?1, '$.name') as name, ifnull(json_extract(?1, '$.local_only'), 0)")?;
+    let stmt1 = local_db.prepare_v2(
+        "SELECT json_extract(?1, '$.name') as name, ifnull(json_extract(?1, '$.local_only'), 0)",
+    )?;
     stmt1.bind_text(1, schema, sqlite::Destructor::STATIC)?;
 
     let step_result = stmt1.step()?;
@@ -115,26 +118,80 @@ fn powersync_init_impl(
     let local_db = ctx.db_handle();
 
     // language=SQLite
-    local_db.exec_safe("\
-CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations TEXT)")?;
+    local_db.exec_safe(
+        "\
+CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations TEXT)",
+    )?;
 
     // language=SQLite
-    let stmt = local_db.prepare_v2("SELECT ifnull(max(id), 0) as version FROM ps_migration")?;
-    let rc = stmt.step()?;
+    let current_version_stmt =
+        local_db.prepare_v2("SELECT ifnull(max(id), 0) as version FROM ps_migration")?;
+    let rc = current_version_stmt.step()?;
     if rc != ResultCode::ROW {
         return Err(SQLiteError::from(ResultCode::ABORT));
     }
 
-    let version = stmt.column_int(0)?;
+    const CODE_VERSION: i32 = 2;
 
-    if version > 2 {
-        // We persist down migrations, but don't support running them yet
-        return Err(SQLiteError(ResultCode::MISUSE, Some(String::from("Downgrade not supported"))));
+    let mut current_version = current_version_stmt.column_int(0)?;
+
+    while current_version > CODE_VERSION {
+        // Run down migrations.
+        // This is rare, we don't worry about optimizing this.
+
+        current_version_stmt.reset()?;
+
+        let down_migrations_stmt = local_db.prepare_v2("select e.value ->> 'sql' as sql from (select id, down_migrations from ps_migration where id > ?1 order by id desc limit 1) m, json_each(m.down_migrations) e")?;
+        down_migrations_stmt.bind_int(1, CODE_VERSION);
+
+        let mut down_sql: Vec<String> = alloc::vec![];
+
+        while down_migrations_stmt.step()? == ResultCode::ROW {
+            let sql = down_migrations_stmt.column_text(0)?;
+            down_sql.push(sql.to_string());
+        }
+
+        for sql in down_sql {
+            let rs = local_db.exec_safe(&sql);
+            if let Err(code) = rs {
+                return Err(SQLiteError(
+                    code,
+                    Some(format!(
+                        "Down migration failed for {:} {:}",
+                        current_version, sql
+                    )),
+                ));
+            }
+        }
+
+        // Refresh the version
+        current_version_stmt.reset()?;
+        let rc = current_version_stmt.step()?;
+        if rc != ResultCode::ROW {
+            return Err(SQLiteError(
+                rc,
+                Some("Down migration failed - could not get version".to_string()),
+            ));
+        }
+        let new_version = current_version_stmt.column_int(0)?;
+        if new_version >= current_version {
+            // Database down from version $currentVersion to $version failed - version not updated after dow migration
+            return Err(SQLiteError(
+                ResultCode::ABORT,
+                Some(format!(
+                    "Down migration failed - version not updated from {:}",
+                    current_version
+                )),
+            ));
+        }
+        current_version = new_version;
     }
 
-    if version < 1 {
+    if current_version < 1 {
         // language=SQLite
-        local_db.exec_safe("
+        local_db
+            .exec_safe(
+                "
 CREATE TABLE ps_oplog(
   bucket TEXT NOT NULL,
   op_id INTEGER NOT NULL,
@@ -164,10 +221,12 @@ CREATE TABLE ps_untyped(type TEXT NOT NULL, id TEXT NOT NULL, data TEXT, PRIMARY
 CREATE TABLE ps_crud (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT);
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(1, NULL);
-").into_db_result(local_db)?;
+",
+            )
+            .into_db_result(local_db)?;
     }
 
-    if version < 2 {
+    if current_version < 2 {
         // language=SQLite
         local_db.exec_safe("\
 CREATE TABLE ps_tx(id INTEGER PRIMARY KEY NOT NULL, current_tx INTEGER, next_tx INTEGER);
@@ -175,20 +234,15 @@ INSERT INTO ps_tx(id, current_tx, next_tx) VALUES(1, NULL, 1);
 
 ALTER TABLE ps_crud ADD COLUMN tx_id INTEGER;
 
-INSERT INTO ps_migration(id, down_migrations) VALUES(2, json_array(json_object('sql', 'DELETE FROM ps_migrations WHERE id >= 2', 'params', json_array()), json_object('sql', 'DROP TABLE ps_tx', 'params', json_array()), json_object('sql', 'ALTER TABLE ps_crud DROP COLUMN tx_id', 'params', json_array())));
+INSERT INTO ps_migration(id, down_migrations) VALUES(2, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 2', 'params', json_array()), json_object('sql', 'DROP TABLE ps_tx', 'params', json_array()), json_object('sql', 'ALTER TABLE ps_crud DROP COLUMN tx_id', 'params', json_array())));
 ").into_db_result(local_db)?;
     }
 
     Ok(String::from(""))
 }
 
-
 create_auto_tx_function!(powersync_init_tx, powersync_init_impl);
-create_sqlite_text_fn!(
-    powersync_init,
-    powersync_init_tx,
-    "powersync_init"
-);
+create_sqlite_text_fn!(powersync_init, powersync_init_tx, "powersync_init");
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     // This entire module is just making it easier to edit sqlite_master using queries.
@@ -259,7 +313,6 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         None,
     )?;
 
-
     db.create_function_v2(
         "powersync_internal_table_name",
         1,
@@ -324,14 +377,16 @@ BEGIN
 END;")?;
 
     // language=SQLite
-    db.exec_safe("\
+    db.exec_safe(
+        "\
 CREATE TEMP VIEW powersync_tables(name, internal_name, local_only)
 AS SELECT
     powersync_external_table_name(name) as name,
     name as internal_name,
     name GLOB 'ps_data_local__*' as local_only
     FROM sqlite_master
-    WHERE type = 'table' AND name GLOB 'ps_data_*';")?;
+    WHERE type = 'table' AND name GLOB 'ps_data_*';",
+    )?;
 
     Ok(())
 }
