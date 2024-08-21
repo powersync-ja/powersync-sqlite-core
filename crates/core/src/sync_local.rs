@@ -2,20 +2,21 @@ use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
 
+use crate::error::{PSResult, SQLiteError};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{ColumnType, Connection, ResultCode};
-use crate::error::{SQLiteError, PSResult};
 
 use crate::ext::SafeManagedStmt;
 use crate::util::{internal_table_name, quote_internal_name};
 
-
 pub fn can_update_local(db: *mut sqlite::sqlite3) -> Result<bool, SQLiteError> {
     // language=SQLite
-    let statement = db.prepare_v2("\
+    let statement = db.prepare_v2(
+        "\
 SELECT group_concat(name)
 FROM ps_buckets
-WHERE target_op > last_op AND (name = '$local' OR pending_delete = 0)")?;
+WHERE target_op > last_op AND (name = '$local' OR pending_delete = 0)",
+    )?;
 
     if statement.step()? != ResultCode::ROW {
         return Err(SQLiteError::from(ResultCode::ABORT));
@@ -36,15 +37,15 @@ WHERE target_op > last_op AND (name = '$local' OR pending_delete = 0)")?;
     Ok(true)
 }
 
-pub fn sync_local(
-    db: *mut sqlite::sqlite3, _data: &str) -> Result<i64, SQLiteError> {
-
+pub fn sync_local(db: *mut sqlite::sqlite3, _data: &str) -> Result<i64, SQLiteError> {
     if !can_update_local(db)? {
         return Ok(0);
     }
 
     // language=SQLite
-    let statement = db.prepare_v2("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data_*'").into_db_result(db)?;
+    let statement = db
+        .prepare_v2("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data_*'")
+        .into_db_result(db)?;
     let mut tables: BTreeSet<String> = BTreeSet::new();
 
     while statement.step()? == ResultCode::ROW {
@@ -60,7 +61,9 @@ pub fn sync_local(
     // |--SEARCH r USING INDEX ps_oplog_by_row (row_type=? AND row_id=?)
     // `--USE TEMP B-TREE FOR GROUP BY
     // language=SQLite
-    let statement = db.prepare_v2("\
+    let statement = db
+        .prepare_v2(
+            "\
 -- 3. Group the objects from different buckets together into a single one (ops).
 SELECT r.row_type as type,
     r.row_id as id,
@@ -79,7 +82,9 @@ FROM ps_buckets AS buckets
 WHERE r.superseded = 0
 AND b.superseded = 0
 -- Group for (3)
-GROUP BY r.row_type, r.row_id").into_db_result(db)?;
+GROUP BY r.row_type, r.row_id",
+        )
+        .into_db_result(db)?;
 
     // TODO: cache statements
 
@@ -96,12 +101,16 @@ GROUP BY r.row_type, r.row_id").into_db_result(db)?;
 
             if buckets == "[]" {
                 // DELETE
-                let delete_statement = db.prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted)).into_db_result(db)?;
+                let delete_statement = db
+                    .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
+                    .into_db_result(db)?;
                 delete_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
                 delete_statement.exec()?;
             } else {
                 // INSERT/UPDATE
-                let insert_statement = db.prepare_v2(&format!("REPLACE INTO {}(id, data) VALUES(?, ?)", quoted)).into_db_result(db)?;
+                let insert_statement = db
+                    .prepare_v2(&format!("REPLACE INTO {}(id, data) VALUES(?, ?)", quoted))
+                    .into_db_result(db)?;
                 insert_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
                 insert_statement.bind_text(2, data?, sqlite::Destructor::STATIC)?;
                 insert_statement.exec()?;
@@ -110,14 +119,18 @@ GROUP BY r.row_type, r.row_id").into_db_result(db)?;
             if buckets == "[]" {
                 // DELETE
                 // language=SQLite
-                let delete_statement = db.prepare_v2("DELETE FROM ps_untyped WHERE type = ? AND id = ?").into_db_result(db)?;
+                let delete_statement = db
+                    .prepare_v2("DELETE FROM ps_untyped WHERE type = ? AND id = ?")
+                    .into_db_result(db)?;
                 delete_statement.bind_text(1, type_name, sqlite::Destructor::STATIC)?;
                 delete_statement.bind_text(2, id, sqlite::Destructor::STATIC)?;
                 delete_statement.exec()?;
             } else {
                 // INSERT/UPDATE
                 // language=SQLite
-                let insert_statement = db.prepare_v2("REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)").into_db_result(db)?;
+                let insert_statement = db
+                    .prepare_v2("REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)")
+                    .into_db_result(db)?;
                 insert_statement.bind_text(1, type_name, sqlite::Destructor::STATIC)?;
                 insert_statement.bind_text(2, id, sqlite::Destructor::STATIC)?;
                 insert_statement.bind_text(3, data?, sqlite::Destructor::STATIC)?;
@@ -127,9 +140,16 @@ GROUP BY r.row_type, r.row_id").into_db_result(db)?;
     }
 
     // language=SQLite
-    db.exec_safe("UPDATE ps_buckets
+    db.exec_safe(
+        "UPDATE ps_buckets
                  SET last_applied_op = last_op
-                 WHERE last_applied_op != last_op").into_db_result(db)?;
+                 WHERE last_applied_op != last_op",
+    )
+    .into_db_result(db)?;
+
+    // language=SQLite
+    db.exec_safe("insert or replace into ps_kv(key, value) values('last_synced_at', datetime())")
+        .into_db_result(db)?;
 
     Ok(1)
 }

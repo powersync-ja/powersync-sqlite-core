@@ -1,15 +1,11 @@
 use alloc::format;
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_json as json;
 
 use crate::error::{PSResult, SQLiteError};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, ResultCode};
 
 use crate::ext::SafeManagedStmt;
-use crate::sync_types::{BucketChecksum, Checkpoint, StreamingSyncLine};
 use crate::util::*;
 
 // Run inside a transaction
@@ -142,7 +138,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
             supersede_statement.reset()?;
 
             let should_skip_remove = !superseded && op == "REMOVE";
-            if (should_skip_remove) {
+            if should_skip_remove {
                 // If a REMOVE statement did not replace (supersede) any previous
                 // operations, we do not need to persist it.
                 // The same applies if the bucket was not synced to the local db yet,
@@ -304,12 +300,6 @@ pub fn delete_bucket(db: *mut sqlite::sqlite3, name: &str) -> Result<(), SQLiteE
         "INSERT INTO ps_buckets(name, pending_delete, last_op) SELECT ?1, 1, IFNULL(MAX(op_id), 0) FROM ps_oplog WHERE bucket = ?1")?;
     statement.bind_text(1, &new_name, sqlite::Destructor::STATIC)?;
     statement.exec()?;
-
-    Ok(())
-}
-
-pub fn stream_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), SQLiteError> {
-    let line: StreamingSyncLine = serde_json::from_str(data)?;
 
     Ok(())
 }
