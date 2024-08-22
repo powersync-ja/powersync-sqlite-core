@@ -63,7 +63,7 @@ val prefabAar = tasks.register<Zip>("prefabAar") {
         }
     }
 
-    archiveFileName.set("build/outputs/powersync-sqlite-core.aar")
+    archiveFileName.set("build/outputs/aar/powersync-sqlite-core.aar")
     destinationDirectory.set(file("./"))
 }
 
