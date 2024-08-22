@@ -157,3 +157,7 @@ signing {
 tasks.withType<AbstractPublishToMaven>() {
     dependsOn(prefabAar)
 }
+
+tasks.named("build") {
+    dependsOn(prefabAar)
+}
