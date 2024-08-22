@@ -11,6 +11,9 @@ use sqlite_nostd as sqlite;
 use sqlite_nostd::ManagedStmt;
 use uuid::Uuid;
 
+#[cfg(not(feature = "getrandom"))]
+use uuid::Builder;
+
 use crate::error::SQLiteError;
 
 pub fn quote_string(s: &str) -> String {
