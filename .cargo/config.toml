@@ -52,3 +52,26 @@ rustflags = [
     "-C", "link-arg=-mmacosx-version-min=10.13",
 ]
 
+
+# For Android, it is important to set the soname.
+# Otherwise, the linker hardcodes the path in the lib,
+# which breaks loading.
+[target.aarch64-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,-soname,libpowersync.so",
+]
+
+[target.armv7-linux-androideabi]
+rustflags = [
+    "-C", "link-arg=-Wl,-soname,libpowersync.so",
+]
+
+[target.x86_64-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,-soname,libpowersync.so",
+]
+
+[target.i686-linux-android]
+rustflags = [
+    "-C", "link-arg=-Wl,-soname,libpowersync.so",
+]

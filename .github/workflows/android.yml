@@ -1,7 +1,5 @@
 on:
   push:
-    tags:
-      - "*"
 name: "android"
 jobs:
   build:
@@ -16,10 +14,6 @@ jobs:
         with:
           distribution: "temurin"
           java-version: "17"
-
-      - uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26
 
       - name: Validate Gradle wrapper
         uses: gradle/wrapper-validation-action@ccb4328a959376b642e027874838f60f8e596de3

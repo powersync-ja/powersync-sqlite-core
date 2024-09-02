@@ -1,0 +1,20 @@
+on:
+  push:
+name: "linux"
+jobs:
+  build_wasm:
+    name: Basic WASM build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build WASM bytecode
+        run: RUSTFLAGS="--emit=llvm-bc -C linker=/bin/true" cargo build -p powersync_loadable --profile wasm --no-default-features --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/static sqlite_nostd/omit_load_extension" -Z build-std=panic_abort,core,alloc --target wasm32-unknown-emscripten

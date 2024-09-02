@@ -1,7 +1,5 @@
 on:
   push:
-    tags:
-      - "*"
 name: "ios"
 jobs:
   build:

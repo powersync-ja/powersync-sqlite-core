@@ -5,8 +5,9 @@ Bump the version number in these places:
 1. Cargo.toml
 2. powersync-sqlite-core.podspec.
 3. android/build.gradle.kts
-4. build-pod.sh - CFBundleVersion and CFBundleShortVersionString.
-5. `cargo build` to update Cargo.lock
+4. android/src/prefab/prefab.json
+5. build-pod.sh - CFBundleVersion and CFBundleShortVersionString.
+6. `cargo build` to update Cargo.lock
 
 Create a tag:
 

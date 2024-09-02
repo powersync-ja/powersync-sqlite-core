@@ -1,13 +1,12 @@
 import java.util.Base64
 
 plugins {
-    id("com.android.library") version "8.0.1"
     id("maven-publish")
     id("signing")
 }
 
 group = "co.powersync"
-version = "0.2.0"
+version = "0.2.1"
 description = "PowerSync Core SQLite Extension"
 
 repositories {
@@ -15,7 +14,7 @@ repositories {
     google()
 }
 
-val buildRust = tasks.register("buildRust", Exec::class.java) {
+val buildRust = tasks.register<Exec>("buildRust") {
     workingDir("..")
     commandLine(
         "cargo",
@@ -38,36 +37,39 @@ val buildRust = tasks.register("buildRust", Exec::class.java) {
     )
 }
 
-android {
-    compileSdk = 33
+val prefabAar = tasks.register<Zip>("prefabAar") {
+    dependsOn(buildRust)
 
-    namespace = "co.powersync.sqlitecore"
-
-    defaultConfig {
-        minSdk = 21
+    from("build/intermediates/jniLibs") {
+        include("**/*")
+        into("jni")
     }
 
-    sourceSets {
-        getByName("main") {
-            jniLibs.srcDir("build/intermediates/jniLibs")
+    from("src/") {
+        include("**/*")
+    }
+
+    val architectures = listOf(
+        "armeabi-v7a",
+        "arm64-v8a",
+        "x86",
+        "x86_64"
+    )
+
+    architectures.forEach { architecture ->
+        from("build/intermediates/jniLibs/$architecture/") {
+            include("libpowersync.so")
+            into("prefab/modules/powersync/libs/android.$architecture/")
         }
     }
 
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
-    }
-
-    publishing {
-        singleVariant("release") {
-            withSourcesJar()
-        }
-    }
+    archiveFileName.set("build/outputs/aar/powersync-sqlite-core.aar")
+    destinationDirectory.set(file("./"))
 }
 
-tasks.named("preBuild") {
-    dependsOn(buildRust)
+val sourcesJar = tasks.register<Jar>("sourcesJar") {
+    // We don't have any actual java sources to bundle
+    archiveClassifier.set("sources")
 }
 
 publishing {
@@ -78,7 +80,13 @@ publishing {
             version = project.version.toString()
 
             afterEvaluate {
-                from(components["release"])
+                artifact(prefabAar) {
+                    extension = "aar"
+                }
+
+                artifact(sourcesJar) {
+                    classifier = "sources"
+                }
             }
 
             pom {
@@ -147,5 +155,9 @@ signing {
 }
 
 tasks.withType<AbstractPublishToMaven>() {
-    dependsOn("assembleRelease")
+    dependsOn(prefabAar)
+}
+
+tasks.named("build") {
+    dependsOn(prefabAar)
 }
