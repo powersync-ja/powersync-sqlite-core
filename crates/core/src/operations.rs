@@ -98,7 +98,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
     let mut last_op: Option<i64> = None;
     let mut add_checksum: i32 = 0;
     let mut op_checksum: i32 = 0;
-    let mut pending_compact: i32 = 0;
+    let mut remove_operations: i32 = 0;
 
     while iterate_statement.step()? == ResultCode::ROW {
         let op_id = iterate_statement.column_int64(0)?;
@@ -181,7 +181,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
             if opi == 4 {
                 // We persisted a REMOVE statement, so the bucket needs
                 // to be compacted at some point.
-                pending_compact = 1;
+                remove_operations += 1;
             }
         } else if op == "MOVE" {
             add_checksum = add_checksum.wrapping_add(checksum);
@@ -215,14 +215,14 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
                 SET last_op = ?2,
                     add_checksum = (add_checksum + ?3) & 0xffffffff,
                     op_checksum = (op_checksum + ?4) & 0xffffffff,
-                    pending_compact = (pending_compact OR ?5)
+                    remove_operations = (remove_operations + ?5)
             WHERE name = ?1",
         )?;
         statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
         statement.bind_int64(2, *last_op)?;
         statement.bind_int(3, add_checksum)?;
         statement.bind_int(4, op_checksum)?;
-        statement.bind_int(5, pending_compact)?;
+        statement.bind_int(5, remove_operations)?;
 
         statement.exec()?;
     }
@@ -244,15 +244,22 @@ SELECT
       AND (oplog.superseded = 1 OR oplog.op != 3)
     ) as checksum
 FROM ps_buckets
-WHERE ps_buckets.pending_delete = 0 AND ps_buckets.pending_compact = 1",
+WHERE ps_buckets.pending_delete = 0 AND
+  ps_buckets.remove_operations >= CASE
+        WHEN ?1 = '' THEN 1
+        ELSE IFNULL(?1 ->> 'threshold', 1)
+     END",
     )?;
+    // Compact bucket if there are 50 or more operations
+    statement.bind_text(1, _data, sqlite::Destructor::STATIC);
 
     // language=SQLite
     let update_statement = db.prepare_v2(
         "
         UPDATE ps_buckets
            SET add_checksum = (add_checksum + ?2) & 0xffffffff,
-               op_checksum = (op_checksum - ?2) & 0xffffffff
+               op_checksum = (op_checksum - ?2) & 0xffffffff,
+               remove_operations = 0
            WHERE ps_buckets.name = ?1",
     )?;
 
