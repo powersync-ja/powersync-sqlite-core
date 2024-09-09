@@ -98,6 +98,7 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
     let mut last_op: Option<i64> = None;
     let mut add_checksum: i32 = 0;
     let mut op_checksum: i32 = 0;
+    let mut pending_compact: i32 = 0;
 
     while iterate_statement.step()? == ResultCode::ROW {
         let op_id = iterate_statement.column_int64(0)?;
@@ -176,6 +177,12 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
             insert_statement.exec()?;
 
             op_checksum = op_checksum.wrapping_add(checksum);
+
+            if opi == 4 {
+                // We persisted a REMOVE statement, so the bucket needs
+                // to be compacted at some point.
+                pending_compact = 1;
+            }
         } else if op == "MOVE" {
             add_checksum = add_checksum.wrapping_add(checksum);
         } else if op == "CLEAR" {
@@ -207,13 +214,15 @@ INSERT INTO ps_oplog(bucket, op_id, op, key, row_type, row_id, data, hash, super
             "UPDATE ps_buckets
                 SET last_op = ?2,
                     add_checksum = (add_checksum + ?3) & 0xffffffff,
-                    op_checksum = (op_checksum + ?4) & 0xffffffff
+                    op_checksum = (op_checksum + ?4) & 0xffffffff,
+                    pending_compact = (pending_compact OR ?5)
             WHERE name = ?1",
         )?;
         statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
         statement.bind_int64(2, *last_op)?;
         statement.bind_int(3, add_checksum)?;
         statement.bind_int(4, op_checksum)?;
+        statement.bind_int(5, pending_compact)?;
 
         statement.exec()?;
     }
@@ -235,7 +244,7 @@ SELECT
       AND (oplog.superseded = 1 OR oplog.op != 3)
     ) as checksum
 FROM ps_buckets
-WHERE ps_buckets.pending_delete = 0",
+WHERE ps_buckets.pending_delete = 0 AND ps_buckets.pending_compact = 1",
     )?;
 
     // language=SQLite
@@ -264,7 +273,6 @@ WHERE ps_buckets.pending_delete = 0",
 
         update_statement.bind_text(1, name, sqlite::Destructor::STATIC)?;
         update_statement.bind_int(2, checksum)?;
-
         update_statement.exec()?;
 
         // Must use the same values as above

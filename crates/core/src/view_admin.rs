@@ -252,12 +252,19 @@ INSERT INTO ps_migration(id, down_migrations) VALUES(3, json_array(json_object('
         // language=SQLite
         local_db.exec_safe("\
 ALTER TABLE ps_buckets ADD COLUMN op_checksum INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ps_buckets ADD COLUMN pending_compact INTEGER NOT NULL DEFAULT 0;
 
 UPDATE ps_buckets SET op_checksum = (
   SELECT IFNULL(SUM(ps_oplog.hash), 0) & 0xffffffff FROM ps_oplog WHERE ps_oplog.bucket = ps_buckets.name
 );
 
-INSERT INTO ps_migration(id, down_migrations) VALUES(4, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 4'), json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN op_checksum')));
+INSERT INTO ps_migration(id, down_migrations)
+  VALUES(4,
+    json_array(
+      json_object('sql', 'DELETE FROM ps_migration WHERE id >= 4'),
+      json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN op_checksum'),
+      json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN pending_compact')
+    ));
     ").into_db_result(local_db)?;
     }
 
