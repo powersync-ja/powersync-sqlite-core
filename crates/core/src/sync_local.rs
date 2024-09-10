@@ -150,9 +150,9 @@ GROUP BY b.row_type, b.row_id",
     )
     .into_db_result(db)?;
 
-    // // language=SQLite
-    // db.exec_safe("DELETE FROM ps_updated_rows")
-    //     .into_db_result(db)?;
+    // language=SQLite
+    db.exec_safe("DELETE FROM ps_updated_rows")
+        .into_db_result(db)?;
 
     // language=SQLite
     db.exec_safe("insert or replace into ps_kv(key, value) values('last_synced_at', datetime())")
