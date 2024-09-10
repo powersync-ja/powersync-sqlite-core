@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         return Err(SQLiteError::from(ResultCode::ABORT));
     }
 
-    const CODE_VERSION: i32 = 4;
+    const CODE_VERSION: i32 = 5;
 
     let mut current_version = current_version_stmt.column_int(0)?;
 
@@ -269,7 +269,7 @@ INSERT INTO ps_migration(id, down_migrations)
     ").into_db_result(local_db)?;
     }
 
-    if current_version < 4 {
+    if current_version < 5 {
         // language=SQLite
         local_db
             .exec_safe(
