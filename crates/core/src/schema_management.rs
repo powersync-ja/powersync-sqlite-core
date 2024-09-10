@@ -13,7 +13,6 @@ use sqlite_nostd::Context;
 use crate::error::{PSResult, SQLiteError};
 use crate::ext::ExtendedDatabase;
 use crate::util::{quote_identifier, quote_json_path};
-use crate::view_admin::powersync_init_impl;
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 fn update_tables(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), SQLiteError> {
@@ -303,8 +302,7 @@ fn powersync_replace_schema_impl(
     let db = ctx.db_handle();
 
     // language=SQLite
-    // db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
-    powersync_init_impl(ctx, args);
+    db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
 
     update_tables(db, schema)?;
     update_indexes(db, schema)?;

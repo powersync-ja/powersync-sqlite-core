@@ -1,12 +1,11 @@
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 
 use crate::error::{PSResult, SQLiteError};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, ResultCode};
 
 use crate::ext::SafeManagedStmt;
-use crate::util::*;
 
 // Run inside a transaction
 pub fn insert_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), SQLiteError> {
@@ -145,7 +144,7 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
             }
             supersede_statement.reset()?;
 
-            if (op == "REMOVE") {
+            if op == "REMOVE" {
                 let should_skip_remove = !superseded;
 
                 add_checksum = add_checksum.wrapping_add(checksum);
@@ -251,13 +250,13 @@ WHERE bucket = ?1",
     Ok(())
 }
 
-pub fn clear_remove_ops(db: *mut sqlite::sqlite3, _data: &str) -> Result<(), SQLiteError> {
+pub fn clear_remove_ops(_db: *mut sqlite::sqlite3, _data: &str) -> Result<(), SQLiteError> {
     // No-op
 
     Ok(())
 }
 
-pub fn delete_pending_buckets(db: *mut sqlite::sqlite3, _data: &str) -> Result<(), SQLiteError> {
+pub fn delete_pending_buckets(_db: *mut sqlite::sqlite3, _data: &str) -> Result<(), SQLiteError> {
     // No-op
 
     Ok(())

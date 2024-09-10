@@ -111,7 +111,7 @@ create_sqlite_text_fn!(
     "powersync_external_table_name"
 );
 
-pub fn powersync_init_impl(
+fn powersync_init_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
