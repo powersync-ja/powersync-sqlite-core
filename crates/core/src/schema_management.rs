@@ -10,22 +10,27 @@ use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::Context;
 
-use crate::{create_auto_tx_function, create_sqlite_text_fn};
-use crate::error::{SQLiteError, PSResult};
+use crate::error::{PSResult, SQLiteError};
 use crate::ext::ExtendedDatabase;
 use crate::util::{quote_identifier, quote_json_path};
+use crate::view_admin::powersync_init_impl;
+use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 fn update_tables(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), SQLiteError> {
     {
         // In a block so that the statement is finalized before dropping tables
         // language=SQLite
-        let statement = db.prepare_v2("\
+        let statement = db
+            .prepare_v2(
+                "\
 SELECT
         json_extract(json_each.value, '$.name') as name,
         powersync_internal_table_name(json_each.value) as internal_name,
         ifnull(json_extract(json_each.value, '$.local_only'), 0) as local_only
       FROM json_each(json_extract(?, '$.tables'))
-        WHERE name NOT IN (SELECT name FROM powersync_tables)").into_db_result(db)?;
+        WHERE name NOT IN (SELECT name FROM powersync_tables)",
+            )
+            .into_db_result(db)?;
         statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
 
         while statement.step().into_db_result(db)? == ResultCode::ROW {
@@ -33,32 +38,56 @@ SELECT
             let internal_name = statement.column_text(1)?;
             let local_only = statement.column_int(2)? != 0;
 
-            db.exec_safe(&format!("CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)", quote_identifier(internal_name))).into_db_result(db)?;
+            db.exec_safe(&format!(
+                "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
+                quote_identifier(internal_name)
+            ))
+            .into_db_result(db)?;
 
             if !local_only {
                 // MOVE data if any
-                db.exec_text(&format!("INSERT INTO {:}(id, data)
+                db.exec_text(
+                    &format!(
+                        "INSERT INTO {:}(id, data)
     SELECT id, data
     FROM ps_untyped
-    WHERE type = ?", quote_identifier(internal_name)), name).into_db_result(db)?;
+    WHERE type = ?",
+                        quote_identifier(internal_name)
+                    ),
+                    name,
+                )
+                .into_db_result(db)?;
 
                 // language=SQLite
-                db.exec_text("DELETE
+                db.exec_text(
+                    "DELETE
     FROM ps_untyped
-    WHERE type = ?", name)?;
+    WHERE type = ?",
+                    name,
+                )?;
             }
 
             if !local_only {
                 // MOVE data if any
-                db.exec_text(&format!("INSERT INTO {:}(id, data)
+                db.exec_text(
+                    &format!(
+                        "INSERT INTO {:}(id, data)
     SELECT id, data
     FROM ps_untyped
-    WHERE type = ?", quote_identifier(internal_name)), name).into_db_result(db)?;
+    WHERE type = ?",
+                        quote_identifier(internal_name)
+                    ),
+                    name,
+                )
+                .into_db_result(db)?;
 
                 // language=SQLite
-                db.exec_text("DELETE
+                db.exec_text(
+                    "DELETE
     FROM ps_untyped
-    WHERE type = ?", name)?;
+    WHERE type = ?",
+                    name,
+                )?;
             }
         }
     }
@@ -68,11 +97,15 @@ SELECT
     {
         // In a block so that the statement is finalized before dropping tables
         // language=SQLite
-        let statement = db.prepare_v2("\
+        let statement = db
+            .prepare_v2(
+                "\
 SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
     SELECT json_extract(json_each.value, '$.name')
     FROM json_each(json_extract(?, '$.tables'))
-  )").into_db_result(db)?;
+  )",
+            )
+            .into_db_result(db)?;
         statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
 
         while statement.step()? == ResultCode::ROW {
@@ -83,7 +116,14 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
             tables_to_drop.push(String::from(internal_name));
 
             if !local_only {
-                db.exec_text(&format!("INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}", quote_identifier(internal_name)), name).into_db_result(db)?;
+                db.exec_text(
+                    &format!(
+                        "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}",
+                        quote_identifier(internal_name)
+                    ),
+                    name,
+                )
+                .into_db_result(db)?;
             }
         }
     }
@@ -115,7 +155,6 @@ SELECT
       LEFT JOIN sqlite_master ON sqlite_master.name = index_name AND sqlite_master.type = 'index'
       ").into_db_result(db)?;
         statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
-
 
         while statement.step().into_db_result(db)? == ResultCode::ROW {
             let table_name = statement.column_text(0)?;
@@ -150,7 +189,12 @@ SELECT
                 }
             }
 
-            let sql = format!("CREATE INDEX {} ON {}({})", quote_identifier(index_name), quote_identifier(table_name), column_values.join(", "));
+            let sql = format!(
+                "CREATE INDEX {} ON {}({})",
+                quote_identifier(index_name),
+                quote_identifier(table_name),
+                column_values.join(", ")
+            );
             if existing_sql == "" {
                 statements.push(sql);
             } else if existing_sql != sql {
@@ -193,7 +237,6 @@ SELECT
 
     Ok(())
 }
-
 
 fn update_views(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), SQLiteError> {
     // Update existing views if modified
@@ -260,7 +303,8 @@ fn powersync_replace_schema_impl(
     let db = ctx.db_handle();
 
     // language=SQLite
-    db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
+    // db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
+    powersync_init_impl(ctx, args);
 
     update_tables(db, schema)?;
     update_indexes(db, schema)?;
@@ -275,7 +319,6 @@ create_sqlite_text_fn!(
     powersync_replace_schema_tx,
     "powersync_replace_schema"
 );
-
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     db.create_function_v2(

@@ -111,7 +111,7 @@ create_sqlite_text_fn!(
     "powersync_external_table_name"
 );
 
-fn powersync_init_impl(
+pub fn powersync_init_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
@@ -186,6 +186,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         }
         current_version = new_version;
     }
+    current_version_stmt.reset()?;
 
     if current_version < 1 {
         // language=SQLite
@@ -266,6 +267,56 @@ INSERT INTO ps_migration(id, down_migrations)
       json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN remove_operations')
     ));
     ").into_db_result(local_db)?;
+    }
+
+    if current_version < 4 {
+        // language=SQLite
+        local_db
+            .exec_safe(
+                "\
+DROP TABLE ps_buckets;
+DROP TABLE ps_oplog;
+
+CREATE TABLE ps_buckets(
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    last_applied_op INTEGER NOT NULL DEFAULT 0,
+    last_op INTEGER NOT NULL DEFAULT 0,
+    target_op INTEGER NOT NULL DEFAULT 0,
+    add_checksum INTEGER NOT NULL DEFAULT 0,
+    op_checksum INTEGER NOT NULL DEFAULT 0,
+    pending_delete INTEGER NOT NULL DEFAULT 0
+  );
+
+CREATE UNIQUE INDEX ps_buckets_name ON ps_buckets (name);
+
+CREATE TABLE ps_oplog(
+  bucket INTEGER NOT NULL,
+  op_id INTEGER NOT NULL,
+  row_type TEXT,
+  row_id TEXT,
+  key TEXT,
+  data TEXT,
+  hash INTEGER NOT NULL);
+
+CREATE INDEX ps_oplog_by_row ON ps_oplog (row_type, row_id);
+CREATE INDEX ps_oplog_by_opid ON ps_oplog (bucket, op_id);
+CREATE INDEX ps_oplog_by_key ON ps_oplog (bucket, key);
+
+CREATE TABLE ps_updated_rows(
+  row_type TEXT,
+  row_id TEXT);
+
+CREATE UNIQUE INDEX ps_updated_rows_row ON ps_updated_rows (row_type, row_id);
+
+INSERT INTO ps_migration(id, down_migrations)
+  VALUES(5,
+    json_array(
+      json_object('sql', 'DELETE FROM ps_migration WHERE id >= 5')
+    ));
+    ",
+            )
+            .into_db_result(local_db)?;
     }
 
     Ok(String::from(""))
