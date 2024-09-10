@@ -69,14 +69,14 @@ WITH updated_rows AS (
   SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
     CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
   AND (b.op_id > buckets.last_applied_op)
-  UNION SELECT row_type, row_id FROM ps_updated_rows
+  UNION ALL SELECT row_type, row_id FROM ps_updated_rows
 )
 
 -- 3. Group the objects from different buckets together into a single one (ops).
 SELECT b.row_type as type,
     b.row_id as id,
     r.data as data,
-    json_group_array(r.bucket) as buckets,
+    count(r.bucket) as buckets,
     /* max() affects which row is used for 'data' */
     max(r.op_id) as op_id
 -- 2. Find *all* current ops over different buckets for those objects (oplog r).
@@ -94,7 +94,7 @@ GROUP BY b.row_type, b.row_id",
     while statement.step().into_db_result(db)? == ResultCode::ROW {
         let type_name = statement.column_text(0)?;
         let id = statement.column_text(1)?;
-        let buckets = statement.column_text(3)?;
+        let buckets = statement.column_int(3)?;
         let data = statement.column_text(2);
 
         let table_name = internal_table_name(type_name);
@@ -102,7 +102,7 @@ GROUP BY b.row_type, b.row_id",
         if tables.contains(&table_name) {
             let quoted = quote_internal_name(type_name, false);
 
-            if buckets == "[]" || buckets == "[null]" {
+            if buckets == 0 {
                 // DELETE
                 let delete_statement = db
                     .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
@@ -119,7 +119,7 @@ GROUP BY b.row_type, b.row_id",
                 insert_statement.exec()?;
             }
         } else {
-            if buckets == "[]" {
+            if buckets == 0 {
                 // DELETE
                 // language=SQLite
                 let delete_statement = db
