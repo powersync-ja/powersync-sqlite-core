@@ -286,7 +286,7 @@ CREATE TABLE ps_buckets(
     add_checksum INTEGER NOT NULL DEFAULT 0,
     op_checksum INTEGER NOT NULL DEFAULT 0,
     pending_delete INTEGER NOT NULL DEFAULT 0
-  );
+  ) STRICT;
 
 CREATE UNIQUE INDEX ps_buckets_name ON ps_buckets (name);
 
@@ -297,7 +297,7 @@ CREATE TABLE ps_oplog(
   row_id TEXT,
   key TEXT,
   data TEXT,
-  hash INTEGER NOT NULL);
+  hash INTEGER NOT NULL) STRICT;
 
 CREATE INDEX ps_oplog_by_row ON ps_oplog (row_type, row_id);
 CREATE INDEX ps_oplog_by_opid ON ps_oplog (bucket, op_id);

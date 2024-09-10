@@ -67,7 +67,7 @@ pub fn sync_local(db: *mut sqlite::sqlite3, _data: &str) -> Result<i64, SQLiteEr
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
 WITH updated_rows AS (
   SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
-    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.name
+    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
   AND (b.op_id > buckets.last_applied_op)
   UNION SELECT row_type, row_id FROM ps_updated_rows
 )

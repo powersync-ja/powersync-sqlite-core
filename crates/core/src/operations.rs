@@ -57,6 +57,27 @@ FROM json_each(?) e",
     )?;
     iterate_statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
 
+    // We do an ON CONFLICT UPDATE simply so that the RETURNING bit works for existing rows.
+    // We can consider splitting this into separate SELECT and INSERT statements.
+    // language=SQLite
+    let bucket_statement = db.prepare_v2(
+        "INSERT INTO ps_buckets(name)
+                            VALUES(?)
+                        ON CONFLICT DO UPDATE
+                            SET last_applied_op = last_applied_op
+                        RETURNING id, last_applied_op",
+    )?;
+    bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
+    bucket_statement.step()?;
+
+    let bucket_id = bucket_statement.column_int64(0)?;
+
+    // This is an optimization for initial sync - we can avoid persisting individual REMOVE
+    // operations when last_applied_op = 0.
+    // We do still need to do the "supersede_statement" step for this case, since a REMOVE
+    // operation can supersede another PUT operation we're syncing at the same time.
+    let mut last_applied_op = bucket_statement.column_int64(1)?;
+
     // Statement to supersede (replace) operations with the same key.
     // language=SQLite
     let supersede_statement = db.prepare_v2(
@@ -66,36 +87,17 @@ DELETE FROM ps_oplog
     AND ps_oplog.key = ?2
 RETURNING op_id, hash",
     )?;
-    supersede_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
+    supersede_statement.bind_int64(1, bucket_id)?;
 
     // language=SQLite
     let insert_statement = db.prepare_v2("\
 INSERT INTO ps_oplog(bucket, op_id, key, row_type, row_id, data, hash) VALUES (?, ?, ?, ?, ?, ?, ?)")?;
-    insert_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
+    insert_statement.bind_int64(1, bucket_id)?;
 
     let updated_row_statement = db.prepare_v2(
         "\
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
     )?;
-
-    // We do an ON CONFLICT UPDATE simply so that the RETURNING bit works for existing rows.
-    // We can consider splitting this into separate SELECT and INSERT statements.
-    // language=SQLite
-    let bucket_statement = db.prepare_v2(
-        "INSERT INTO ps_buckets(name)
-                            VALUES(?)
-                        ON CONFLICT DO UPDATE
-                            SET last_applied_op = last_applied_op
-                        RETURNING last_applied_op",
-    )?;
-    bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
-    bucket_statement.step()?;
-
-    // This is an optimization for initial sync - we can avoid persisting individual REMOVE
-    // operations when last_applied_op = 0.
-    // We do still need to do the "supersede_statement" step for this case, since a REMOVE
-    // operation can supersede another PUT operation we're syncing at the same time.
-    let mut last_applied_op = bucket_statement.column_int64(0)?;
 
     bucket_statement.reset()?;
 
@@ -204,22 +206,22 @@ FROM ps_oplog
 WHERE bucket = ?1",
                 )
                 .into_db_result(db)?;
-            clear_statement1.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
+            clear_statement1.bind_int64(1, bucket_id)?;
             clear_statement1.exec()?;
 
             let clear_statement2 = db
                 .prepare_v2("DELETE FROM ps_oplog WHERE bucket = ?1")
                 .into_db_result(db)?;
-            clear_statement2.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
+            clear_statement2.bind_int64(1, bucket_id)?;
             clear_statement2.exec()?;
 
             // And we need to re-apply all of those.
             // We also replace the checksum with the checksum of the CLEAR op.
             // language=SQLite
             let clear_statement2 = db.prepare_v2(
-                "UPDATE ps_buckets SET last_applied_op = 0, add_checksum = ?1, op_checksum = 0 WHERE name = ?2",
+                "UPDATE ps_buckets SET last_applied_op = 0, add_checksum = ?1, op_checksum = 0 WHERE id = ?2",
             )?;
-            clear_statement2.bind_text(2, bucket, sqlite::Destructor::STATIC)?;
+            clear_statement2.bind_int64(2, bucket_id)?;
             clear_statement2.bind_int(1, checksum)?;
             clear_statement2.exec()?;
 
@@ -236,9 +238,9 @@ WHERE bucket = ?1",
                 SET last_op = ?2,
                     add_checksum = (add_checksum + ?3) & 0xffffffff,
                     op_checksum = (op_checksum + ?4) & 0xffffffff
-            WHERE name = ?1",
+            WHERE id = ?1",
         )?;
-        statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
+        statement.bind_int64(1, bucket_id)?;
         statement.bind_int64(2, *last_op)?;
         statement.bind_int(3, add_checksum)?;
         statement.bind_int(4, op_checksum)?;
@@ -263,26 +265,28 @@ pub fn delete_pending_buckets(db: *mut sqlite::sqlite3, _data: &str) -> Result<(
 
 pub fn delete_bucket(db: *mut sqlite::sqlite3, name: &str) -> Result<(), SQLiteError> {
     // language=SQLite
-    let statement = db.prepare_v2(
-        "\
+    let statement = db.prepare_v2("DELETE FROM ps_buckets WHERE name = ?1 RETURNING id")?;
+    statement.bind_text(1, name, sqlite::Destructor::STATIC)?;
+
+    if statement.step()? == ResultCode::ROW {
+        let bucket_id = statement.column_int64(0)?;
+
+        // language=SQLite
+        let updated_statement = db.prepare_v2(
+            "\
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
 SELECT row_type, row_id
 FROM ps_oplog
 WHERE bucket = ?1",
-    )?;
-    statement.bind_text(1, &name, sqlite::Destructor::STATIC)?;
-    statement.exec()?;
+        )?;
+        updated_statement.bind_int64(1, bucket_id)?;
+        updated_statement.exec()?;
 
-    // Rename bucket
-    // language=SQLite
-    let statement = db.prepare_v2("DELETE FROM ps_oplog WHERE bucket=?1")?;
-    statement.bind_text(1, name, sqlite::Destructor::STATIC)?;
-    statement.exec()?;
-
-    // language=SQLite
-    let statement = db.prepare_v2("DELETE FROM ps_buckets WHERE name = ?1")?;
-    statement.bind_text(1, name, sqlite::Destructor::STATIC)?;
-    statement.exec()?;
+        // language=SQLite
+        let delete_statement = db.prepare_v2("DELETE FROM ps_oplog WHERE bucket=?1")?;
+        delete_statement.bind_int64(1, bucket_id)?;
+        delete_statement.exec()?;
+    }
 
     Ok(())
 }
