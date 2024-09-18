@@ -111,10 +111,7 @@ create_sqlite_text_fn!(
     "powersync_external_table_name"
 );
 
-fn powersync_init_impl(
-    ctx: *mut sqlite::context,
-    _args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+fn powersync_migrate(ctx: *mut sqlite::context, target_version: i32) -> Result<(), SQLiteError> {
     let local_db = ctx.db_handle();
 
     // language=SQLite
@@ -131,18 +128,16 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         return Err(SQLiteError::from(ResultCode::ABORT));
     }
 
-    const CODE_VERSION: i32 = 5;
-
     let mut current_version = current_version_stmt.column_int(0)?;
 
-    while current_version > CODE_VERSION {
+    while current_version > target_version {
         // Run down migrations.
         // This is rare, we don't worry about optimizing this.
 
         current_version_stmt.reset()?;
 
         let down_migrations_stmt = local_db.prepare_v2("select e.value ->> 'sql' as sql from (select id, down_migrations from ps_migration where id > ?1 order by id desc limit 1) m, json_each(m.down_migrations) e")?;
-        down_migrations_stmt.bind_int(1, CODE_VERSION)?;
+        down_migrations_stmt.bind_int(1, target_version)?;
 
         let mut down_sql: Vec<String> = alloc::vec![];
 
@@ -151,14 +146,71 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
             down_sql.push(sql.to_string());
         }
 
+        if current_version == 5 {
+            down_sql.push(
+                "\
+ALTER TABLE ps_buckets RENAME TO ps_buckets_5;
+ALTER TABLE ps_oplog RENAME TO ps_oplog_5;
+
+CREATE TABLE ps_buckets(
+  name TEXT PRIMARY KEY,
+  last_applied_op INTEGER NOT NULL DEFAULT 0,
+  last_op INTEGER NOT NULL DEFAULT 0,
+  target_op INTEGER NOT NULL DEFAULT 0,
+  add_checksum INTEGER NOT NULL DEFAULT 0,
+  pending_delete INTEGER NOT NULL DEFAULT 0
+, op_checksum INTEGER NOT NULL DEFAULT 0, remove_operations INTEGER NOT NULL DEFAULT 0);
+
+INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete)
+    SELECT name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete FROM ps_buckets_5;
+
+CREATE TABLE ps_oplog(
+  bucket TEXT NOT NULL,
+  op_id INTEGER NOT NULL,
+  op INTEGER NOT NULL,
+  row_type TEXT,
+  row_id TEXT,
+  key TEXT,
+  data TEXT,
+  hash INTEGER NOT NULL,
+  superseded INTEGER NOT NULL);
+
+CREATE INDEX ps_oplog_by_row ON ps_oplog (row_type, row_id) WHERE superseded = 0;
+CREATE INDEX ps_oplog_by_opid ON ps_oplog (bucket, op_id);
+CREATE INDEX ps_oplog_by_key ON ps_oplog (bucket, key) WHERE superseded = 0;
+
+INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, key, data, hash, superseded)
+    SELECT ps_buckets_5.name, oplog.op_id, 3, oplog.row_type, oplog.row_id, oplog.key, oplog.data, oplog.hash, 0
+    FROM ps_oplog_5 oplog
+    JOIN ps_buckets_5
+        ON ps_buckets_5.id = oplog.bucket;
+
+DROP TABLE ps_oplog_5;
+DROP TABLE ps_buckets_5;
+
+INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
+    SELECT '$local', 1, 4, r.row_type, r.row_id, 0, 0
+    FROM ps_updated_rows r;
+INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES('$local', 1, 0, 9223372036854775807);
+
+DROP TABLE ps_updated_rows
+            "
+                .to_string(),
+            );
+        }
+
         for sql in down_sql {
             let rs = local_db.exec_safe(&sql);
             if let Err(code) = rs {
                 return Err(SQLiteError(
                     code,
                     Some(format!(
-                        "Down migration failed for {:} {:}",
-                        current_version, sql
+                        "Down migration failed for {:} {:} {:}",
+                        current_version,
+                        sql,
+                        local_db
+                            .errmsg()
+                            .unwrap_or(String::from("Conversion error"))
                     )),
                 ));
             }
@@ -186,8 +238,6 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         }
         current_version = new_version;
     }
-    current_version_stmt.reset()?;
-
     current_version_stmt.reset()?;
 
     if current_version < 1 {
@@ -229,7 +279,7 @@ INSERT INTO ps_migration(id, down_migrations) VALUES(1, NULL);
             .into_db_result(local_db)?;
     }
 
-    if current_version < 2 {
+    if current_version < 2 && target_version >= 2 {
         // language=SQLite
         local_db.exec_safe("\
 CREATE TABLE ps_tx(id INTEGER PRIMARY KEY NOT NULL, current_tx INTEGER, next_tx INTEGER);
@@ -241,7 +291,7 @@ INSERT INTO ps_migration(id, down_migrations) VALUES(2, json_array(json_object('
 ").into_db_result(local_db)?;
     }
 
-    if current_version < 3 {
+    if current_version < 3 && target_version >= 3 {
         // language=SQLite
         local_db.exec_safe("\
 CREATE TABLE ps_kv(key TEXT PRIMARY KEY NOT NULL, value BLOB);
@@ -251,7 +301,7 @@ INSERT INTO ps_migration(id, down_migrations) VALUES(3, json_array(json_object('
     ").into_db_result(local_db)?;
     }
 
-    if current_version < 4 {
+    if current_version < 4 && target_version >= 4 {
         // language=SQLite
         local_db.exec_safe("\
 ALTER TABLE ps_buckets ADD COLUMN op_checksum INTEGER NOT NULL DEFAULT 0;
@@ -271,7 +321,7 @@ INSERT INTO ps_migration(id, down_migrations)
     ").into_db_result(local_db)?;
     }
 
-    if current_version < 5 {
+    if current_version < 5 && target_version >= 5 {
         // language=SQLite
         local_db
             .exec_safe(
@@ -321,7 +371,8 @@ INSERT INTO ps_oplog(bucket, op_id, row_type, row_id, key, data, hash)
     FROM ps_oplog_old oplog
     JOIN ps_buckets
       ON ps_buckets.name = oplog.bucket
-      WHERE oplog.superseded = 0 AND oplog.op = 3;
+      WHERE oplog.superseded = 0 AND oplog.op = 3
+      ORDER BY oplog.bucket, oplog.op_id;
 
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
   SELECT row_type, row_id
@@ -335,6 +386,13 @@ UPDATE ps_buckets SET add_checksum = 0xffffffff & (add_checksum + (
       AND (oplog.superseded = 1 OR oplog.op != 3)
 ));
 
+UPDATE ps_buckets SET op_checksum = 0xffffffff & (op_checksum - (
+    SELECT IFNULL(SUM(oplog.hash), 0)
+      FROM ps_oplog_old oplog
+      WHERE oplog.bucket = ps_buckets.name
+        AND (oplog.superseded = 1 OR oplog.op != 3)
+  ));
+
 DROP TABLE ps_oplog_old;
 
 INSERT INTO ps_migration(id, down_migrations)
@@ -347,6 +405,17 @@ INSERT INTO ps_migration(id, down_migrations)
             .into_db_result(local_db)?;
     }
 
+    Ok(())
+}
+
+fn powersync_init_impl(
+    ctx: *mut sqlite::context,
+    _args: &[*mut sqlite::value],
+) -> Result<String, SQLiteError> {
+    let local_db = ctx.db_handle();
+
+    powersync_migrate(ctx, 5)?;
+
     setup_internal_views(local_db)?;
 
     Ok(String::from(""))
@@ -354,6 +423,23 @@ INSERT INTO ps_migration(id, down_migrations)
 
 create_auto_tx_function!(powersync_init_tx, powersync_init_impl);
 create_sqlite_text_fn!(powersync_init, powersync_init_tx, "powersync_init");
+
+fn powersync_test_migration_impl(
+    ctx: *mut sqlite::context,
+    args: &[*mut sqlite::value],
+) -> Result<String, SQLiteError> {
+    let target_version = args[0].int();
+    powersync_migrate(ctx, target_version)?;
+
+    Ok(String::from(""))
+}
+
+create_auto_tx_function!(powersync_test_migration_tx, powersync_test_migration_impl);
+create_sqlite_text_fn!(
+    powersync_test_migration,
+    powersync_test_migration_tx,
+    "powersync_test_migration"
+);
 
 fn powersync_clear_impl(
     ctx: *mut sqlite::context,
@@ -532,6 +618,17 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         sqlite::UTF8,
         None,
         Some(powersync_init),
+        None,
+        None,
+        None,
+    )?;
+
+    db.create_function_v2(
+        "powersync_test_migration",
+        1,
+        sqlite::UTF8,
+        None,
+        Some(powersync_test_migration),
         None,
         None,
         None,
