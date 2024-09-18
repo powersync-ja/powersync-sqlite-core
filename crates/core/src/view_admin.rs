@@ -187,6 +187,8 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         current_version = new_version;
     }
 
+    current_version_stmt.reset()?;
+
     if current_version < 1 {
         // language=SQLite
         local_db
@@ -268,6 +270,8 @@ INSERT INTO ps_migration(id, down_migrations)
     ").into_db_result(local_db)?;
     }
 
+    setup_internal_views(local_db)?;
+
     Ok(String::from(""))
 }
 
@@ -328,6 +332,74 @@ DELETE FROM {table};",
 
 create_auto_tx_function!(powersync_clear_tx, powersync_clear_impl);
 create_sqlite_text_fn!(powersync_clear, powersync_clear_tx, "powersync_clear");
+
+fn setup_internal_views(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+    // powersync_views - just filters sqlite_master, and combines the view and related triggers
+    // into one row.
+
+    // These views are only usable while the extension is loaded, so use TEMP views.
+    // TODO: This should not be a public view - implement internally instead
+    // language=SQLite
+    db.exec_safe("\
+    CREATE TEMP VIEW IF NOT EXISTS powersync_views(name, sql, delete_trigger_sql, insert_trigger_sql, update_trigger_sql)
+    AS SELECT
+        view.name name,
+        view.sql sql,
+        ifnull(trigger1.sql, '') delete_trigger_sql,
+        ifnull(trigger2.sql, '') insert_trigger_sql,
+        ifnull(trigger3.sql, '') update_trigger_sql
+        FROM sqlite_master view
+        LEFT JOIN sqlite_master trigger1
+            ON trigger1.tbl_name = view.name AND trigger1.type = 'trigger' AND trigger1.name GLOB 'ps_view_delete*'
+        LEFT JOIN sqlite_master trigger2
+            ON trigger2.tbl_name = view.name AND trigger2.type = 'trigger' AND trigger2.name GLOB 'ps_view_insert*'
+        LEFT JOIN sqlite_master trigger3
+            ON trigger3.tbl_name = view.name AND trigger3.type = 'trigger' AND trigger3.name GLOB 'ps_view_update*'
+        WHERE view.type = 'view' AND view.sql GLOB  '*-- powersync-auto-generated';
+
+    CREATE TRIGGER IF NOT EXISTS powersync_views_insert
+    INSTEAD OF INSERT ON powersync_views
+    FOR EACH ROW
+    BEGIN
+        SELECT powersync_drop_view(NEW.name);
+        SELECT powersync_exec(NEW.sql);
+        SELECT powersync_exec(NEW.delete_trigger_sql);
+        SELECT powersync_exec(NEW.insert_trigger_sql);
+        SELECT powersync_exec(NEW.update_trigger_sql);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS powersync_views_update
+    INSTEAD OF UPDATE ON powersync_views
+    FOR EACH ROW
+    BEGIN
+        SELECT powersync_drop_view(OLD.name);
+        SELECT powersync_exec(NEW.sql);
+        SELECT powersync_exec(NEW.delete_trigger_sql);
+        SELECT powersync_exec(NEW.insert_trigger_sql);
+        SELECT powersync_exec(NEW.update_trigger_sql);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS powersync_views_delete
+    INSTEAD OF DELETE ON powersync_views
+    FOR EACH ROW
+    BEGIN
+        SELECT powersync_drop_view(OLD.name);
+    END;")?;
+
+    // language=SQLite
+    db.exec_safe(
+        "\
+    CREATE TEMP VIEW IF NOT EXISTS powersync_tables(name, internal_name, local_only)
+    AS SELECT
+        powersync_external_table_name(name) as name,
+        name as internal_name,
+        name GLOB 'ps_data_local__*' as local_only
+        FROM sqlite_master
+        WHERE type = 'table' AND name GLOB 'ps_data_*';",
+    )?;
+
+    Ok(())
+}
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     // This entire module is just making it easier to edit sqlite_master using queries.
@@ -419,70 +491,6 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         None,
         None,
         None,
-    )?;
-
-    // powersync_views - just filters sqlite_master, and combines the view and related triggers
-    // into one row.
-
-    // These views are only usable while the extension is loaded, so use TEMP views.
-    // TODO: This should not be a public view - implement internally instead
-    // language=SQLite
-    db.exec_safe("\
-CREATE TEMP VIEW powersync_views(name, sql, delete_trigger_sql, insert_trigger_sql, update_trigger_sql)
-AS SELECT
-    view.name name,
-    view.sql sql,
-    ifnull(trigger1.sql, '') delete_trigger_sql,
-    ifnull(trigger2.sql, '') insert_trigger_sql,
-    ifnull(trigger3.sql, '') update_trigger_sql
-    FROM sqlite_master view
-    LEFT JOIN sqlite_master trigger1
-        ON trigger1.tbl_name = view.name AND trigger1.type = 'trigger' AND trigger1.name GLOB 'ps_view_delete*'
-    LEFT JOIN sqlite_master trigger2
-        ON trigger2.tbl_name = view.name AND trigger2.type = 'trigger' AND trigger2.name GLOB 'ps_view_insert*'
-    LEFT JOIN sqlite_master trigger3
-        ON trigger3.tbl_name = view.name AND trigger3.type = 'trigger' AND trigger3.name GLOB 'ps_view_update*'
-    WHERE view.type = 'view' AND view.sql GLOB  '*-- powersync-auto-generated';
-
-CREATE TRIGGER powersync_views_insert
-INSTEAD OF INSERT ON powersync_views
-FOR EACH ROW
-BEGIN
-    SELECT powersync_drop_view(NEW.name);
-    SELECT powersync_exec(NEW.sql);
-    SELECT powersync_exec(NEW.delete_trigger_sql);
-    SELECT powersync_exec(NEW.insert_trigger_sql);
-    SELECT powersync_exec(NEW.update_trigger_sql);
-END;
-
-CREATE TRIGGER powersync_views_update
-INSTEAD OF UPDATE ON powersync_views
-FOR EACH ROW
-BEGIN
-    SELECT powersync_drop_view(OLD.name);
-    SELECT powersync_exec(NEW.sql);
-    SELECT powersync_exec(NEW.delete_trigger_sql);
-    SELECT powersync_exec(NEW.insert_trigger_sql);
-    SELECT powersync_exec(NEW.update_trigger_sql);
-END;
-
-CREATE TRIGGER powersync_views_delete
-INSTEAD OF DELETE ON powersync_views
-FOR EACH ROW
-BEGIN
-    SELECT powersync_drop_view(OLD.name);
-END;")?;
-
-    // language=SQLite
-    db.exec_safe(
-        "\
-CREATE TEMP VIEW powersync_tables(name, internal_name, local_only)
-AS SELECT
-    powersync_external_table_name(name) as name,
-    name as internal_name,
-    name GLOB 'ps_data_local__*' as local_only
-    FROM sqlite_master
-    WHERE type = 'table' AND name GLOB 'ps_data_*';",
     )?;
 
     Ok(())
