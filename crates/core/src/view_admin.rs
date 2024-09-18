@@ -276,8 +276,8 @@ INSERT INTO ps_migration(id, down_migrations)
         local_db
             .exec_safe(
                 "\
-DROP TABLE ps_buckets;
-DROP TABLE ps_oplog;
+ALTER TABLE ps_buckets RENAME TO ps_buckets_old;
+ALTER TABLE ps_oplog RENAME TO ps_oplog_old;
 
 CREATE TABLE ps_buckets(
     id INTEGER PRIMARY KEY,
@@ -301,15 +301,41 @@ CREATE TABLE ps_oplog(
   data TEXT,
   hash INTEGER NOT NULL) STRICT;
 
-CREATE INDEX ps_oplog_by_row ON ps_oplog (row_type, row_id);
-CREATE INDEX ps_oplog_by_opid ON ps_oplog (bucket, op_id);
-CREATE INDEX ps_oplog_by_key ON ps_oplog (bucket, key);
+CREATE INDEX ps_oplog_row ON ps_oplog (row_type, row_id);
+CREATE INDEX ps_oplog_opid ON ps_oplog (bucket, op_id);
+CREATE INDEX ps_oplog_key ON ps_oplog (bucket, key);
 
 CREATE TABLE ps_updated_rows(
   row_type TEXT,
-  row_id TEXT);
+  row_id TEXT) STRICT;
 
 CREATE UNIQUE INDEX ps_updated_rows_row ON ps_updated_rows (row_type, row_id);
+
+INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete)
+ SELECT name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete FROM ps_buckets_old;
+
+DROP TABLE ps_buckets_old;
+
+INSERT INTO ps_oplog(bucket, op_id, row_type, row_id, key, data, hash)
+  SELECT ps_buckets.id, oplog.op_id, oplog.row_type, oplog.row_id, oplog.key, oplog.data, oplog.hash
+    FROM ps_oplog_old oplog
+    JOIN ps_buckets
+      ON ps_buckets.name = oplog.bucket
+      WHERE oplog.superseded = 0 AND oplog.op = 3;
+
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
+  SELECT row_type, row_id
+   FROM ps_oplog_old oplog
+   WHERE oplog.op != 3;
+
+UPDATE ps_buckets SET add_checksum = 0xffffffff & (add_checksum + (
+  SELECT IFNULL(SUM(oplog.hash), 0)
+    FROM ps_oplog_old oplog
+    WHERE oplog.bucket = ps_buckets.name
+      AND (oplog.superseded = 1 OR oplog.op != 3)
+));
+
+DROP TABLE ps_oplog_old;
 
 INSERT INTO ps_migration(id, down_migrations)
   VALUES(5,
@@ -344,6 +370,7 @@ DELETE FROM ps_oplog;
 DELETE FROM ps_crud;
 DELETE FROM ps_buckets;
 DELETE FROM ps_untyped;
+DELETE FROM ps_updated_rows;
 DELETE FROM ps_kv WHERE key != 'client_id';
 ",
     )?;
