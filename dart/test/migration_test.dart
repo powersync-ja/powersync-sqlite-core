@@ -27,6 +27,8 @@ void main() {
 
     /// This tests that the extension can load
     test('extension setup', () async {
+      final row1 = db.select('select sqlite_version() as version').first;
+      print('sqlite ${row1['version']}');
       final row = db.select('select powersync_rs_version() as version').first;
       print('powersync-sqlite-core ${row['version']}');
     });
