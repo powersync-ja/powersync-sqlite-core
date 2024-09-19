@@ -10,7 +10,7 @@ use sqlite::{Connection, Context, ResultCode, Value};
 use sqlite_nostd as sqlite;
 
 use crate::create_sqlite_text_fn;
-use crate::error::{SQLiteError, PSResult};
+use crate::error::{PSResult, SQLiteError};
 use crate::util::*;
 
 fn powersync_view_sql_impl(
@@ -59,7 +59,11 @@ fn powersync_view_sql_impl(
     return Ok(view_statement);
 }
 
-create_sqlite_text_fn!(powersync_view_sql, powersync_view_sql_impl, "powersync_view_sql");
+create_sqlite_text_fn!(
+    powersync_view_sql,
+    powersync_view_sql_impl,
+    "powersync_view_sql"
+);
 
 fn powersync_trigger_delete_sql_impl(
     ctx: *mut sqlite::context,
@@ -79,32 +83,31 @@ fn powersync_trigger_delete_sql_impl(
     let type_string = quote_string(name);
 
     return if !local_only && !insert_only {
-        let trigger = format!("\
+        let trigger = format!(
+            "\
 CREATE TRIGGER {:}
 INSTEAD OF DELETE ON {:}
 FOR EACH ROW
 BEGIN
 DELETE FROM {:} WHERE id = OLD.id;
 INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {:}, 'id', OLD.id));
-INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
-      SELECT '$local',
-              1,
-              'REMOVE',
-              {:},
-              OLD.id,
-              0,
-              0;
-INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES('$local', 1, 0, {:});
-END", trigger_name, quoted_name, internal_name, type_string, type_string, MAX_OP_ID);
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, OLD.id);
+INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
+END",
+            trigger_name, quoted_name, internal_name, type_string, type_string, MAX_OP_ID
+        );
         Ok(trigger)
     } else if local_only {
-        let trigger = format!("\
+        let trigger = format!(
+            "\
 CREATE TRIGGER {:}
 INSTEAD OF DELETE ON {:}
 FOR EACH ROW
 BEGIN
 DELETE FROM {:} WHERE id = OLD.id;
-END", trigger_name, quoted_name, internal_name);
+END",
+            trigger_name, quoted_name, internal_name
+        );
         Ok(trigger)
     } else if insert_only {
         Ok(String::from(""))
@@ -115,7 +118,8 @@ END", trigger_name, quoted_name, internal_name);
 
 create_sqlite_text_fn!(
     powersync_trigger_delete_sql,
-    powersync_trigger_delete_sql_impl, "powersync_trigger_delete_sql"
+    powersync_trigger_delete_sql_impl,
+    "powersync_trigger_delete_sql"
 );
 
 fn powersync_trigger_insert_sql_impl(
@@ -163,25 +167,21 @@ fn powersync_trigger_insert_sql_impl(
       INSERT INTO {:}
       SELECT NEW.id, json_object({:});
       INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', json_object({:})))));
-      INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
-      SELECT '$local',
-              1,
-              'REMOVE',
-              {:},
-              NEW.id,
-              0,
-              0;
-      INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES('$local', 1, 0, {:});
+      INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, NEW.id);
+      INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
     END", trigger_name, quoted_name, internal_name, json_fragment, type_string, json_fragment, type_string, MAX_OP_ID);
         Ok(trigger)
     } else if local_only {
-        let trigger = format!("\
+        let trigger = format!(
+            "\
     CREATE TRIGGER {:}
     INSTEAD OF INSERT ON {:}
     FOR EACH ROW
     BEGIN
       INSERT INTO {:} SELECT NEW.id, json_object({:});
-    END", trigger_name, quoted_name, internal_name, json_fragment);
+    END",
+            trigger_name, quoted_name, internal_name, json_fragment
+        );
         Ok(trigger)
     } else if insert_only {
         let trigger = format!("\
@@ -199,7 +199,8 @@ fn powersync_trigger_insert_sql_impl(
 
 create_sqlite_text_fn!(
     powersync_trigger_insert_sql,
-    powersync_trigger_insert_sql_impl, "powersync_trigger_insert_sql"
+    powersync_trigger_insert_sql_impl,
+    "powersync_trigger_insert_sql"
 );
 
 fn powersync_trigger_update_sql_impl(
@@ -252,19 +253,13 @@ BEGIN
       SET data = json_object({:})
       WHERE id = NEW.id;
   INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff(json_object({:}), json_object({:})))));
-  INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
-  SELECT '$local',
-          1,
-          'REMOVE',
-          {:},
-          NEW.id,
-          0,
-          0;
-  INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES('$local', 1, 0, {:});
+  INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, NEW.id);
+  INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
 END", trigger_name, quoted_name, internal_name, json_fragment_new, type_string, json_fragment_old, json_fragment_new, type_string, MAX_OP_ID);
         Ok(trigger)
     } else if local_only {
-        let trigger = format!("\
+        let trigger = format!(
+            "\
 CREATE TRIGGER {:}
 INSTEAD OF UPDATE ON {:}
 FOR EACH ROW
@@ -276,7 +271,9 @@ BEGIN
   UPDATE {:}
       SET data = json_object({:})
       WHERE id = NEW.id;
-END", trigger_name, quoted_name, internal_name, json_fragment_new);
+END",
+            trigger_name, quoted_name, internal_name, json_fragment_new
+        );
         Ok(trigger)
     } else if insert_only {
         Ok(String::from(""))
@@ -287,7 +284,8 @@ END", trigger_name, quoted_name, internal_name, json_fragment_new);
 
 create_sqlite_text_fn!(
     powersync_trigger_update_sql,
-    powersync_trigger_update_sql_impl, "powersync_trigger_update_sql"
+    powersync_trigger_update_sql_impl,
+    "powersync_trigger_update_sql"
 );
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {

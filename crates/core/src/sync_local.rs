@@ -15,7 +15,7 @@ pub fn can_update_local(db: *mut sqlite::sqlite3) -> Result<bool, SQLiteError> {
         "\
 SELECT group_concat(name)
 FROM ps_buckets
-WHERE target_op > last_op AND (name = '$local' OR pending_delete = 0)",
+WHERE target_op > last_op",
     )?;
 
     if statement.step()? != ResultCode::ROW {
@@ -64,25 +64,28 @@ pub fn sync_local(db: *mut sqlite::sqlite3, _data: &str) -> Result<i64, SQLiteEr
     let statement = db
         .prepare_v2(
             "\
--- 3. Group the objects from different buckets together into a single one (ops).
-SELECT r.row_type as type,
-    r.row_id as id,
-    r.data as data,
-    json_group_array(r.bucket) FILTER (WHERE r.op=3) as buckets,
-    /* max() affects which row is used for 'data' */
-    max(r.op_id) FILTER (WHERE r.op=3) as op_id
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
-FROM ps_buckets AS buckets
-    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.name
+WITH updated_rows AS (
+  SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
+    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
   AND (b.op_id > buckets.last_applied_op)
-    -- 2. Find *all* current ops over different buckets for those objects (oplog r).
-    INNER JOIN ps_oplog AS r
+  UNION ALL SELECT row_type, row_id FROM ps_updated_rows
+)
+
+-- 3. Group the objects from different buckets together into a single one (ops).
+SELECT b.row_type as type,
+    b.row_id as id,
+    r.data as data,
+    count(r.bucket) as buckets,
+    /* max() affects which row is used for 'data' */
+    max(r.op_id) as op_id
+-- 2. Find *all* current ops over different buckets for those objects (oplog r).
+FROM updated_rows b
+    LEFT OUTER JOIN ps_oplog AS r
                ON r.row_type = b.row_type
                  AND r.row_id = b.row_id
-WHERE r.superseded = 0
-AND b.superseded = 0
 -- Group for (3)
-GROUP BY r.row_type, r.row_id",
+GROUP BY b.row_type, b.row_id",
         )
         .into_db_result(db)?;
 
@@ -91,7 +94,7 @@ GROUP BY r.row_type, r.row_id",
     while statement.step().into_db_result(db)? == ResultCode::ROW {
         let type_name = statement.column_text(0)?;
         let id = statement.column_text(1)?;
-        let buckets = statement.column_text(3)?;
+        let buckets = statement.column_int(3)?;
         let data = statement.column_text(2);
 
         let table_name = internal_table_name(type_name);
@@ -99,7 +102,7 @@ GROUP BY r.row_type, r.row_id",
         if tables.contains(&table_name) {
             let quoted = quote_internal_name(type_name, false);
 
-            if buckets == "[]" {
+            if buckets == 0 {
                 // DELETE
                 let delete_statement = db
                     .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
@@ -116,7 +119,7 @@ GROUP BY r.row_type, r.row_id",
                 insert_statement.exec()?;
             }
         } else {
-            if buckets == "[]" {
+            if buckets == 0 {
                 // DELETE
                 // language=SQLite
                 let delete_statement = db
@@ -146,6 +149,10 @@ GROUP BY r.row_type, r.row_id",
                  WHERE last_applied_op != last_op",
     )
     .into_db_result(db)?;
+
+    // language=SQLite
+    db.exec_safe("DELETE FROM ps_updated_rows")
+        .into_db_result(db)?;
 
     // language=SQLite
     db.exec_safe("insert or replace into ps_kv(key, value) values('last_synced_at', datetime())")

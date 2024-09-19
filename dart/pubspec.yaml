@@ -1,0 +1,10 @@
+name: powersync_sqlite_core_tests
+publish_to: "none"
+version: 0.0.1
+description: Tests for powersync-sqlite-core
+environment:
+  sdk: ^3.4.0
+dependencies:
+  sqlite3: ^2.4.5
+dev_dependencies:
+  test: ^1.25.0

@@ -9,19 +9,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
           - os: macos-latest
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: true
+      - uses: dart-lang/setup-dart@v1
 
-      - name: Build lib
+      - name: Ubuntu setup
+        if: matrix.os == 'ubuntu-24.04'
         run: |
+          sudo apt install libreadline-dev
+
+      - name: Build
+        run: |
+          # Need a debug build for the dart tests
+          cargo build -p powersync_loadable
+
           cargo build -p powersync_loadable --release
-
-      - name: Build sqlite
-        run: |
           cargo build -p powersync_core --release --features static
           cargo build -p powersync_sqlite --release
           cargo build -p sqlite3 --release
@@ -37,3 +43,12 @@ jobs:
       - name: Check loadable extension
         run: |
           ./target/release/sqlite3 ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"
+
+      - name: Run dart-based tests
+        # Extension loading fails on macos currently
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          cd dart
+          dart pub get
+          dart test
+          dart analyze

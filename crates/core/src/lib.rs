@@ -19,6 +19,7 @@ mod error;
 mod ext;
 mod kv;
 mod macros;
+mod migrations;
 mod operations;
 mod operations_vtab;
 mod schema_management;
