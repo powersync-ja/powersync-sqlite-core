@@ -98,15 +98,15 @@ const expectedState = <int, String>{
 ''',
   5: r'''
 ;CREATE TABLE ps_buckets(
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    last_applied_op INTEGER NOT NULL DEFAULT 0,
-    last_op INTEGER NOT NULL DEFAULT 0,
-    target_op INTEGER NOT NULL DEFAULT 0,
-    add_checksum INTEGER NOT NULL DEFAULT 0,
-    op_checksum INTEGER NOT NULL DEFAULT 0,
-    pending_delete INTEGER NOT NULL DEFAULT 0
-  ) STRICT
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  last_applied_op INTEGER NOT NULL DEFAULT 0,
+  last_op INTEGER NOT NULL DEFAULT 0,
+  target_op INTEGER NOT NULL DEFAULT 0,
+  add_checksum INTEGER NOT NULL DEFAULT 0,
+  op_checksum INTEGER NOT NULL DEFAULT 0,
+  pending_delete INTEGER NOT NULL DEFAULT 0
+) STRICT
 ;CREATE TABLE ps_crud (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, tx_id INTEGER)
 ;CREATE TABLE ps_kv(key TEXT PRIMARY KEY NOT NULL, value BLOB)
 ;CREATE TABLE ps_migration(id INTEGER PRIMARY KEY, down_migrations TEXT)
