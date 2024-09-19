@@ -42,4 +42,6 @@ jobs:
       - name: Run dart-based tests
         run: |
           cd dart
+          dart pub get
           dart test
+          dart analyze
