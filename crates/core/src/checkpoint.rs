@@ -35,28 +35,20 @@ fn powersync_validate_checkpoint_impl(
     // language=SQLite
     let statement = db.prepare_v2(
         "WITH
-bucket_list(bucket, lower_op_id, checksum) AS (
+bucket_list(bucket, checksum) AS (
   SELECT
         json_extract(json_each.value, '$.bucket') as bucket,
-        0 as lower_op_id,
         json_extract(json_each.value, '$.checksum') as checksum
   FROM json_each(json_extract(?1, '$.buckets'))
 )
 SELECT
   bucket_list.bucket as bucket,
   IFNULL(buckets.add_checksum, 0) as add_checksum,
-  IFNULL(SUM(oplog.hash), 0) as oplog_checksum,
-  COUNT(oplog.op_id) as count,
-  IFNULL(MAX(oplog.op_id), 0) as last_op_id,
-  IFNULL(buckets.last_applied_op, 0) as last_applied_op,
+  IFNULL(buckets.op_checksum, 0) as oplog_checksum,
   bucket_list.checksum as expected_checksum
 FROM bucket_list
   LEFT OUTER JOIN ps_buckets AS buckets ON
      buckets.name = bucket_list.bucket
-  LEFT OUTER JOIN ps_oplog AS oplog ON
-     bucket_list.bucket = oplog.bucket AND
-     oplog.op_id <= CAST(json_extract(?1, '$.last_op_id') as INTEGER) AND
-     oplog.op_id > bucket_list.lower_op_id
 GROUP BY bucket_list.bucket",
     )?;
 
@@ -69,10 +61,7 @@ GROUP BY bucket_list.bucket",
         // checksums with column_int are wrapped to i32 by SQLite
         let add_checksum = statement.column_int(1)?;
         let oplog_checksum = statement.column_int(2)?;
-        let _count = statement.column_int(3)?;
-        let _last_op_id = statement.column_int64(4)?;
-        let _last_applied_op = statement.column_int64(5)?;
-        let expected_checksum = statement.column_int(6)?;
+        let expected_checksum = statement.column_int(3)?;
 
         // wrapping add is like +, but safely overflows
         let checksum = oplog_checksum.wrapping_add(add_checksum);

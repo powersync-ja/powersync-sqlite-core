@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         return Err(SQLiteError::from(ResultCode::ABORT));
     }
 
-    const CODE_VERSION: i32 = 3;
+    const CODE_VERSION: i32 = 4;
 
     let mut current_version = current_version_stmt.column_int(0)?;
 
@@ -247,6 +247,26 @@ CREATE TABLE ps_kv(key TEXT PRIMARY KEY NOT NULL, value BLOB);
 INSERT INTO ps_kv(key, value) values('client_id', uuid());
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(3, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 3'), json_object('sql', 'DROP TABLE ps_kv')));
+    ").into_db_result(local_db)?;
+    }
+
+    if current_version < 4 {
+        // language=SQLite
+        local_db.exec_safe("\
+ALTER TABLE ps_buckets ADD COLUMN op_checksum INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ps_buckets ADD COLUMN remove_operations INTEGER NOT NULL DEFAULT 0;
+
+UPDATE ps_buckets SET op_checksum = (
+  SELECT IFNULL(SUM(ps_oplog.hash), 0) & 0xffffffff FROM ps_oplog WHERE ps_oplog.bucket = ps_buckets.name
+);
+
+INSERT INTO ps_migration(id, down_migrations)
+  VALUES(4,
+    json_array(
+      json_object('sql', 'DELETE FROM ps_migration WHERE id >= 4'),
+      json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN op_checksum'),
+      json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN remove_operations')
+    ));
     ").into_db_result(local_db)?;
     }
 
