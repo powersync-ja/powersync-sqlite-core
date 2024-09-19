@@ -149,6 +149,12 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         if current_version == 5 {
             down_sql.push(
                 "\
+-- Drop all existing views (and triggers)
+SELECT powersync_drop_view(view.name)
+  FROM sqlite_master view
+  WHERE view.type = 'view'
+    AND view.sql GLOB  '*-- powersync-auto-generated';
+
 ALTER TABLE ps_buckets RENAME TO ps_buckets_5;
 ALTER TABLE ps_oplog RENAME TO ps_oplog_5;
 
@@ -326,6 +332,12 @@ INSERT INTO ps_migration(id, down_migrations)
         local_db
             .exec_safe(
                 "\
+-- Drop all existing views (and triggers)
+SELECT powersync_drop_view(view.name)
+  FROM sqlite_master view
+  WHERE view.type = 'view'
+    AND view.sql GLOB  '*-- powersync-auto-generated';
+
 ALTER TABLE ps_buckets RENAME TO ps_buckets_old;
 ALTER TABLE ps_oplog RENAME TO ps_oplog_old;
 
@@ -414,9 +426,9 @@ fn powersync_init_impl(
 ) -> Result<String, SQLiteError> {
     let local_db = ctx.db_handle();
 
-    powersync_migrate(ctx, 5)?;
-
     setup_internal_views(local_db)?;
+
+    powersync_migrate(ctx, 5)?;
 
     Ok(String::from(""))
 }
