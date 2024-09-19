@@ -146,65 +146,6 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
             down_sql.push(sql.to_string());
         }
 
-        if current_version == 5 {
-            down_sql.push(
-                "\
--- Drop all existing views (and triggers)
-SELECT powersync_drop_view(view.name)
-  FROM sqlite_master view
-  WHERE view.type = 'view'
-    AND view.sql GLOB  '*-- powersync-auto-generated';
-
-ALTER TABLE ps_buckets RENAME TO ps_buckets_5;
-ALTER TABLE ps_oplog RENAME TO ps_oplog_5;
-
-CREATE TABLE ps_buckets(
-  name TEXT PRIMARY KEY,
-  last_applied_op INTEGER NOT NULL DEFAULT 0,
-  last_op INTEGER NOT NULL DEFAULT 0,
-  target_op INTEGER NOT NULL DEFAULT 0,
-  add_checksum INTEGER NOT NULL DEFAULT 0,
-  pending_delete INTEGER NOT NULL DEFAULT 0
-, op_checksum INTEGER NOT NULL DEFAULT 0, remove_operations INTEGER NOT NULL DEFAULT 0);
-
-INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete)
-    SELECT name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete FROM ps_buckets_5;
-
-CREATE TABLE ps_oplog(
-  bucket TEXT NOT NULL,
-  op_id INTEGER NOT NULL,
-  op INTEGER NOT NULL,
-  row_type TEXT,
-  row_id TEXT,
-  key TEXT,
-  data TEXT,
-  hash INTEGER NOT NULL,
-  superseded INTEGER NOT NULL);
-
-CREATE INDEX ps_oplog_by_row ON ps_oplog (row_type, row_id) WHERE superseded = 0;
-CREATE INDEX ps_oplog_by_opid ON ps_oplog (bucket, op_id);
-CREATE INDEX ps_oplog_by_key ON ps_oplog (bucket, key) WHERE superseded = 0;
-
-INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, key, data, hash, superseded)
-    SELECT ps_buckets_5.name, oplog.op_id, 3, oplog.row_type, oplog.row_id, oplog.key, oplog.data, oplog.hash, 0
-    FROM ps_oplog_5 oplog
-    JOIN ps_buckets_5
-        ON ps_buckets_5.id = oplog.bucket;
-
-DROP TABLE ps_oplog_5;
-DROP TABLE ps_buckets_5;
-
-INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
-    SELECT '$local', 1, 4, r.row_type, r.row_id, 0, 0
-    FROM ps_updated_rows r;
-INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES('$local', 1, 0, 9223372036854775807);
-
-DROP TABLE ps_updated_rows
-            "
-                .to_string(),
-            );
-        }
-
         for sql in down_sql {
             let rs = local_db.exec_safe(&sql);
             if let Err(code) = rs {
@@ -328,11 +269,17 @@ INSERT INTO ps_migration(id, down_migrations)
     }
 
     if current_version < 5 && target_version >= 5 {
+        // Start by dropping all existing views and triggers (but not tables).
+        // This is because the triggers are restructured in this version, and
+        // need to be re-created from scratch. Not dropping them can make it
+        // refer to tables or columns not existing anymore, which can case
+        // issues later on.
+        // The same applies for the down migration.
+
         // language=SQLite
         local_db
             .exec_safe(
                 "\
--- Drop all existing views (and triggers)
 SELECT powersync_drop_view(view.name)
   FROM sqlite_master view
   WHERE view.type = 'view'
@@ -410,6 +357,24 @@ DROP TABLE ps_oplog_old;
 INSERT INTO ps_migration(id, down_migrations)
   VALUES(5,
     json_array(
+      -- Drop existing views and triggers if any
+      json_object('sql', 'SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated'''),
+
+      json_object('sql', 'ALTER TABLE ps_buckets RENAME TO ps_buckets_5'),
+      json_object('sql', 'ALTER TABLE ps_oplog RENAME TO ps_oplog_5'),
+      json_object('sql', 'CREATE TABLE ps_buckets(\n  name TEXT PRIMARY KEY,\n  last_applied_op INTEGER NOT NULL DEFAULT 0,\n  last_op INTEGER NOT NULL DEFAULT 0,\n  target_op INTEGER NOT NULL DEFAULT 0,\n  add_checksum INTEGER NOT NULL DEFAULT 0,\n  pending_delete INTEGER NOT NULL DEFAULT 0\n, op_checksum INTEGER NOT NULL DEFAULT 0, remove_operations INTEGER NOT NULL DEFAULT 0)'),
+      json_object('sql', 'INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete)\n    SELECT name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete FROM ps_buckets_5'),
+      json_object('sql', 'CREATE TABLE ps_oplog(\n  bucket TEXT NOT NULL,\n  op_id INTEGER NOT NULL,\n  op INTEGER NOT NULL,\n  row_type TEXT,\n  row_id TEXT,\n  key TEXT,\n  data TEXT,\n  hash INTEGER NOT NULL,\n  superseded INTEGER NOT NULL)'),
+      json_object('sql', 'CREATE INDEX ps_oplog_by_row ON ps_oplog (row_type, row_id) WHERE superseded = 0'),
+      json_object('sql', 'CREATE INDEX ps_oplog_by_opid ON ps_oplog (bucket, op_id)'),
+      json_object('sql', 'CREATE INDEX ps_oplog_by_key ON ps_oplog (bucket, key) WHERE superseded = 0'),
+      json_object('sql', 'INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, key, data, hash, superseded)\n    SELECT ps_buckets_5.name, oplog.op_id, 3, oplog.row_type, oplog.row_id, oplog.key, oplog.data, oplog.hash, 0\n    FROM ps_oplog_5 oplog\n    JOIN ps_buckets_5\n        ON ps_buckets_5.id = oplog.bucket'),
+      json_object('sql', 'DROP TABLE ps_oplog_5'),
+      json_object('sql', 'DROP TABLE ps_buckets_5'),
+      json_object('sql', 'INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)\n    SELECT ''$local'', 1, 4, r.row_type, r.row_id, 0, 0\n    FROM ps_updated_rows r'),
+      json_object('sql', 'INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES(''$local'', 1, 0, 9223372036854775807)'),
+      json_object('sql', 'DROP TABLE ps_updated_rows'),
+
       json_object('sql', 'DELETE FROM ps_migration WHERE id >= 5')
     ));
     ",

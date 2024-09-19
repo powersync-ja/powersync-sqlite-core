@@ -37,10 +37,19 @@ void main() {
           fixtures.expectedState.keys.last, equals(fixtures.databaseVersion));
     });
 
+    /// Test the basic database setup (no migrations from other versions).
+    /// Get this test passing before any others below, since it tests the
+    /// finalState fixture, which is an input in other tests.
     test('create database from scratch', () async {
       db.select('select powersync_init()');
       final schema = '${getSchema(db)}\n${getMigrations(db)}';
-      expect(schema, equals(fixtures.finalState.trim()));
+      final expected = fixtures.finalState.trim();
+      if (expected != schema) {
+        // This gives more usable output if the test fails
+        print('-- CURRENT SCHEMA:');
+        print(schema);
+      }
+      expect(schema, equals(expected));
     });
 
     // We test that we can _start_ at any state, and get to
