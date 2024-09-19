@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: true
+      - uses: dart-lang/setup-dart@v1
 
       - name: Build lib
         run: |
@@ -37,3 +38,8 @@ jobs:
       - name: Check loadable extension
         run: |
           ./target/release/sqlite3 ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"
+
+      - name: Run dart-based tests
+        run: |
+          cd dart
+          dart test
