@@ -45,6 +45,8 @@ jobs:
           ./target/release/sqlite3 ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"
 
       - name: Run dart-based tests
+        # Extension loading fails on macos currently
+        if: matrix.os == 'ubuntu-24.04'
         run: |
           cd dart
           dart pub get
