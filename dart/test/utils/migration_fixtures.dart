@@ -122,12 +122,12 @@ const expectedState = <int, String>{
 ;CREATE TABLE ps_untyped(type TEXT NOT NULL, id TEXT NOT NULL, data TEXT, PRIMARY KEY (type, id))
 ;CREATE TABLE ps_updated_rows(
   row_type TEXT,
-  row_id TEXT) STRICT
+  row_id TEXT,
+  PRIMARY KEY(row_type, row_id)) STRICT, WITHOUT ROWID
 ;CREATE UNIQUE INDEX ps_buckets_name ON ps_buckets (name)
 ;CREATE INDEX ps_oplog_key ON ps_oplog (bucket, key)
 ;CREATE INDEX ps_oplog_opid ON ps_oplog (bucket, op_id)
 ;CREATE INDEX ps_oplog_row ON ps_oplog (row_type, row_id)
-;CREATE UNIQUE INDEX ps_updated_rows_row ON ps_updated_rows (row_type, row_id)
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(1, null)
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(2, '[{"sql":"DELETE FROM ps_migration WHERE id >= 2","params":[]},{"sql":"DROP TABLE ps_tx","params":[]},{"sql":"ALTER TABLE ps_crud DROP COLUMN tx_id","params":[]}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(3, '[{"sql":"DELETE FROM ps_migration WHERE id >= 3"},{"sql":"DROP TABLE ps_kv"}]')

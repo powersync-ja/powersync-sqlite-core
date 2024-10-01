@@ -218,9 +218,8 @@ CREATE INDEX ps_oplog_key ON ps_oplog (bucket, key);
 
 CREATE TABLE ps_updated_rows(
   row_type TEXT,
-  row_id TEXT) STRICT;
-
-CREATE UNIQUE INDEX ps_updated_rows_row ON ps_updated_rows (row_type, row_id);
+  row_id TEXT,
+  PRIMARY KEY(row_type, row_id)) STRICT, WITHOUT ROWID;
 
 INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete)
 SELECT name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete FROM ps_buckets_old;
