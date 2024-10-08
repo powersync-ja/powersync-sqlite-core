@@ -179,7 +179,7 @@ jobs:
           components: rust-src
 
       - name: Build binary
-        run: ./tool/build_windows.sh x64
+        run: bash tool/build_windows.sh x64
 
       - name: Upload binary
         uses: ./.github/actions/upload
