@@ -31,7 +31,7 @@ jobs:
       - name: Build
         run: |
           # Need a debug build for the dart tests
-          cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target x86_64-unknown-linux-gnu
+          cargo build -p powersync_loadable
 
           cargo build -p powersync_loadable --release
           cargo build -p powersync_core --release --features static
