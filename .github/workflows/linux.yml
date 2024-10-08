@@ -18,7 +18,7 @@ jobs:
           components: rust-src
 
       - name: Build binaries
-        run: bash tool/build_linux.sh x64
+        run: ./tool/build_linux.sh x64
 
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'
@@ -43,7 +43,7 @@ jobs:
           components: rust-src
 
       - name: Build binaries
-        run: bash tool/build_linux.sh aarch64
+        run: ./tool/build_linux.sh aarch64
 
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'

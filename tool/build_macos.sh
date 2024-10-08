@@ -1,10 +1,10 @@
+#!/bin/sh
+set -e
+
 if [ "$1" = "x64" ]; then
-  #Note: x86_64-apple-darwin has not been tested.
-  rustup target add target x86_64-apple-darwin
-  cargo build -p powersync_loadable --release
-  mv "target/release/libpowersync.dylib" "libpowersync_x64.dylib"
+  cargo build -Z build-std=panic_abort,core,alloc -p powersync_loadable --release --target x86_64-apple-darwin
+  mv "target/x86_64-apple-darwin/release/libpowersync.dylib" "libpowersync_x64.dylib"
 else
-  rustup target add aarch64-apple-darwin
-  cargo build -p powersync_loadable --release
-  mv "target/release/libpowersync.dylib" "libpowersync_aarch64.dylib"
+  cargo build -Z build-std=panic_abort,core,alloc -p powersync_loadable --release --target aarch64-apple-darwin
+  mv "target/aarch64-apple-darwin/release/libpowersync.dylib" "libpowersync_aarch64.dylib"
 fi
