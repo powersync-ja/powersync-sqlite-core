@@ -10,8 +10,13 @@ jobs:
         with:
           submodules: true
 
+      - name: Setup
+        run: |
+          rustup toolchain install nightly-2024-05-18-x86_64-pc-windows-msvc
+          rustup component add rust-src --toolchain nightly-2024-05-18-x86_64-pc-windows-msvc
+
       - name: Build binary
-        run: bash tool/build_windows.sh x64
+        run: ./tool/build_windows.sh x64
 
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'

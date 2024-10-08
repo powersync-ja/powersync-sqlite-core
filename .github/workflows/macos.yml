@@ -11,8 +11,13 @@ jobs:
         with:
           submodules: true
 
+      - name: Setup
+        run: |
+          rustup toolchain install nightly-2024-05-18-aarch64-apple-darwin
+          rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-apple-darwin
+
       - name: Build binary
-        run: bash tool/build_macos.sh aarch64
+        run: ./tool/build_macos.sh aarch64
 
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'
@@ -30,8 +35,13 @@ jobs:
         with:
           submodules: true
 
+      - name: Setup
+        run: |
+          rustup toolchain install nightly-2024-05-18-x86_64-apple-darwin
+          rustup component add rust-src --toolchain nightly-2024-05-18-x86_64-apple-darwin
+
       - name: Build binary
-        run: bash tool/build_macos.sh x64
+        run: ./tool/build_macos.sh x64
 
       - name: Upload binary
         if: github.event_name == 'workflow_dispatch'
