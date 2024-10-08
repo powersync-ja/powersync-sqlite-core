@@ -21,7 +21,7 @@ git push --tags
 Build:
 
 ```
-gh workflow run release --ref v1.2.3
+gh workflow run release --ref v1.2.3 -f publish=true
 ```
 
 The above does the following:
