@@ -18,11 +18,3 @@ jobs:
 
       - name: Build binary
         run: ./tool/build_windows.sh x64
-
-      - name: Upload binary
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: powersync_x64.dll
-          tag: ${{ github.ref_name }}

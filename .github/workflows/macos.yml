@@ -1,6 +1,5 @@
 on:
   push:
-  workflow_dispatch:
 name: "macos"
 jobs:
   build_macOS_aarch64:
@@ -20,14 +19,6 @@ jobs:
       - name: Build binary
         run: ./tool/build_macos.sh aarch64
 
-      - name: Upload binary
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_aarch64.dylib
-          tag: ${{ github.ref_name }}
-
   build_macOS_x64:
     name: Building macOS x64
     runs-on: macos-12
@@ -44,11 +35,3 @@ jobs:
 
       - name: Build binary
         run: ./tool/build_macos.sh x64
-
-      - name: Upload binary
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_x64.dylib
-          tag: ${{ github.ref_name }}
