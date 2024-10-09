@@ -1,7 +1,12 @@
 name: release
 on:
   workflow_dispatch:
-  push:
+    inputs:
+      publish:
+        type: boolean
+        required: false
+        default: false
+        description: Set to true to publish artifacts to external targets such as Maven Central
 jobs:
   draft_release:
     if: github.event_name == 'workflow_dispatch'
@@ -57,6 +62,7 @@ jobs:
           cargo install cargo-ndk
 
       - name: Publish for Android
+        if: ${{ inputs.publish }}
         run: |
           cd android
           ./gradlew publish
@@ -123,7 +129,7 @@ jobs:
           components: rust-src
 
       - name: Build binaries
-        run: bash tool/build_linux.sh x64
+        run: ./tool/build_linux.sh x64
 
       - name: Upload binary
         uses: ./.github/actions/upload
@@ -135,7 +141,7 @@ jobs:
   publish_linux_aarch64:
     name: Publish Linux aarch64
     needs: [draft_release]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-arm64
     steps:
       - uses: actions/checkout@v3
         with:
@@ -148,7 +154,7 @@ jobs:
           components: rust-src
 
       - name: Build binaries
-        run: bash tool/build_linux.sh aarch64
+        run: ./tool/build_linux.sh aarch64
 
       - name: Upload binary
         uses: ./.github/actions/upload
@@ -165,6 +171,12 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
 
       - name: Build binary
         run: bash tool/build_windows.sh x64
@@ -185,8 +197,14 @@ jobs:
         with:
           submodules: true
 
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
       - name: Build binary
-        run: bash tool/build_macos.sh aarch64
+        run: ./tool/build_macos.sh aarch64
 
       - name: Upload binary
         uses: ./.github/actions/upload
@@ -204,8 +222,14 @@ jobs:
         with:
           submodules: true
 
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
       - name: Build binary
-        run: bash tool/build_macos.sh x64
+        run: ./tool/build_macos.sh x64
 
       - name: Upload binary
         uses: ./.github/actions/upload

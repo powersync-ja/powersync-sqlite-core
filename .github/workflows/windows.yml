@@ -10,13 +10,11 @@ jobs:
         with:
           submodules: true
 
-      - name: Build binary
-        run: bash tool/build_windows.sh x64
-
-      - name: Upload binary
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/upload
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: powersync_x64.dll
-          tag: ${{ github.ref_name }}
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binary
+        run: ./tool/build_windows.sh x64

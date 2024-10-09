@@ -22,6 +22,12 @@ jobs:
         run: |
           sudo apt install libreadline-dev
 
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
       - name: Build
         run: |
           # Need a debug build for the dart tests

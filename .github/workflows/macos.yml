@@ -1,6 +1,5 @@
 on:
   push:
-  workflow_dispatch:
 name: "macos"
 jobs:
   build_macOS_aarch64:
@@ -11,16 +10,14 @@ jobs:
         with:
           submodules: true
 
-      - name: Build binary
-        run: bash tool/build_macos.sh aarch64
-
-      - name: Upload binary
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/upload
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_aarch64.dylib
-          tag: ${{ github.ref_name }}
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binary
+        run: ./tool/build_macos.sh aarch64
 
   build_macOS_x64:
     name: Building macOS x64
@@ -30,13 +27,11 @@ jobs:
         with:
           submodules: true
 
-      - name: Build binary
-        run: bash tool/build_macos.sh x64
-
-      - name: Upload binary
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/upload
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
         with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_x64.dylib
-          tag: ${{ github.ref_name }}
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Build binary
+        run: ./tool/build_macos.sh x64

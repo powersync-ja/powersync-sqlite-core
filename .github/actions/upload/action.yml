@@ -15,10 +15,9 @@ runs:
   using: "composite"
   steps:
     - name: Upload binary
-      uses: svenstaro/upload-release-action@v2
-      with:
-        repo_token: ${{ inputs.repo-token }}
-        overwrite: true
-        file: ${{ inputs.file-name }}
-        asset_name: ${{ inputs.file-name }}
-        tag: ${{ inputs.tag }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: |
+        gh release upload "${{ inputs.tag }}" "${{ inputs.file-name }}"

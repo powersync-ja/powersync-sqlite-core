@@ -1,6 +1,5 @@
 on:
   push:
-  workflow_dispatch:
 name: "linux"
 jobs:
   build_x86_64:
@@ -18,15 +17,7 @@ jobs:
           components: rust-src
 
       - name: Build binaries
-        run: bash tool/build_linux.sh x64
-
-      - name: Upload binary
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_x64.so
-          tag: ${{ github.ref_name }}
+        run: ./tool/build_linux.sh x64
 
   build_aarch64:
     name: Building Linux aarch64
@@ -43,12 +34,4 @@ jobs:
           components: rust-src
 
       - name: Build binaries
-        run: bash tool/build_linux.sh aarch64
-
-      - name: Upload binary
-        if: github.event_name == 'workflow_dispatch'
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_aarch64.so
-          tag: ${{ github.ref_name }}
+        run: ./tool/build_linux.sh aarch64

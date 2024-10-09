@@ -1,24 +1,35 @@
-# On Linux, if we don't link to gcc_eh, we get can get this error when loading the loadable extension:
-# undefined symbol: _Unwind_Resume
-# This adds around 29KB to the loadable extension.
-# It may also be an option to just define _Unwind_Resume, but it causes crashes on errors on e.g. iOS, so rather avoid it.
+
+# Previously we added this to rustflags for all linux builds:
+#   "-C", "link-arg=-lgcc_eh"
+# It was to fix this error when loading the loadable extension:
+#   undefined symbol: _Unwind_Resume
+# Now, we instead build using:
+#   -Z build-std=panic_abort,core,alloc
+# This fixes the same issue. We still keep -lgcc_eh,
+# to support manual builds without -Z build-std.
+
+# Without -Z build-std, with -lgcc_eh:
+#   241KB, loading works
+# Without -Z build-std, without -lgcc_eh:
+#   207KB, undefined symbol: _Unwind_Resume
+# With -Z build-std, without -lgcc_eh:
+#   173K, loading works
+# With -Z build-std, with -lgcc_eh:
+#   173K, loading works
+# Conclusion: -lgcc_eh has no effect when using -Z build-std.
 
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
     "-C", "link-arg=-lgcc_eh",
 ]
 
-[target.i686-linux-unknown-linux-gnu]
-rustflags = [
-    "-C", "link-arg=-lgcc_eh",
-]
-
-[target.aarch64-linux-unknown-linux-gnu]
+[target.i686-unknown-linux-gnu]
 rustflags = [
     "-C", "link-arg=-lgcc_eh",
 ]
 
 [target.aarch64-unknown-linux-gnu]
+linker = "aarch64-linux-gnu-gcc"
 rustflags = [
     "-C", "link-arg=-lgcc_eh",
 ]
