@@ -30,11 +30,3 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 #[cfg(not(test))]
 #[lang = "eh_personality"]
 extern "C" fn eh_personality() {}
-
-#[cfg(target_family = "wasm")]
-#[no_mangle]
-static _CLOCK_PROCESS_CPUTIME_ID: i32 = 1;
-
-#[cfg(target_family = "wasm")]
-#[no_mangle]
-static _CLOCK_THREAD_CPUTIME_ID: i32 = 1;
