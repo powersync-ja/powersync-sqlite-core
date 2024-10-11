@@ -1,0 +1,47 @@
+on: workflow_dispatch
+name: "temp test spm"
+jobs:
+  build:
+    name: Building iOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Setup
+        run: |
+          rustup toolchain install nightly-2024-05-18-aarch64-apple-darwin
+          rustup component add rust-src --toolchain nightly-2024-05-18-aarch64-apple-darwin
+          rustup target add \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin \
+            aarch64-apple-ios \
+            aarch64-apple-ios-sim \
+            x86_64-apple-ios
+
+      - name: setup-cocoapods
+        uses: maxim-lobanov/setup-cocoapods@v1
+        with:
+          version: 1.12.1
+
+      - name: Build iOS & macOS xcframework
+        run: |
+          ./tool/build_xcframework.sh
+
+      # For SPM package
+      - name: Compute checksum and update Package.swift
+        run: |
+          CHECKSUM=$(swift package compute-checksum powersync-sqlite-core.xcframework.tar.gz)
+          sed -i '' \
+            -e "s|url: \".*\"|url: \"https://github.com/${{ github.repository }}/releases/download/0.3.0/powersync-sqlite-core.xcframework.tar.gz\"|" \
+            -e "s|checksum: \".*\"|checksum: \"$CHECKSUM\"|" \
+            Package.swift
+
+      - name: Commit and push updated Package.swift
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add Package.swift
+          git commit -m "Update Package.swift for version 0.3.0"
+          git push
