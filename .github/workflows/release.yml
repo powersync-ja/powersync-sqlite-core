@@ -112,14 +112,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.xz
-          gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.gz
+          gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.zip
 
       # For SPM package
       - name: Compute checksum and update Package.swift
         run: |
-          CHECKSUM=$(swift package compute-checksum powersync-sqlite-core.xcframework.tar.gz)
+          CHECKSUM=$(swift package compute-checksum powersync-sqlite-core.xcframework.zip)
           sed -i '' \
-            -e "s|url: \".*\"|url: \"https://github.com/${{ github.repository }}/releases/download/${{ needs.draft_release.outputs.tag }}/powersync-sqlite-core.xcframework.tar.gz\"|" \
+            -e "s|url: \".*\"|url: \"https://github.com/${{ github.repository }}/releases/download/${{ needs.draft_release.outputs.tag }}/powersync-sqlite-core.xcframework.zip\"|" \
             -e "s|checksum: \".*\"|checksum: \"$CHECKSUM\"|" \
             Package.swift
 

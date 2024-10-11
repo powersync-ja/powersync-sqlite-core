@@ -4,7 +4,7 @@ name: "temp test spm"
 jobs:
   build:
     name: Building iOS
-    runs-on: macos-15
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
         with:
@@ -33,9 +33,9 @@ jobs:
       # For SPM package
       - name: Compute checksum and update Package.swift
         run: |
-          CHECKSUM=$(swift package compute-checksum powersync-sqlite-core.xcframework.tar.gz)
+          CHECKSUM=$(swift package compute-checksum powersync-sqlite-core.xcframework.zip)
           sed -i '' \
-            -e "s|url: \".*\"|url: \"https://github.com/${{ github.repository }}/releases/download/0.3.0/powersync-sqlite-core.xcframework.tar.gz\"|" \
+            -e "s|url: \".*\"|url: \"https://github.com/${{ github.repository }}/releases/download/v0.3.0/powersync-sqlite-core.xcframework.zip\"|" \
             -e "s|checksum: \".*\"|checksum: \"$CHECKSUM\"|" \
             Package.swift
 
