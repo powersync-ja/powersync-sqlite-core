@@ -73,7 +73,7 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
 
-  publish_ios_pod:
+  publish_ios_pod_and_spm_package:
     name: Publish iOS
     needs: [draft_release]
     runs-on: macos-latest
@@ -100,7 +100,7 @@ jobs:
 
       - name: Build iOS & macOS xcframework
         run: |
-          ./build-pod.sh
+          .tool/build_xcframework.sh
 
       - name: Lint pod
         run: |
@@ -112,6 +112,26 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.xz
+          gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.gz
+
+      # For SPM package
+      - name: Compute checksum and update Package.swift
+        run: |
+          CHECKSUM=$(swift package compute-checksum powersync-sqlite-core.xcframework.tar.gz)
+          sed -i '' \
+            -e "s|url: \".*\"|url: \"https://github.com/${{ github.repository }}/releases/download/${{ needs.draft_release.outputs.tag }}/powersync-sqlite-core.xcframework.tar.gz\"|" \
+            -e "s|checksum: \".*\"|checksum: \"$CHECKSUM\"|" \
+            Package.swift
+
+      - name: Commit and push updated Package.swift
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add Package.swift
+          git commit -m "Update Package.swift for version ${{ needs.draft_release.outputs.tag }}"
+          git push
+
+
 
   publish_linux_x86_64:
     name: Publish Linux x86_64
