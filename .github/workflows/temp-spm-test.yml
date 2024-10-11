@@ -1,4 +1,5 @@
-on: workflow_dispatch
+on:
+  push:
 name: "temp test spm"
 jobs:
   build:
