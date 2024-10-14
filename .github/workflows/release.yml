@@ -100,7 +100,7 @@ jobs:
 
       - name: Build iOS & macOS xcframework
         run: |
-          .tool/build_xcframework.sh
+          ./tool/build_xcframework.sh
 
       - name: Lint pod
         run: |
