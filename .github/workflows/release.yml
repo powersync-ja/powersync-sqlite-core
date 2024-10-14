@@ -237,3 +237,47 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           file-name: libpowersync_x64.dylib
           tag: ${{ needs.draft_release.outputs.tag }}
+
+  poblish_wasm:
+    name: Publish WASM builds
+    needs: [draft_release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2024-05-18
+          components: rust-src
+
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.68
+
+      - name: Build WASM SIDE_MODULE
+        run: ./tool/build_wasm.sh
+
+      - name: Upload libpowersync.wasm
+        uses: ./.github/actions/upload
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          file-name: libpowersync.wasm
+          tag: ${{ needs.draft_release.outputs.tag }}
+
+      - name: Upload libpowersync-async.wasm
+        uses: ./.github/actions/upload
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          file-name: libpowersync-async.wasm
+          tag: ${{ needs.draft_release.outputs.tag }}
+
+      - name: Upload libpowersync.a
+        uses: ./.github/actions/upload
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          file-name: libpowersync.a
+          tag: ${{ needs.draft_release.outputs.tag }}

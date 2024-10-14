@@ -12,6 +12,7 @@ RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2" \
     -Z build-std=panic_abort,core,alloc \
     --target wasm32-unknown-emscripten
 
+cp "target/wasm32-unknown-emscripten/wasm/powersync.wasm" "libpowersync.wasm"
 
 # Asyncify
 # target/wasm32-unknown-emscripten/wasm_asyncify/powersync.wasm
@@ -24,6 +25,8 @@ RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2 -C link-arg=-sASYNCIFY=1 -C link-arg=-sJS
     -Z build-std=panic_abort,core,alloc \
     --target wasm32-unknown-emscripten
 
+cp "target/wasm32-unknown-emscripten/wasm_asyncify/powersync.wasm" "libpowersync-async.wasm"
+
 
 # Static lib.
 # Works for both sync and asyncify builds.
@@ -34,3 +37,5 @@ cargo build \
   --profile wasm \
   -Z build-std=panic_abort,core,alloc \
   --target wasm32-wasi
+
+cp "target/wasm32-wasi/wasm/libpowersync.a" "libpowersync.wasm"
