@@ -113,13 +113,11 @@ jobs:
           FILENAME=powersync-sqlite-core.xcframework.zip
           echo "fileName=$FILENAME" >> $GITHUB_OUTPUT
 
-      # We use tar.xz for Cocoapods and zip for SPM package
       - name: Upload xcframework
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.xz
           gh release upload "${{ needs.draft_release.outputs.tag }}" ${{ steps.fileName.outputs.fileName }}
 
       # For SPM package

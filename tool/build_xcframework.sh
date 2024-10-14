@@ -63,8 +63,6 @@ EOF
     -output "${BUILD_DIR}/powersync-sqlite-core.xcframework"
 
   cp -Rf "${BUILD_DIR}/powersync-sqlite-core.xcframework" "powersync-sqlite-core.xcframework"
-  tar -cJvf powersync-sqlite-core.xcframework.tar.xz powersync-sqlite-core.xcframework LICENSE README.md
-  # swift command used for checksum required for SPM package does not support xz so need to create a zip file
   zip -r powersync-sqlite-core.xcframework.zip powersync-sqlite-core.xcframework LICENSE README.md
   rm -rf ${BUILD_DIR}
 }
