@@ -137,7 +137,7 @@ jobs:
               "repository": "${{ github.repository }}",
               "title": "${{ needs.draft_release.outputs.tag }}",
               "tag": "${{ needs.draft_release.outputs.tag }}",
-              "checksum": "${{ steps.checksum.outputs.checksum }}"
+              "checksum": "${{ steps.checksum.outputs.checksum }}",
               "fileName": "${{ steps.fileName.outputs.fileName }}"
             }
 
