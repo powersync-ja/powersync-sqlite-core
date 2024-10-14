@@ -1,6 +1,6 @@
 on:
   push:
-name: "linux"
+name: "wasm"
 jobs:
   build_wasm:
     name: Basic WASM build
@@ -16,5 +16,10 @@ jobs:
           toolchain: nightly-2024-05-18
           components: rust-src
 
-      - name: Build WASM bytecode
-        run: RUSTFLAGS="--emit=llvm-bc -C linker=/bin/true" cargo build -p powersync_loadable --profile wasm --no-default-features --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/static sqlite_nostd/omit_load_extension" -Z build-std=panic_abort,core,alloc --target wasm32-unknown-emscripten
+      - name: Setup emsdk
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.68
+
+      - name: Build WASM
+        run: ./tool/build_wasm.sh

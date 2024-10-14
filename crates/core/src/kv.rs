@@ -36,7 +36,7 @@ fn powersync_client_id_impl(
 create_sqlite_text_fn!(
     powersync_client_id,
     powersync_client_id_impl,
-    "powersync_last_synced_at"
+    "powersync_client_id"
 );
 
 fn powersync_last_synced_at_impl(

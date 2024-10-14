@@ -10,7 +10,7 @@ keywords.workspace = true
 
 [lib]
 name = "powersync"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 sqlite_nostd = { workspace=true }
