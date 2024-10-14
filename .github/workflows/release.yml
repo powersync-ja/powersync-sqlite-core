@@ -238,7 +238,7 @@ jobs:
           file-name: libpowersync_x64.dylib
           tag: ${{ needs.draft_release.outputs.tag }}
 
-  poblish_wasm:
+  publish_wasm:
     name: Publish WASM builds
     needs: [draft_release]
     runs-on: ubuntu-latest
