@@ -106,12 +106,14 @@ jobs:
         run: |
           pod lib lint
 
+      # For SPM package
       - name: Set xcFramework file name used for SPM package
         id: fileName
         run: |
           FILENAME=powersync-sqlite-core.xcframework.zip
           echo "fileName=$FILENAME" >> $GITHUB_OUTPUT
 
+      # We use tar.xz for Cocoapods and zip for SPM package
       - name: Upload xcframework
         env:
           GH_TOKEN: ${{ github.token }}
