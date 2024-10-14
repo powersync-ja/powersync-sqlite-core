@@ -23,3 +23,11 @@ RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2 -C link-arg=-sASYNCIFY=1 -C link-arg=-sJS
     --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension" \
     -Z build-std=panic_abort,core,alloc \
     --target wasm32-unknown-emscripten
+
+# Static lib (works for both sync and asyncify builds)
+# target/wasm32-unknown-emscripten/wasm/libpowersync.a
+cargo build \
+  -p powersync_static \
+  --profile wasm \
+  -Z build-std=panic_abort,core,alloc \
+  --target wasm32-unknown-emscripten
