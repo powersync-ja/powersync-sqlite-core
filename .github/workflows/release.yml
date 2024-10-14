@@ -106,32 +106,40 @@ jobs:
         run: |
           pod lib lint
 
+      - name: Set xcFramework file name used for SPM package
+        id: fileName
+        run: |
+          FILENAME=powersync-sqlite-core.xcframework.zip
+          echo "fileName=$FILENAME" >> $GITHUB_OUTPUT
+
       - name: Upload xcframework
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.xz
-          gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.zip
+          gh release upload "${{ needs.draft_release.outputs.tag }}" ${{ steps.fileName.outputs.fileName }}
 
       # For SPM package
-      - name: Compute checksum and update Package.swift
+      - name: Generate and add checksum to output
+        id: checksum
         run: |
-          CHECKSUM=$(swift package compute-checksum powersync-sqlite-core.xcframework.zip)
-          sed -i '' \
-            -e "s|url: \".*\"|url: \"https://github.com/${{ github.repository }}/releases/download/${{ needs.draft_release.outputs.tag }}/powersync-sqlite-core.xcframework.zip\"|" \
-            -e "s|checksum: \".*\"|checksum: \"$CHECKSUM\"|" \
-            Package.swift
-
-      - name: Commit and push updated Package.swift
-        run: |
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git add Package.swift
-          git commit -m "Update Package.swift for version ${{ needs.draft_release.outputs.tag }}"
-          git push
-
-
+          CHECKSUM=$(swift package compute-checksum ${{ steps.fileName.outputs.fileName }})
+          echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
+      - name: Dispatch release to SPM package
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SWIFT_PUBLISH_TOKEN }}
+          repository: powersync-ja/powersync-sqlite-core-swift
+          event-type: spm-release
+          client-payload: |-
+            {
+              "repository": "${{ github.repository }}",
+              "title": "${{ needs.draft_release.outputs.tag }}",
+              "tag": "${{ needs.draft_release.outputs.tag }}",
+              "checksum": "${{ steps.checksum.outputs.checksum }}"
+              "fileName": "${{ steps.fileName.outputs.fileName }}"
+            }
 
   publish_linux_x86_64:
     name: Publish Linux x86_64
