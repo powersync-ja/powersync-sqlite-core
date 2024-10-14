@@ -73,7 +73,7 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSWORD: ${{ secrets.GPG_PASSWORD }}
 
-  publish_ios_pod:
+  publish_ios_pod_and_spm_package:
     name: Publish iOS
     needs: [draft_release]
     runs-on: macos-latest
@@ -100,18 +100,46 @@ jobs:
 
       - name: Build iOS & macOS xcframework
         run: |
-          ./build-pod.sh
+          .tool/build_xcframework.sh
 
       - name: Lint pod
         run: |
           pod lib lint
+
+      # For SPM package
+      - name: Set xcFramework file name used for SPM package
+        id: fileName
+        run: |
+          FILENAME=powersync-sqlite-core.xcframework.zip
+          echo "fileName=$FILENAME" >> $GITHUB_OUTPUT
 
       - name: Upload xcframework
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release upload "${{ needs.draft_release.outputs.tag }}" powersync-sqlite-core.xcframework.tar.xz
+          gh release upload "${{ needs.draft_release.outputs.tag }}" ${{ steps.fileName.outputs.fileName }}
+
+      # For SPM package
+      - name: Generate and add checksum to output
+        id: checksum
+        run: |
+          CHECKSUM=$(swift package compute-checksum ${{ steps.fileName.outputs.fileName }})
+          echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
+      - name: Dispatch release to SPM package
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.SWIFT_PUBLISH_TOKEN }}
+          repository: powersync-ja/powersync-sqlite-core-swift
+          event-type: spm-release
+          client-payload: |-
+            {
+              "repository": "${{ github.repository }}",
+              "title": "${{ needs.draft_release.outputs.tag }}",
+              "tag": "${{ needs.draft_release.outputs.tag }}",
+              "checksum": "${{ steps.checksum.outputs.checksum }}"
+              "fileName": "${{ steps.fileName.outputs.fileName }}"
+            }
 
   publish_linux_x86_64:
     name: Publish Linux x86_64
