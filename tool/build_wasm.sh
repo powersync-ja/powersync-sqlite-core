@@ -38,4 +38,4 @@ cargo build \
   -Z build-std=panic_abort,core,alloc \
   --target wasm32-wasi
 
-cp "target/wasm32-wasi/wasm/libpowersync.a" "libpowersync.wasm"
+cp "target/wasm32-wasi/wasm/libpowersync.a" "libpowersync-wasm.a"

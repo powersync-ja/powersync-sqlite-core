@@ -275,9 +275,9 @@ jobs:
           file-name: libpowersync-async.wasm
           tag: ${{ needs.draft_release.outputs.tag }}
 
-      - name: Upload libpowersync.a
+      - name: Upload libpowersync-wasm.a
         uses: ./.github/actions/upload
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync.a
+          file-name: libpowersync-wasm.a
           tag: ${{ needs.draft_release.outputs.tag }}
