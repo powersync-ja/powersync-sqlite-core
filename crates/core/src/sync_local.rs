@@ -55,21 +55,17 @@ pub fn sync_local(db: *mut sqlite::sqlite3, _data: &str) -> Result<i64, SQLiteEr
 
     // Query for updated objects
 
-    // QUERY PLAN
-    // |--SCAN buckets
-    // |--SEARCH b USING INDEX ps_oplog_by_opid (bucket=? AND op_id>?)
-    // |--SEARCH r USING INDEX ps_oplog_by_row (row_type=? AND row_id=?)
-    // `--USE TEMP B-TREE FOR GROUP BY
     // language=SQLite
     let statement = db
         .prepare_v2(
             "\
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
+--    SELECT DISTINCT / UNION is important for cases with many duplicate ids.
 WITH updated_rows AS (
-  SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
+  SELECT DISTINCT b.row_type, b.row_id FROM ps_buckets AS buckets
     CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
   AND (b.op_id > buckets.last_applied_op)
-  UNION ALL SELECT row_type, row_id FROM ps_updated_rows
+  UNION SELECT row_type, row_id FROM ps_updated_rows
 )
 
 -- 3. Group the objects from different buckets together into a single one (ops).
