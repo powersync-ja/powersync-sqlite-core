@@ -205,7 +205,7 @@ checksum = "19b17cddbe7ec3f8bc800887bab5e717348c95ea2ca0b1bf0837fb964dc67099"
 
 [[package]]
 name = "powersync_core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "bytes",
  "num-derive",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "powersync_loadable"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "powersync_core",
  "sqlite_nostd",
@@ -226,7 +226,7 @@ dependencies = [
 
 [[package]]
 name = "powersync_sqlite"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "cc",
  "powersync_core",
@@ -331,7 +331,7 @@ checksum = "43b2853a4d09f215c24cc5489c992ce46052d359b5109343cbafbf26bc62f8a3"
 
 [[package]]
 name = "sqlite3"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "cc",
 ]
