@@ -50,7 +50,7 @@ sqlite3 ":memory:" ".load ./target/debug/libpowersync" "select powersync_rs_vers
 cargo build -p powersync_loadable --release
 
 # Build for iOS
-./all-ios-loadable.sh
+./tool/build_xcframework.sh
 ```
 
 # Acknowledgements
