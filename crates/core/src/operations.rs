@@ -75,7 +75,7 @@ FROM json_each(?) e",
     // operations when last_applied_op = 0.
     // We do still need to do the "supersede_statement" step for this case, since a REMOVE
     // operation can supersede another PUT operation we're syncing at the same time.
-    let mut last_applied_op = bucket_statement.column_int64(1)?;
+    let mut is_empty = bucket_statement.column_int64(1)? == 0;
 
     // Statement to supersede (replace) operations with the same key.
     // language=SQLite
@@ -134,11 +134,12 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
                 add_checksum = add_checksum.wrapping_add(supersede_checksum);
                 op_checksum = op_checksum.wrapping_sub(supersede_checksum);
 
-                if superseded_op <= last_applied_op {
-                    // Superseded an operation previously applied - we cannot skip removes
-                    // For initial sync, last_applied_op = 0, so this is always false.
-                    // For subsequent sync, this is only true if the row was previously
-                    // synced, not when it was first synced in the current batch.
+                // Superseded an operation, only skip if the bucket was empty
+                // Previously this checked "superseded_op <= last_applied_op".
+                // However, that would not account for a case where a previous
+                // PUT operation superseded the original PUT operation in this
+                // same batch, in which case superseded_op is not accurate for this.
+                if !is_empty {
                     superseded = true;
                 }
             }
@@ -225,7 +226,7 @@ WHERE bucket = ?1",
             clear_statement2.exec()?;
 
             add_checksum = 0;
-            last_applied_op = 0;
+            is_empty = true;
             op_checksum = 0;
         }
     }
