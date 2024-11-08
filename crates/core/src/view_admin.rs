@@ -120,7 +120,7 @@ fn powersync_init_impl(
 
     setup_internal_views(local_db)?;
 
-    powersync_migrate(ctx, 5)?;
+    powersync_migrate(ctx, 6)?;
 
     Ok(String::from(""))
 }

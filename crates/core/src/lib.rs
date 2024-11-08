@@ -17,6 +17,7 @@ mod crud_vtab;
 mod diff;
 mod error;
 mod ext;
+mod fix035;
 mod kv;
 mod macros;
 mod migrations;

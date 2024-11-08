@@ -9,6 +9,7 @@ use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
 use crate::error::{PSResult, SQLiteError};
+use crate::fix035::apply_v035_fix;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -281,6 +282,23 @@ VALUES(5,
   ",
           )
           .into_db_result(local_db)?;
+    }
+
+    if current_version < 6 && target_version >= 6 {
+        // language=SQLite
+        apply_v035_fix(local_db)?;
+
+        local_db
+            .exec_safe(
+                "\
+INSERT INTO ps_migration(id, down_migrations)
+VALUES(6,
+json_array(
+  json_object('sql', 'DELETE FROM ps_migration WHERE id >= 6')
+));
+",
+            )
+            .into_db_result(local_db)?;
     }
 
     Ok(())

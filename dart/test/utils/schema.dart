@@ -61,6 +61,14 @@ String getData(CommonDatabase db) {
     {
       'table': 'ps_updated_rows',
       'query': 'select * from ps_updated_rows order by row_type, row_id'
+    },
+    {
+      'table': 'ps_data__lists',
+      'query': 'select * from ps_data__lists order by id'
+    },
+    {
+      'table': 'ps_data__todos',
+      'query': 'select * from ps_data__todos order by id'
     }
   ];
   List<String> result = [];
