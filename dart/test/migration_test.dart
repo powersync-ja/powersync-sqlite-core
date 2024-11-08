@@ -5,6 +5,7 @@ import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
 import 'utils/migration_fixtures.dart' as fixtures;
+import 'utils/fix_035_fixtures.dart' as fix035;
 import 'utils/schema.dart';
 
 void main() {
@@ -174,6 +175,41 @@ void main() {
       final expected =
           '${fixtures.expectedState[3]!.replaceAll(RegExp(r';INSERT INTO ps_migration.*'), '').trim()}\n${fixtures.schemaDown3.trim()}';
       expect(schema, equals(expected));
+    });
+
+    test('migrate from 5 with broken data', () async {
+      var tableSchema = {
+        'tables': [
+          {
+            'name': 'lists',
+            'columns': [
+              {'name': 'description', 'type': 'TEXT'}
+            ]
+          },
+          {
+            'name': 'todos',
+            'columns': [
+              {'name': 'description', 'type': 'TEXT'}
+            ]
+          }
+        ]
+      };
+      db.select('select powersync_init()');
+      db.select(
+          'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
+
+      db.select('select powersync_test_migration(5)');
+      db.execute(fix035.dataBroken);
+
+      db.select('select powersync_init()');
+      final data = getData(db);
+      expect(data, equals(fix035.dataMigrated.trim()));
+
+      db.select('insert into powersync_operations(op, data) values(?, ?)',
+          ['sync_local', '']);
+
+      final data2 = getData(db);
+      expect(data2, equals(fix035.dataFixed.trim()));
     });
   });
 }
