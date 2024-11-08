@@ -285,8 +285,10 @@ VALUES(5,
     }
 
     if current_version < 6 && target_version >= 6 {
-        // language=SQLite
-        apply_v035_fix(local_db)?;
+        if current_version != 0 {
+            // Remove dangling rows, but skip if the database is created from scratch.
+            apply_v035_fix(local_db)?;
+        }
 
         local_db
             .exec_safe(

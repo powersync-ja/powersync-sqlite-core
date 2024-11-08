@@ -129,7 +129,6 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
 
             while supersede_statement.step()? == ResultCode::ROW {
                 // Superseded (deleted) a previous operation, add the checksum
-                let superseded_op = supersede_statement.column_int64(0)?;
                 let supersede_checksum = supersede_statement.column_int(1)?;
                 add_checksum = add_checksum.wrapping_add(supersede_checksum);
                 op_checksum = op_checksum.wrapping_sub(supersede_checksum);
