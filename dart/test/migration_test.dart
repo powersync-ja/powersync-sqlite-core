@@ -211,5 +211,40 @@ void main() {
       final data2 = getData(db);
       expect(data2, equals(fix035.dataFixed.trim()));
     });
+
+    /// Here we start with a schema from fixtures on db version 3
+    test('schema 3 -> 5 with custom triggers', () async {
+      db.execute(fixtures.expectedState[3]!);
+      db.execute(fixtures.schema3);
+      // This is a contrived example, but gives us a trigger
+      // that references the "lists" view, affecting migrations.
+      db.execute('''
+create trigger t1 after delete on ps_data__lists begin
+  insert into lists(id, description) values(OLD.id, 'deleted');
+end''');
+
+      var tableSchema = {
+        'tables': [
+          {
+            'name': 'lists',
+            'columns': [
+              {'name': 'description', 'type': 'TEXT'}
+            ]
+          }
+        ]
+      };
+      db.select('select powersync_init()');
+      db.select(
+          'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
+
+      final schema = getSchema(db);
+      final expected =
+          '''${fixtures.finalState.replaceAll(RegExp(r';INSERT INTO ps_migration.*'), '').trim()}
+${fixtures.schema5.trim()}
+;CREATE TRIGGER t1 after delete on ps_data__lists begin
+  insert into lists(id, description) values(OLD.id, \'deleted\');
+end''';
+      expect(schema, equals(expected));
+    });
   });
 }
