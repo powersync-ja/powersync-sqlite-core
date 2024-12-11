@@ -172,21 +172,28 @@ VALUES(4,
     }
 
     if current_version < 5 && target_version >= 5 {
-        // Start by dropping all existing views and triggers (but not tables).
+        // Start by dropping all triggers on views (but not views tables).
         // This is because the triggers are restructured in this version, and
         // need to be re-created from scratch. Not dropping them can make it
         // refer to tables or columns not existing anymore, which can case
         // issues later on.
-        // The same applies for the down migration.
+        //
+        // Similarly, dropping the views themselves can cause issues with
+        // user-defined triggers that refer to them.
+        //
+        // The same applies for the down migration, except there we do drop
+        // the views, since we cannot use the `powersync_views` view.
+        // Down migrations are less common, so we're okay about that breaking
+        // in some cases.
 
         // language=SQLite
         local_db
           .exec_safe(
               "\
-SELECT powersync_drop_view(view.name)
-FROM sqlite_master view
-WHERE view.type = 'view'
-  AND view.sql GLOB  '*-- powersync-auto-generated';
+UPDATE powersync_views SET
+        delete_trigger_sql = '',
+        update_trigger_sql = '',
+        insert_trigger_sql = '';
 
 ALTER TABLE ps_buckets RENAME TO ps_buckets_old;
 ALTER TABLE ps_oplog RENAME TO ps_oplog_old;
