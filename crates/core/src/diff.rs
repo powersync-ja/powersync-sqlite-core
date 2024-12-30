@@ -1,12 +1,11 @@
 extern crate alloc;
 
-
 use alloc::format;
 use alloc::string::{String, ToString};
 use core::ffi::c_int;
 use core::slice;
 
-use sqlite::{ResultCode};
+use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context, Value};
 
@@ -26,7 +25,6 @@ fn powersync_diff_impl(
 }
 
 pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, SQLiteError> {
-
     let v_new: json::Value = json::from_str(data_new)?;
     let v_old: json::Value = json::from_str(data_old)?;
 
@@ -81,7 +79,6 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,17 +88,53 @@ mod tests {
         assert_eq!(diff_objects("{}", "{}").unwrap(), "{}");
         assert_eq!(diff_objects(r#"{"a": null}"#, "{}").unwrap(), "{}");
         assert_eq!(diff_objects(r#"{}"#, r#"{"a": null}"#).unwrap(), "{}");
-        assert_eq!(diff_objects(r#"{"b": 1}"#, r#"{"a": null, "b": 1}"#).unwrap(), "{}");
-        assert_eq!(diff_objects(r#"{"b": 1}"#, r#"{"a": null, "b": 2}"#).unwrap(), r#"{"b":2}"#);
-        assert_eq!(diff_objects(r#"{"a": 0, "b": 1}"#, r#"{"a": null, "b": 2}"#).unwrap(), r#"{"a":null,"b":2}"#);
-        assert_eq!(diff_objects(r#"{"a": 1}"#, r#"{"a": null}"#).unwrap(), r#"{"a":null}"#);
-        assert_eq!(diff_objects(r#"{"a": 1}"#, r#"{}"#).unwrap(), r#"{"a":null}"#);
-        assert_eq!(diff_objects(r#"{"a": 1}"#, r#"{"a": 2}"#).unwrap(), r#"{"a":2}"#);
-        assert_eq!(diff_objects(r#"{"a": 1}"#, r#"{"a": "1"}"#).unwrap(), r#"{"a":"1"}"#);
-        assert_eq!(diff_objects(r#"{"a": 1}"#, r#"{"a": 1.0}"#).unwrap(), r#"{"a":1.0}"#);
-        assert_eq!(diff_objects(r#"{"a": 1.00}"#, r#"{"a": 1.0}"#).unwrap(), r#"{}"#);
-        assert_eq!(diff_objects(r#"{}"#, r#"{"a": 1.0}"#).unwrap(), r#"{"a":1.0}"#);
-        assert_eq!(diff_objects(r#"{}"#, r#"{"a": [1,2,3]}"#).unwrap(), r#"{"a":[1,2,3]}"#);
-        assert_eq!(diff_objects(r#"{"a": 1}"#, r#"{"a": [1,2,3]}"#).unwrap(), r#"{"a":[1,2,3]}"#);
+        assert_eq!(
+            diff_objects(r#"{"b": 1}"#, r#"{"a": null, "b": 1}"#).unwrap(),
+            "{}"
+        );
+        assert_eq!(
+            diff_objects(r#"{"b": 1}"#, r#"{"a": null, "b": 2}"#).unwrap(),
+            r#"{"b":2}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{"a": 0, "b": 1}"#, r#"{"a": null, "b": 2}"#).unwrap(),
+            r#"{"a":null,"b":2}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{"a": 1}"#, r#"{"a": null}"#).unwrap(),
+            r#"{"a":null}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{"a": 1}"#, r#"{}"#).unwrap(),
+            r#"{"a":null}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{"a": 1}"#, r#"{"a": 2}"#).unwrap(),
+            r#"{"a":2}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{"a": 1}"#, r#"{"a": "1"}"#).unwrap(),
+            r#"{"a":"1"}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{"a": 1}"#, r#"{"a": 1.0}"#).unwrap(),
+            r#"{"a":1.0}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{"a": 1.00}"#, r#"{"a": 1.0}"#).unwrap(),
+            r#"{}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{}"#, r#"{"a": 1.0}"#).unwrap(),
+            r#"{"a":1.0}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{}"#, r#"{"a": [1,2,3]}"#).unwrap(),
+            r#"{"a":[1,2,3]}"#
+        );
+        assert_eq!(
+            diff_objects(r#"{"a": 1}"#, r#"{"a": [1,2,3]}"#).unwrap(),
+            r#"{"a":[1,2,3]}"#
+        );
     }
 }

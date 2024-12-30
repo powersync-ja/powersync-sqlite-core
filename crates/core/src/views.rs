@@ -7,7 +7,7 @@ use core::ffi::c_int;
 use core::slice;
 
 use sqlite::{Connection, Context, ResultCode, Value};
-use sqlite_nostd as sqlite;
+use sqlite_nostd::{self as sqlite, ManagedStmt};
 
 use crate::create_sqlite_text_fn;
 use crate::error::{PSResult, SQLiteError};
@@ -143,16 +143,7 @@ fn powersync_trigger_insert_sql_impl(
     let local_db = ctx.db_handle();
     let stmt2 = local_db.prepare_v2("select json_extract(e.value, '$.name') as name from json_each(json_extract(?, '$.columns')) e")?;
     stmt2.bind_text(1, table, sqlite::Destructor::STATIC)?;
-
-    let mut column_names_quoted: Vec<String> = alloc::vec![];
-    while stmt2.step()? == ResultCode::ROW {
-        let name = stmt2.column_text(0)?;
-
-        let foo: String = format!("{:}, NEW.{:}", quote_string(name), quote_identifier(name));
-        column_names_quoted.push(foo);
-    }
-
-    let json_fragment = column_names_quoted.join(", ");
+    let json_fragment = json_object_fragment("NEW", &stmt2)?;
 
     return if !local_only && !insert_only {
         let trigger = format!("\
@@ -165,8 +156,8 @@ fn powersync_trigger_insert_sql_impl(
       THEN RAISE (FAIL, 'id is required')
       END;
       INSERT INTO {:}
-      SELECT NEW.id, json_object({:});
-      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', json_object({:})))));
+      SELECT NEW.id, {:};
+      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:}))));
       INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, NEW.id);
       INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
     END", trigger_name, quoted_name, internal_name, json_fragment, type_string, json_fragment, type_string, MAX_OP_ID);
@@ -178,7 +169,7 @@ fn powersync_trigger_insert_sql_impl(
     INSTEAD OF INSERT ON {:}
     FOR EACH ROW
     BEGIN
-      INSERT INTO {:} SELECT NEW.id, json_object({:});
+      INSERT INTO {:} SELECT NEW.id, {:};
     END",
             trigger_name, quoted_name, internal_name, json_fragment
         );
@@ -189,7 +180,7 @@ fn powersync_trigger_insert_sql_impl(
     INSTEAD OF INSERT ON {:}
     FOR EACH ROW
     BEGIN
-      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', json_object({:})))));
+      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:}))));
     END", trigger_name, quoted_name, type_string, json_fragment);
         Ok(trigger)
     } else {
@@ -224,20 +215,9 @@ fn powersync_trigger_update_sql_impl(
     let db = ctx.db_handle();
     let stmt2 = db.prepare_v2("select json_extract(e.value, '$.name') as name from json_each(json_extract(?, '$.columns')) e").into_db_result(db)?;
     stmt2.bind_text(1, table, sqlite::Destructor::STATIC)?;
-
-    let mut column_names_quoted_new: Vec<String> = alloc::vec![];
-    let mut column_names_quoted_old: Vec<String> = alloc::vec![];
-    while stmt2.step()? == ResultCode::ROW {
-        let name = stmt2.column_text(0)?;
-
-        let foo_new: String = format!("{:}, NEW.{:}", quote_string(name), quote_identifier(name));
-        column_names_quoted_new.push(foo_new);
-        let foo_old: String = format!("{:}, OLD.{:}", quote_string(name), quote_identifier(name));
-        column_names_quoted_old.push(foo_old);
-    }
-
-    let json_fragment_new = column_names_quoted_new.join(", ");
-    let json_fragment_old = column_names_quoted_old.join(", ");
+    let json_fragment_new = json_object_fragment("NEW", &stmt2)?;
+    stmt2.reset()?;
+    let json_fragment_old = json_object_fragment("OLD", &stmt2)?;
 
     return if !local_only && !insert_only {
         let trigger = format!("\
@@ -250,9 +230,9 @@ BEGIN
   THEN RAISE (FAIL, 'Cannot update id')
   END;
   UPDATE {:}
-      SET data = json_object({:})
+      SET data = {:}
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff(json_object({:}), json_object({:})))));
+  INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:}))));
   INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, NEW.id);
   INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
 END", trigger_name, quoted_name, internal_name, json_fragment_new, type_string, json_fragment_old, json_fragment_new, type_string, MAX_OP_ID);
@@ -269,7 +249,7 @@ BEGIN
   THEN RAISE (FAIL, 'Cannot update id')
   END;
   UPDATE {:}
-      SET data = json_object({:})
+      SET data = {:}
       WHERE id = NEW.id;
 END",
             trigger_name, quoted_name, internal_name, json_fragment_new
@@ -334,4 +314,46 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     )?;
 
     Ok(())
+}
+
+/// Given a query returning column names, return a JSON object fragment for a trigger.
+///
+/// Example output with prefix "NEW": "json_object('id', NEW.id, 'name', NEW.name, 'age', NEW.age)".
+fn json_object_fragment(prefix: &str, name_results: &ManagedStmt) -> Result<String, SQLiteError> {
+    // floor(SQLITE_MAX_FUNCTION_ARG / 2).
+    // To keep databases portable, we use the default limit of 100 args for this,
+    // and don't try to query the limit dynamically.
+    const MAX_ARG_COUNT: usize = 50;
+
+    let mut column_names_quoted: Vec<String> = alloc::vec![];
+    while name_results.step()? == ResultCode::ROW {
+        let name = name_results.column_text(0)?;
+
+        let quoted: String = format!(
+            "{:}, {:}.{:}",
+            quote_string(name),
+            prefix,
+            quote_identifier(name)
+        );
+        column_names_quoted.push(quoted);
+    }
+
+    // SQLITE_MAX_COLUMN - 1 (because of the id column)
+    if column_names_quoted.len() > 1999 {
+        return Err(SQLiteError::from(ResultCode::TOOBIG));
+    } else if column_names_quoted.len() <= MAX_ARG_COUNT {
+        // Small number of columns - use json_object() directly.
+        let json_fragment = column_names_quoted.join(", ");
+        return Ok(format!("json_object({:})", json_fragment));
+    } else {
+        // Too many columns to use json_object directly.
+        // Instead, we build up the JSON object in chunks,
+        // and merge using powersync_json_merge().
+        let mut fragments: Vec<String> = alloc::vec![];
+        for chunk in column_names_quoted.chunks(MAX_ARG_COUNT) {
+            let sub_fragment = chunk.join(", ");
+            fragments.push(format!("json_object({:})", sub_fragment));
+        }
+        return Ok(format!("powersync_json_merge({:})", fragments.join(", ")));
+    }
 }
