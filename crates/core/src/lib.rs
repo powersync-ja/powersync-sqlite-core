@@ -18,6 +18,7 @@ mod diff;
 mod error;
 mod ext;
 mod fix035;
+mod json_merge;
 mod kv;
 mod macros;
 mod migrations;
@@ -55,6 +56,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::views::register(db)?;
     crate::uuid::register(db)?;
     crate::diff::register(db)?;
+    crate::json_merge::register(db)?;
     crate::view_admin::register(db)?;
     crate::checkpoint::register(db)?;
     crate::kv::register(db)?;
