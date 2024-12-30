@@ -9,30 +9,42 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context, Value};
 
-use serde_json as json;
-
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
 
 /// Given any number of JSON TEXT arguments, merge them into a single JSON object.
 ///
-/// TODO: If we know these are all valid JSON objects, we could perhaps do string concatenation instead.
+/// This assumes each argument is a valid JSON object, with no duplicate keys.
+/// No JSON parsing or validation is performed - this performs simple string concatenation.
 fn powersync_json_merge_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
-    let mut v_result = json::Value::Object(json::Map::new());
+    if args.is_empty() {
+        return Ok("{}".to_string());
+    }
+    let mut result = String::from("{");
     for arg in args {
-        let v: json::Value = json::from_str(arg.text())?;
-        if let json::Value::Object(map) = v {
-            for (key, value) in map {
-                v_result[key] = value;
-            }
-        } else {
+        let chunk = arg.text();
+        if chunk.is_empty() || !chunk.starts_with('{') || !chunk.ends_with('}') {
             return Err(SQLiteError::from(ResultCode::MISMATCH));
         }
+
+        // Strip outer braces
+        let inner = &chunk[1..(chunk.len() - 1)];
+
+        // If this is not the first chunk, insert a comma
+        if result.len() > 1 {
+            result.push(',');
+        }
+
+        // Append the inner content
+        result.push_str(inner);
     }
-    return Ok(v_result.to_string());
+
+    // Close the outer brace
+    result.push('}');
+    Ok(result)
 }
 
 create_sqlite_text_fn!(
