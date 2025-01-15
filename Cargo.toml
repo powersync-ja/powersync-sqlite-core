@@ -17,6 +17,11 @@ strip = true
 opt-level = "z"
 lto = true
 
+[profile.release_apple]
+inherits = "release"
+strip = false
+debug = true
+
 [profile.wasm]
 inherits = "release"
 
@@ -24,7 +29,7 @@ inherits = "release"
 inherits = "wasm"
 
 [workspace.package]
-version = "0.3.8"
+version = "0.3.9"
 edition = "2021"
 authors = ["JourneyApps"]
 keywords = ["sqlite", "powersync"]
