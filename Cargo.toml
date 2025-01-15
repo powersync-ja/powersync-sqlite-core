@@ -29,7 +29,7 @@ inherits = "release"
 inherits = "wasm"
 
 [workspace.package]
-version = "0.3.7"
+version = "0.3.8"
 edition = "2021"
 authors = ["JourneyApps"]
 keywords = ["sqlite", "powersync"]
