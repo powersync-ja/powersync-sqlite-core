@@ -2,21 +2,30 @@ use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
 
+use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
-use sqlite_nostd as sqlite;
+use sqlite_nostd::{self as sqlite, Value};
 use sqlite_nostd::{ColumnType, Connection, ResultCode};
 
 use crate::ext::SafeManagedStmt;
 use crate::util::{internal_table_name, quote_internal_name};
 
-pub fn can_update_local(db: *mut sqlite::sqlite3) -> Result<bool, SQLiteError> {
+fn can_apply_sync_changes(
+    db: *mut sqlite::sqlite3,
+    priority: BucketPriority,
+) -> Result<bool, SQLiteError> {
+    // We can only make sync changes visible if data is consistent, meaning that we've seen the
+    // target operation sent in the original checkpoint message. We allow weakening consistency when
+    // buckets from different priorities are involved (buckets with higher priorities or a lower
+    // priority number can be published before we've reached the checkpoint for other buckets).
     // language=SQLite
     let statement = db.prepare_v2(
         "\
 SELECT group_concat(name)
 FROM ps_buckets
-WHERE target_op > last_op",
+WHERE (target_op > last_op) AND (priority <= ?)",
     )?;
+    statement.bind_int(1, priority.into())?;
 
     if statement.step()? != ResultCode::ROW {
         return Err(SQLiteError::from(ResultCode::ABORT));
@@ -26,20 +35,32 @@ WHERE target_op > last_op",
         return Ok(false);
     }
 
-    // This is specifically relevant for when data is added to crud before another batch is completed.
-
-    // language=SQLite
-    let statement = db.prepare_v2("SELECT 1 FROM ps_crud LIMIT 1")?;
-    if statement.step()? != ResultCode::DONE {
-        return Ok(false);
+    // Don't publish downloaded data until the upload queue is empty (except for downloaded data in
+    // priority 0, which is published earlier).
+    if !priority.may_publish_with_outstanding_uploads() {
+        let statement = db.prepare_v2("SELECT 1 FROM ps_crud LIMIT 1")?;
+        if statement.step()? != ResultCode::DONE {
+            return Ok(false);
+        }
     }
 
     Ok(true)
 }
 
-pub fn sync_local(db: *mut sqlite::sqlite3, _data: &str) -> Result<i64, SQLiteError> {
-    if !can_update_local(db)? {
+pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, SQLiteError> {
+    let priority = match data.value_type() {
+        ColumnType::Integer => BucketPriority::try_from(data.int()),
+        ColumnType::Float => BucketPriority::try_from(data.double() as i32),
+        // Older clients without bucket priority support typically send an empty string here.
+        _ => Ok(BucketPriority::LOWEST),
+    }?;
+
+    if !can_apply_sync_changes(db, priority)? {
         return Ok(0);
+    }
+
+    if priority >= BucketPriority::LOWEST {
+        todo!("Only consider changes from certain bucket priorities")
     }
 
     // language=SQLite

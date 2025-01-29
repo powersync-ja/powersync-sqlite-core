@@ -310,5 +310,21 @@ json_array(
             .into_db_result(local_db)?;
     }
 
+    if current_version < 7 && target_version >= 7 {
+        local_db
+            .exec_safe(
+                "\
+ALTER TABLE ps_buckets ADD COLUMN priority NOT NULL DEFAULT 1;
+INSERT INTO ps_migration(id, down_migrations)
+VALUES(6,
+json_array(
+  json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN priority'),
+  json_object('sql', 'DELETE FROM ps_migration WHERE id >= 7')
+));
+",
+            )
+            .into_db_result(local_db)?;
+    }
+
     Ok(())
 }

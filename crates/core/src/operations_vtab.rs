@@ -76,16 +76,15 @@ extern "C" fn update(
     } else if rowid.value_type() == sqlite::ColumnType::Null {
         // INSERT
         let op = args[2].text();
-        let data = args[3].text();
 
         let tab = unsafe { &mut *vtab.cast::<VirtualTable>() };
         let db = tab.db;
 
         if op == "save" {
-            let result = insert_operation(db, data);
+            let result = insert_operation(db, args[3].text());
             vtab_result(vtab, result)
         } else if op == "sync_local" {
-            let result = sync_local(db, data);
+            let result = sync_local(db, &args[3]);
             if let Ok(result_row) = result {
                 unsafe {
                     *p_row_id = result_row;
@@ -93,13 +92,13 @@ extern "C" fn update(
             }
             vtab_result(vtab, result)
         } else if op == "clear_remove_ops" {
-            let result = clear_remove_ops(db, data);
+            let result = clear_remove_ops(db, args[3].text());
             vtab_result(vtab, result)
         } else if op == "delete_pending_buckets" {
-            let result = delete_pending_buckets(db, data);
+            let result = delete_pending_buckets(db, args[3].text());
             vtab_result(vtab, result)
         } else if op == "delete_bucket" {
-            let result = delete_bucket(db, data);
+            let result = delete_bucket(db, args[3].text());
             vtab_result(vtab, result)
         } else {
             ResultCode::MISUSE as c_int
