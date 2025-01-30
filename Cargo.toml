@@ -9,6 +9,7 @@ default-members = ["crates/shell", "crates/sqlite"]
 
 [profile.dev]
 panic = "abort"
+strip = true
 
 [profile.release]
 panic = "abort"

@@ -10,7 +10,7 @@ pub struct BucketPriority(i32);
 
 impl BucketPriority {
     pub fn may_publish_with_outstanding_uploads(self) -> bool {
-        self.0 == 0
+        self == BucketPriority::HIGHEST
     }
 
     pub const HIGHEST: BucketPriority = BucketPriority(0);
