@@ -79,7 +79,7 @@ FROM json_each(?) e",
                         RETURNING id, last_applied_op",
     )?;
     bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
-    bucket_statement.bind_int(2, priority.into());
+    bucket_statement.bind_int(2, priority.into())?;
     bucket_statement.step()?;
 
     let bucket_id = bucket_statement.column_int64(0)?;

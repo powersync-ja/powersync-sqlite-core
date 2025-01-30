@@ -59,10 +59,6 @@ pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, S
         return Ok(0);
     }
 
-    if priority >= BucketPriority::LOWEST {
-        todo!("Only consider changes from certain bucket priorities")
-    }
-
     // language=SQLite
     let statement = db
         .prepare_v2("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data_*'")
@@ -84,8 +80,8 @@ pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, S
 --    SELECT DISTINCT / UNION is important for cases with many duplicate ids.
 WITH updated_rows AS (
   SELECT DISTINCT b.row_type, b.row_id FROM ps_buckets AS buckets
-    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
-  AND (b.op_id > buckets.last_applied_op)
+    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id AND (b.op_id > buckets.last_applied_op)
+    WHERE buckets.priority <= ?
   UNION SELECT row_type, row_id FROM ps_updated_rows
 )
 
@@ -108,6 +104,7 @@ GROUP BY b.row_type, b.row_id",
 
     // TODO: cache statements
 
+    statement.bind_int(1, priority.into())?;
     while statement.step().into_db_result(db)? == ResultCode::ROW {
         let type_name = statement.column_text(0)?;
         let id = statement.column_text(1)?;
