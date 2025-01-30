@@ -19,7 +19,7 @@ SELECT
     json_extract(e.value, '$.has_more') as has_more,
     json_extract(e.value, '$.after') as after,
     json_extract(e.value, '$.next_after') as next_after,
-    json_extract(d.value, '$.priority') as priority,
+    json_extract(d.value, '$.priority') as priority
 FROM json_each(json_extract(?1, '$.buckets')) e
     LEFT OUTER JOIN json_each(json_extract(?1, '$.descriptions')) d
         ON json_extract(e.value, '$.bucket') == d.key",

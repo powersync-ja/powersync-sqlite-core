@@ -79,15 +79,16 @@ pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, S
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
 --    SELECT DISTINCT / UNION is important for cases with many duplicate ids.
 WITH updated_rows AS (
-  SELECT DISTINCT b.row_type, b.row_id FROM ps_buckets AS buckets
+  SELECT DISTINCT FALSE as local, b.row_type, b.row_id FROM ps_buckets AS buckets
     CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id AND (b.op_id > buckets.last_applied_op)
-    WHERE buckets.priority <= ?
-  UNION SELECT row_type, row_id FROM ps_updated_rows
+    WHERE buckets.priority <= ?1
+  UNION SELECT TRUE, row_type, row_id FROM ps_updated_rows
 )
 
 -- 3. Group the objects from different buckets together into a single one (ops).
 SELECT b.row_type as type,
     b.row_id as id,
+    b.local as local,
     r.data as data,
     count(r.bucket) as buckets,
     /* max() affects which row is used for 'data' */
@@ -97,6 +98,7 @@ FROM updated_rows b
     LEFT OUTER JOIN ps_oplog AS r
                ON r.row_type = b.row_type
                  AND r.row_id = b.row_id
+                 AND (SELECT priority FROM ps_buckets WHERE id = r.bucket) <= ?1
 -- Group for (3)
 GROUP BY b.row_type, b.row_id",
         )
@@ -108,10 +110,17 @@ GROUP BY b.row_type, b.row_id",
     while statement.step().into_db_result(db)? == ResultCode::ROW {
         let type_name = statement.column_text(0)?;
         let id = statement.column_text(1)?;
-        let buckets = statement.column_int(3)?;
-        let data = statement.column_text(2);
+        let local = statement.column_int(2)? == 1;
+        let buckets = statement.column_int(4)?;
+        let data = statement.column_text(3);
 
         let table_name = internal_table_name(type_name);
+
+        if local && buckets == 0 && priority == BucketPriority::HIGHEST {
+            // These rows are still local and they haven't been uploaded yet (which we allow for
+            // buckets with priority=0 completing). We should just keep them around.
+            continue;
+        }
 
         if tables.contains(&table_name) {
             let quoted = quote_internal_name(type_name, false);
@@ -157,20 +166,27 @@ GROUP BY b.row_type, b.row_id",
     }
 
     // language=SQLite
-    db.exec_safe(
-        "UPDATE ps_buckets
+    let updated = db
+        .prepare_v2(
+            "UPDATE ps_buckets
                  SET last_applied_op = last_op
-                 WHERE last_applied_op != last_op",
-    )
-    .into_db_result(db)?;
-
-    // language=SQLite
-    db.exec_safe("DELETE FROM ps_updated_rows")
+                 WHERE last_applied_op != last_op AND priority <= ?",
+        )
         .into_db_result(db)?;
+    updated.bind_int(1, priority.into())?;
+    updated.exec()?;
 
-    // language=SQLite
-    db.exec_safe("insert or replace into ps_kv(key, value) values('last_synced_at', datetime())")
+    if priority == BucketPriority::LOWEST {
+        // language=SQLite
+        db.exec_safe("DELETE FROM ps_updated_rows")
+            .into_db_result(db)?;
+
+        // language=SQLite
+        db.exec_safe(
+            "insert or replace into ps_kv(key, value) values('last_synced_at', datetime())",
+        )
         .into_db_result(db)?;
+    }
 
     Ok(1)
 }

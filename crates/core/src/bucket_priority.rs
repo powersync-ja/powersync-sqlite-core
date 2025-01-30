@@ -1,3 +1,5 @@
+use core::ops::RangeInclusive;
+
 use sqlite_nostd::ResultCode;
 
 use crate::error::SQLiteError;
@@ -19,7 +21,9 @@ impl TryFrom<i32> for BucketPriority {
     type Error = SQLiteError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
-        if value < BucketPriority::LOWEST.0 || value > BucketPriority::HIGHEST.0 {
+        const VALID: RangeInclusive<i32> = (BucketPriority::HIGHEST.0)..=(BucketPriority::LOWEST.0);
+
+        if !VALID.contains(&value) {
             return Err(SQLiteError::from(ResultCode::MISUSE));
         }
 
