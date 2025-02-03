@@ -146,6 +146,7 @@ SELECT
         if tables.contains(&table_name) {
             let quoted = quote_internal_name(type_name, false);
 
+            // is_err() is essentially a NULL check here
             if data.is_err() {
                 // DELETE
                 let delete_statement = db
@@ -163,6 +164,7 @@ SELECT
                 insert_statement.exec()?;
             }
         } else {
+            // is_err() is essentially a NULL check here
             if data.is_err() {
                 // DELETE
                 // language=SQLite
