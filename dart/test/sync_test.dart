@@ -58,6 +58,7 @@ void main() {
           'last_op_id': lastOpId,
           'write_checkpoint': writeCheckpoint,
           'buckets': checksums,
+          'priority': priority,
         })
       ]);
 
@@ -88,7 +89,9 @@ void main() {
       pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
       expect(fetchRows(), isEmpty);
 
-      expect(pushCheckpointComplete('1', null, [_bucketChecksum('prio1', 0)]),
+      expect(
+          pushCheckpointComplete(
+              '1', null, [_bucketChecksum('prio1', 1, checksum: 0)]),
           isTrue);
       expect(fetchRows(), [
         {'id': 'row-0', 'col': 'hi'}
@@ -101,7 +104,9 @@ void main() {
       expect(fetchRows(), isNotEmpty);
 
       pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
-      expect(pushCheckpointComplete('1', null, [_bucketChecksum('prio1', 0)]),
+      expect(
+          pushCheckpointComplete(
+              '1', null, [_bucketChecksum('prio1', 1, checksum: 0)]),
           isFalse);
       expect(fetchRows(), [
         {'id': 'local', 'col': 'data'}
@@ -118,7 +123,7 @@ void main() {
         pushCheckpointComplete(
           '1',
           null,
-          [_bucketChecksum('prio0', 0)],
+          [_bucketChecksum('prio0', 0, checksum: 0)],
           priority: 0,
         ),
         isTrue,
@@ -141,7 +146,16 @@ void main() {
           pushCheckpointComplete(
             '1',
             null,
-            [_bucketChecksum('prio$i', 0)],
+            [
+              for (var j = 0; j <= 4; j++)
+                _bucketChecksum(
+                  'prio$j',
+                  j,
+                  // Give buckets outside of the current priority a wrong
+                  // checksum. They should not be validated yet.
+                  checksum: j <= i ? 0 : 1234,
+                ),
+            ],
             priority: i,
           ),
           isTrue,
@@ -155,8 +169,8 @@ void main() {
   });
 }
 
-Object? _bucketChecksum(String bucket, int checksum) {
-  return {'bucket': bucket, 'checksum': checksum};
+Object? _bucketChecksum(String bucket, int prio, {int checksum = 0}) {
+  return {'bucket': bucket, 'priority': prio, 'checksum': checksum};
 }
 
 const _schema = {

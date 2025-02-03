@@ -24,7 +24,10 @@ impl TryFrom<i32> for BucketPriority {
         const VALID: RangeInclusive<i32> = (BucketPriority::HIGHEST.0)..=(BucketPriority::LOWEST.0);
 
         if !VALID.contains(&value) {
-            return Err(SQLiteError::from(ResultCode::MISUSE));
+            return Err(SQLiteError(
+                ResultCode::MISUSE,
+                Some("Invalid bucket priority".into()),
+            ));
         }
 
         return Ok(BucketPriority(value));
