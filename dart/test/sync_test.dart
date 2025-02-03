@@ -75,8 +75,16 @@ void main() {
         ],
       );
 
-      db.execute('INSERT INTO powersync_operations(op, data) VALUES (?, ?)',
-          ['sync_local', priority]);
+      db.execute('INSERT INTO powersync_operations(op, data) VALUES (?, ?)', [
+        'sync_local',
+        jsonEncode({
+          'priority': priority,
+          'buckets': [
+            for (final cs in checksums.cast<Map<String, dynamic>>())
+              if (priority == null || cs['priority'] <= priority) cs['bucket']
+          ],
+        })
+      ]);
       return db.lastInsertRowId == 1;
     }
 

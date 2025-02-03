@@ -1,7 +1,6 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, ResultCode};
@@ -18,8 +17,7 @@ SELECT
     json_extract(e.value, '$.data') as data,
     json_extract(e.value, '$.has_more') as has_more,
     json_extract(e.value, '$.after') as after,
-    json_extract(e.value, '$.next_after') as next_after,
-    json_extract(d.value, '$.priority') as priority
+    json_extract(e.value, '$.next_after') as next_after
 FROM json_each(json_extract(?1, '$.buckets')) e
     LEFT OUTER JOIN json_each(json_extract(?1, '$.descriptions')) d
         ON json_extract(e.value, '$.bucket') == d.key",
@@ -32,15 +30,8 @@ FROM json_each(json_extract(?1, '$.buckets')) e
         // let _has_more = statement.column_int(2)? != 0;
         // let _after = statement.column_text(3)?;
         // let _next_after = statement.column_text(4)?;
-        let priority = match statement.column_type(5)? {
-            sqlite_nostd::ColumnType::Integer => {
-                BucketPriority::try_from(statement.column_int(5)?).ok()
-            }
-            _ => None,
-        }
-        .unwrap_or_default();
 
-        insert_bucket_operations(db, bucket, data, priority)?;
+        insert_bucket_operations(db, bucket, data)?;
     }
 
     Ok(())
@@ -50,7 +41,6 @@ pub fn insert_bucket_operations(
     db: *mut sqlite::sqlite3,
     bucket: &str,
     data: &str,
-    priority: BucketPriority,
 ) -> Result<(), SQLiteError> {
     // Statement to insert new operations (only for PUT and REMOVE).
     // language=SQLite
@@ -72,14 +62,13 @@ FROM json_each(?) e",
     // We can consider splitting this into separate SELECT and INSERT statements.
     // language=SQLite
     let bucket_statement = db.prepare_v2(
-        "INSERT INTO ps_buckets(name, priority)
-                            VALUES(?, ?)
+        "INSERT INTO ps_buckets(name)
+                            VALUES(?)
                         ON CONFLICT DO UPDATE
                             SET last_applied_op = last_applied_op
                         RETURNING id, last_applied_op",
     )?;
     bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
-    bucket_statement.bind_int(2, priority.into())?;
     bucket_statement.step()?;
 
     let bucket_id = bucket_statement.column_int64(0)?;

@@ -1,6 +1,8 @@
 use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
+use alloc::vec::Vec;
+use serde::Deserialize;
 
 use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
@@ -14,30 +16,25 @@ fn can_apply_sync_changes(
     db: *mut sqlite::sqlite3,
     priority: BucketPriority,
 ) -> Result<bool, SQLiteError> {
-    // We can only make sync changes visible if data is consistent, meaning that we've seen the
-    // target operation sent in the original checkpoint message. We allow weakening consistency when
-    // buckets from different priorities are involved (buckets with higher priorities or a lower
-    // priority number can be published before we've reached the checkpoint for other buckets).
-    // language=SQLite
-    let statement = db.prepare_v2(
-        "\
-SELECT group_concat(name)
-FROM ps_buckets
-WHERE (target_op > last_op) AND (priority <= ?)",
-    )?;
-    statement.bind_int(1, priority.into())?;
-
-    if statement.step()? != ResultCode::ROW {
-        return Err(SQLiteError::from(ResultCode::ABORT));
-    }
-
-    if statement.column_type(0)? == ColumnType::Text {
-        return Ok(false);
-    }
-
     // Don't publish downloaded data until the upload queue is empty (except for downloaded data in
     // priority 0, which is published earlier).
     if !priority.may_publish_with_outstanding_uploads() {
+        // language=SQLite
+        let statement = db.prepare_v2(
+            "\
+SELECT group_concat(name)
+FROM ps_buckets
+WHERE target_op > last_op AND name = '$local'",
+        )?;
+
+        if statement.step()? != ResultCode::ROW {
+            return Err(SQLiteError::from(ResultCode::ABORT));
+        }
+
+        if statement.column_type(0)? == ColumnType::Text {
+            return Ok(false);
+        }
+
         let statement = db.prepare_v2("SELECT 1 FROM ps_crud LIMIT 1")?;
         if statement.step()? != ResultCode::DONE {
             return Ok(false);
@@ -47,13 +44,27 @@ WHERE (target_op > last_op) AND (priority <= ?)",
     Ok(true)
 }
 
-pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, SQLiteError> {
-    let priority = match data.value_type() {
-        ColumnType::Integer => BucketPriority::try_from(data.int()),
-        ColumnType::Float => BucketPriority::try_from(data.double() as i32),
-        // Older clients without bucket priority support typically send an empty string here.
-        _ => Ok(BucketPriority::LOWEST),
-    }?;
+pub fn sync_local(db: *mut sqlite::sqlite3, data: *mut sqlite::value) -> Result<i64, SQLiteError> {
+    #[derive(Deserialize)]
+    struct SyncLocalArguments {
+        #[serde(rename = "buckets")]
+        _buckets: Vec<String>,
+        priority: Option<BucketPriority>,
+    }
+
+    const FALLBACK_PRIORITY: BucketPriority = BucketPriority::LOWEST;
+    let (has_args, priority) = match data.value_type() {
+        ColumnType::Text => {
+            let text = data.text();
+            if text.len() > 0 {
+                let args: SyncLocalArguments = serde_json::from_str(text)?;
+                (true, args.priority.unwrap_or(FALLBACK_PRIORITY))
+            } else {
+                (false, FALLBACK_PRIORITY)
+            }
+        }
+        _ => (false, FALLBACK_PRIORITY),
+    };
 
     if !can_apply_sync_changes(db, priority)? {
         return Ok(0);
@@ -78,12 +89,17 @@ pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, S
             "\
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
 --    SELECT DISTINCT / UNION is important for cases with many duplicate ids.
-WITH updated_rows AS (
-  SELECT DISTINCT FALSE as local, b.row_type, b.row_id FROM ps_buckets AS buckets
-    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id AND (b.op_id > buckets.last_applied_op)
-    WHERE buckets.priority <= ?1
-  UNION SELECT TRUE, row_type, row_id FROM ps_updated_rows
-)
+WITH 
+  involved_buckets (id) AS (
+    SELECT id FROM ps_buckets WHERE ?1 IS NULL
+      OR name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))
+  ),
+  updated_rows AS (
+    SELECT DISTINCT FALSE as local, b.row_type, b.row_id FROM ps_buckets AS buckets
+      CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id AND (b.op_id > buckets.last_applied_op)
+      WHERE buckets.id IN (SELECT id FROM involved_buckets)
+    UNION SELECT TRUE, row_type, row_id FROM ps_updated_rows
+  )
 
 -- 3. Group the objects from different buckets together into a single one (ops).
 SELECT b.row_type as type,
@@ -98,15 +114,19 @@ FROM updated_rows b
     LEFT OUTER JOIN ps_oplog AS r
                ON r.row_type = b.row_type
                  AND r.row_id = b.row_id
-                 AND (SELECT priority FROM ps_buckets WHERE id = r.bucket) <= ?1
+                 AND r.bucket IN (SELECT id FROM involved_buckets)
 -- Group for (3)
 GROUP BY b.row_type, b.row_id",
         )
         .into_db_result(db)?;
 
-    // TODO: cache statements
+    if has_args {
+        statement.bind_value(1, data)?;
+    } else {
+        statement.bind_null(1)?;
+    }
 
-    statement.bind_int(1, priority.into())?;
+    // TODO: cache statements
     while statement.step().into_db_result(db)? == ResultCode::ROW {
         let type_name = statement.column_text(0)?;
         let id = statement.column_text(1)?;
@@ -170,10 +190,15 @@ GROUP BY b.row_type, b.row_id",
         .prepare_v2(
             "UPDATE ps_buckets
                  SET last_applied_op = last_op
-                 WHERE last_applied_op != last_op AND priority <= ?",
+                 WHERE last_applied_op != last_op AND
+                    (?1 IS NULL OR name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets'))))",
         )
         .into_db_result(db)?;
-    updated.bind_int(1, priority.into())?;
+    if has_args {
+        updated.bind_value(1, data)?;
+    } else {
+        updated.bind_null(1)?;
+    }
     updated.exec()?;
 
     if priority == BucketPriority::LOWEST {
