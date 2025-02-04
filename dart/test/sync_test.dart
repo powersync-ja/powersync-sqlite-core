@@ -57,14 +57,17 @@ void main() {
         json.encode({
           'last_op_id': lastOpId,
           'write_checkpoint': writeCheckpoint,
-          'buckets': checksums,
+          'buckets': [
+            for (final cs in checksums.cast<Map<String, dynamic>>())
+              if (priority == null || cs['priority'] <= priority) cs
+          ],
           'priority': priority,
         })
       ]);
 
       final decoded = json.decode(row['r']);
       if (decoded['valid'] != true) {
-        fail(decoded);
+        fail(row['r']);
       }
 
       db.execute(
@@ -77,13 +80,15 @@ void main() {
 
       db.execute('INSERT INTO powersync_operations(op, data) VALUES (?, ?)', [
         'sync_local',
-        jsonEncode({
-          'priority': priority,
-          'buckets': [
-            for (final cs in checksums.cast<Map<String, dynamic>>())
-              if (priority == null || cs['priority'] <= priority) cs['bucket']
-          ],
-        })
+        priority != null
+            ? jsonEncode({
+                'priority': priority,
+                'buckets': [
+                  for (final cs in checksums.cast<Map<String, dynamic>>())
+                    if (cs['priority'] <= priority) cs['bucket']
+                ],
+              })
+            : null,
       ]);
       return db.lastInsertRowId == 1;
     }

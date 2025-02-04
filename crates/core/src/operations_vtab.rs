@@ -84,7 +84,7 @@ extern "C" fn update(
             let result = insert_operation(db, args[3].text());
             vtab_result(vtab, result)
         } else if op == "sync_local" {
-            let result = sync_local(db, args[3]);
+            let result = sync_local(db, &args[3]);
             if let Ok(result_row) = result {
                 unsafe {
                     *p_row_id = result_row;

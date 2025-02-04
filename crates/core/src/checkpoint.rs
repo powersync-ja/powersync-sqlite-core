@@ -40,8 +40,6 @@ bucket_list(bucket, checksum) AS (
         json_extract(json_each.value, '$.bucket') as bucket,
         json_extract(json_each.value, '$.checksum') as checksum
   FROM json_each(json_extract(?1, '$.buckets'))
-  WHERE IFNULL(json_extract(json_each.value, '$.priority'), 1) <=
-    IFNULL(json_extract(?1, '$.priority'), 3)
 )
 SELECT
   bucket_list.bucket as bucket,

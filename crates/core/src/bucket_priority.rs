@@ -1,5 +1,3 @@
-use core::ops::RangeInclusive;
-
 use serde::{de::Visitor, Deserialize};
 use sqlite_nostd::ResultCode;
 
@@ -15,16 +13,13 @@ impl BucketPriority {
     }
 
     pub const HIGHEST: BucketPriority = BucketPriority(0);
-    pub const LOWEST: BucketPriority = BucketPriority(3);
 }
 
 impl TryFrom<i32> for BucketPriority {
     type Error = SQLiteError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
-        const VALID: RangeInclusive<i32> = (BucketPriority::HIGHEST.0)..=(BucketPriority::LOWEST.0);
-
-        if !VALID.contains(&value) {
+        if value < BucketPriority::HIGHEST.0 {
             return Err(SQLiteError(
                 ResultCode::MISUSE,
                 Some("Invalid bucket priority".into()),
