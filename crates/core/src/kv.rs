@@ -46,13 +46,14 @@ fn powersync_last_synced_at_impl(
     let db = ctx.db_handle();
 
     // language=SQLite
-    let statement = db.prepare_v2("select value from ps_kv where key = 'last_synced_at'")?;
+    let statement =
+        db.prepare_v2("select last_synced_at from ps_sync_state where priority = -1")?;
 
     if statement.step()? == ResultCode::ROW {
         let client_id = statement.column_text(0)?;
-        return Ok(Some(client_id.to_string()));
+        Ok(Some(client_id.to_string()))
     } else {
-        return Ok(None);
+        Ok(None)
     }
 }
 

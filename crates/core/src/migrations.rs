@@ -310,5 +310,28 @@ json_array(
             .into_db_result(local_db)?;
     }
 
+    if current_version < 7 && target_version >= 7 {
+        local_db
+            .exec_safe(
+                "\
+CREATE TABLE ps_sync_state (
+  priority INTEGER NOT NULL,
+  last_synced_at TEXT NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO ps_sync_state (priority, last_synced_at)
+  SELECT -1, value from ps_kv where key = 'last_synced_at';
+
+INSERT INTO ps_migration(id, down_migrations)
+VALUES(7,
+json_array(
+json_object('sql', 'INSERT OR REPLACE INTO ps_kv(key, value) SELECT ''last_synced_at'', last_synced_at FROM ps_sync_state WHERE priority = -1'),
+json_object('sql', 'DROP TABLE ps_sync_state'),
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 7')
+));
+",
+            )
+            .into_db_result(local_db)?;
+    }
+
     Ok(())
 }

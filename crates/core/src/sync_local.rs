@@ -1,4 +1,7 @@
+use core::ffi::c_void;
+
 use alloc::collections::BTreeSet;
+use alloc::fmt::format;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -288,19 +291,35 @@ GROUP BY b.row_type, b.row_id",
     }
 
     fn mark_completed(&self) -> Result<(), SQLiteError> {
-        if self.partial.is_none() {
-            // language=SQLite
-            self.db
-                .exec_safe("DELETE FROM ps_updated_rows")
-                .into_db_result(self.db)?;
+        let priority_code = match &self.partial {
+            None => {
+                // language=SQLite
+                self.db
+                    .exec_safe("DELETE FROM ps_updated_rows")
+                    .into_db_result(self.db)?;
+                -1
+            }
+            Some(partial) => partial.priority.into(),
+        };
 
-            // language=SQLite
-            self.db
-                .exec_safe(
-                    "insert or replace into ps_kv(key, value) values('last_synced_at', datetime())",
-                )
-                .into_db_result(self.db)?;
-        }
+        // Higher-priority buckets are always part of lower-priority sync operations too, so we can
+        // delete information about higher-priority syncs (represented as lower priority numbers).
+        // A complete sync is represented as -1.
+        // language=SQLite
+        let stmt = self
+            .db
+            .prepare_v2("DELETE FROM ps_sync_state WHERE (priority < ?1) OR (?1 = -1);")
+            .into_db_result(self.db)?;
+        stmt.bind_int(1, priority_code)?;
+        stmt.exec()?;
+
+        // language=SQLite
+        let stmt = self
+            .db
+            .prepare_v2("INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, datetime());")
+            .into_db_result(self.db)?;
+        stmt.bind_int(1, priority_code)?;
+        stmt.exec()?;
 
         Ok(())
     }

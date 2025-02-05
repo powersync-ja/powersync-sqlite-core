@@ -177,6 +177,9 @@ void main() {
         expect(fetchRows(), [
           for (var j = 0; j <= i; j++) {'id': 'row-$j', 'col': '$j'},
         ]);
+
+        expect(db.select('select 1 from ps_sync_state where priority = ?', [i]),
+            isNotEmpty);
       }
     });
   });
