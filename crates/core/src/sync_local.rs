@@ -1,7 +1,4 @@
-use core::ffi::c_void;
-
 use alloc::collections::BTreeSet;
-use alloc::fmt::format;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -291,24 +288,25 @@ GROUP BY b.row_type, b.row_id",
     }
 
     fn mark_completed(&self) -> Result<(), SQLiteError> {
-        let priority_code = match &self.partial {
+        let priority_code: i32 = match &self.partial {
             None => {
                 // language=SQLite
                 self.db
                     .exec_safe("DELETE FROM ps_updated_rows")
                     .into_db_result(self.db)?;
-                -1
+                BucketPriority::SENTINEL
             }
-            Some(partial) => partial.priority.into(),
-        };
+            Some(partial) => partial.priority,
+        }
+        .into();
 
         // Higher-priority buckets are always part of lower-priority sync operations too, so we can
         // delete information about higher-priority syncs (represented as lower priority numbers).
-        // A complete sync is represented as -1.
+        // A complete sync is represented by a number higher than the lowest priority we allow.
         // language=SQLite
         let stmt = self
             .db
-            .prepare_v2("DELETE FROM ps_sync_state WHERE (priority < ?1) OR (?1 = -1);")
+            .prepare_v2("DELETE FROM ps_sync_state WHERE priority < ?1;")
             .into_db_result(self.db)?;
         stmt.bind_int(1, priority_code)?;
         stmt.exec()?;

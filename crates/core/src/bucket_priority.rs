@@ -5,40 +5,45 @@ use crate::error::SQLiteError;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct BucketPriority(i32);
+pub struct BucketPriority {
+    pub number: i32,
+}
 
 impl BucketPriority {
     pub fn may_publish_with_outstanding_uploads(self) -> bool {
         self == BucketPriority::HIGHEST
     }
 
-    pub const HIGHEST: BucketPriority = BucketPriority(0);
+    pub const HIGHEST: BucketPriority = BucketPriority { number: 0 };
+
+    /// A low priority used to represent fully-completed sync operations across all priorities.
+    pub const SENTINEL: BucketPriority = BucketPriority { number: i32::MAX };
 }
 
 impl TryFrom<i32> for BucketPriority {
     type Error = SQLiteError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
-        if value < BucketPriority::HIGHEST.0 {
+        if value < BucketPriority::HIGHEST.number || value == Self::SENTINEL.number {
             return Err(SQLiteError(
                 ResultCode::MISUSE,
                 Some("Invalid bucket priority".into()),
             ));
         }
 
-        return Ok(BucketPriority(value));
+        return Ok(BucketPriority { number: value });
     }
 }
 
 impl Into<i32> for BucketPriority {
     fn into(self) -> i32 {
-        self.0
+        self.number
     }
 }
 
 impl PartialOrd<BucketPriority> for BucketPriority {
     fn partial_cmp(&self, other: &BucketPriority) -> Option<core::cmp::Ordering> {
-        Some(self.0.partial_cmp(&other.0)?.reverse())
+        Some(self.number.partial_cmp(&other.number)?.reverse())
     }
 }
 
