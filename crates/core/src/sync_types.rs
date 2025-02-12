@@ -18,4 +18,5 @@ pub struct Checkpoint {
 pub struct BucketChecksum {
     pub bucket: String,
     pub checksum: i32,
+    pub priority: Option<i32>,
 }

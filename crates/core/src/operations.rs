@@ -18,7 +18,7 @@ SELECT
     json_extract(e.value, '$.has_more') as has_more,
     json_extract(e.value, '$.after') as after,
     json_extract(e.value, '$.next_after') as next_after
-FROM json_each(json_extract(?, '$.buckets')) e",
+FROM json_each(json_extract(?1, '$.buckets')) e",
     )?;
     statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
 
