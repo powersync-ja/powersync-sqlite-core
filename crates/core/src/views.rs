@@ -24,6 +24,7 @@ fn powersync_view_sql_impl(
     let name = statement.column_text(0)?;
     let view_name = statement.column_text(1)?;
     let local_only = statement.column_int(2)? != 0;
+    let include_metadata = statement.column_int(5)? != 0;
 
     let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
@@ -46,6 +47,11 @@ fn powersync_view_sql_impl(
             type_name
         );
         column_values.push(foo);
+    }
+
+    if include_metadata {
+        column_names_quoted.push(quote_identifier("_metadata"));
+        column_values.push(String::from("NULL"));
     }
 
     let view_statement = format!(
@@ -206,6 +212,9 @@ fn powersync_trigger_update_sql_impl(
     let view_name = statement.column_text(1)?;
     let local_only = statement.column_int(2)? != 0;
     let insert_only = statement.column_int(3)? != 0;
+    // TODO: allow accepting a column list
+    let include_old = statement.column_type(4)? == sqlite::ColumnType::Text;
+    let include_metadata = statement.column_int(5)? != 0;
 
     let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
@@ -218,6 +227,20 @@ fn powersync_trigger_update_sql_impl(
     let json_fragment_new = json_object_fragment("NEW", &stmt2)?;
     stmt2.reset()?;
     let json_fragment_old = json_object_fragment("OLD", &stmt2)?;
+    let old_fragment: String;
+    let metadata_fragment: &str;
+
+    if include_old {
+        old_fragment = format!(", 'old', {:}", json_fragment_old);
+    } else {
+        old_fragment = String::from("");
+    }
+
+    if include_metadata {
+        metadata_fragment = ", 'metadata', NEW._metadata";
+    } else {
+        metadata_fragment = "";
+    }
 
     return if !local_only && !insert_only {
         let trigger = format!("\
@@ -232,10 +255,10 @@ BEGIN
   UPDATE {:}
       SET data = {:}
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:}))));
+  INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:})){:}{:}));
   INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, NEW.id);
   INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
-END", trigger_name, quoted_name, internal_name, json_fragment_new, type_string, json_fragment_old, json_fragment_new, type_string, MAX_OP_ID);
+END", trigger_name, quoted_name, internal_name, json_fragment_new, type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment, type_string, MAX_OP_ID);
         Ok(trigger)
     } else if local_only {
         let trigger = format!(
