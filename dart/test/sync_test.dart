@@ -182,6 +182,21 @@ void main() {
             isNotEmpty);
       }
     });
+
+    test('clearing database clears sync status', () {
+      pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
+
+      expect(
+          pushCheckpointComplete(
+              '1', null, [_bucketChecksum('prio1', 1, checksum: 0)]),
+          isTrue);
+      expect(db.select('SELECT powersync_last_synced_at() AS r').single,
+          {'r': isNotNull});
+
+      db.execute('SELECT powersync_clear(0)');
+      expect(db.select('SELECT powersync_last_synced_at() AS r').single,
+          {'r': isNull});
+    });
   });
 }
 
