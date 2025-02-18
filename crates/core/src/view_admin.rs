@@ -162,6 +162,7 @@ DELETE FROM ps_buckets;
 DELETE FROM ps_untyped;
 DELETE FROM ps_updated_rows;
 DELETE FROM ps_kv WHERE key != 'client_id';
+DELETE FROM ps_sync_state;
 ",
     )?;
 
