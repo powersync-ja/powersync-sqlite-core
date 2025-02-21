@@ -180,6 +180,10 @@ void main() {
 
         expect(db.select('select 1 from ps_sync_state where priority = ?', [i]),
             isNotEmpty);
+        // A sync at this priority includes all higher priorities too, so they
+        // should be cleared.
+        expect(db.select('select 1 from ps_sync_state where priority < ?', [i]),
+            isEmpty);
       }
     });
 
@@ -192,10 +196,13 @@ void main() {
           isTrue);
       expect(db.select('SELECT powersync_last_synced_at() AS r').single,
           {'r': isNotNull});
+      expect(db.select('SELECT priority FROM ps_sync_state').single,
+          {'priority': 2147483647});
 
       db.execute('SELECT powersync_clear(0)');
       expect(db.select('SELECT powersync_last_synced_at() AS r').single,
           {'r': isNull});
+      expect(db.select('SELECT * FROM ps_sync_state'), hasLength(0));
     });
   });
 }
