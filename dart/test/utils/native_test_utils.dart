@@ -8,18 +8,33 @@ import 'package:path/path.dart' as p;
 const defaultSqlitePath = 'libsqlite3.so.0';
 
 const libPath = '../target/debug';
+var didLoadExtension = false;
 
-CommonDatabase openTestDatabase() {
+void applyOpenOverride() {
   sqlite_open.open.overrideFor(sqlite_open.OperatingSystem.linux, () {
     return DynamicLibrary.open('libsqlite3.so.0');
   });
   sqlite_open.open.overrideFor(sqlite_open.OperatingSystem.macOS, () {
-    return DynamicLibrary.open('libsqlite3.dylib');
+    return DynamicLibrary.open('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
   });
+}
+
+CommonDatabase openTestDatabase([VirtualFileSystem? vfs]) {
+  applyOpenOverride();
+  if (!didLoadExtension) {
+    loadExtension();
+  }
+
+  return sqlite3.open(':memory:', vfs: vfs?.name);
+}
+
+void loadExtension() {
+  applyOpenOverride();
+
   var lib = DynamicLibrary.open(getLibraryForPlatform(path: libPath));
   var extension = SqliteExtension.inLibrary(lib, 'sqlite3_powersync_init');
   sqlite3.ensureExtensionLoaded(extension);
-  return sqlite3.open(':memory:');
+  didLoadExtension = true;
 }
 
 String getLibraryForPlatform({String? path = "."}) {

@@ -1,16 +1,28 @@
 import 'dart:convert';
 
+import 'package:fake_async/fake_async.dart';
+import 'package:file/local.dart';
 import 'package:sqlite3/common.dart';
+import 'package:sqlite3/sqlite3.dart';
+import 'package:sqlite3_test/sqlite3_test.dart';
 import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
 
 void main() {
+  final vfs = TestSqliteFileSystem(fs: const LocalFileSystem());
+
+  setUpAll(() {
+    loadExtension();
+    sqlite3.registerVirtualFileSystem(vfs, makeDefault: false);
+  });
+  tearDownAll(() => sqlite3.unregisterVirtualFileSystem(vfs));
+
   group('sync tests', () {
     late CommonDatabase db;
 
     setUp(() async {
-      db = openTestDatabase()
+      db = openTestDatabase(vfs)
         ..select('select powersync_init();')
         ..select('select powersync_replace_schema(?)', [json.encode(_schema)]);
     });
@@ -185,6 +197,38 @@ void main() {
         expect(db.select('select 1 from ps_sync_state where priority < ?', [i]),
             isEmpty);
       }
+    });
+
+    test('can sync multiple times', () {
+      fakeAsync((controller) {
+        for (var i = 0; i < 10; i++) {
+          for (var prio in const [1, 2, 3, null]) {
+            pushCheckpointComplete('1', null, [], priority: prio);
+
+            // Make sure there's only a single row in last_synced_at
+            expect(
+              db.select(
+                  "SELECT datetime(last_synced_at, 'localtime') AS last_synced_at FROM ps_sync_state WHERE priority = ?",
+                  [prio ?? 2147483647]),
+              [
+                {'last_synced_at': '2025-03-01 ${10 + i}:00:00'}
+              ],
+            );
+
+            if (prio == null) {
+              expect(
+                db.select(
+                    "SELECT datetime(powersync_last_synced_at(), 'localtime') AS last_synced_at"),
+                [
+                  {'last_synced_at': '2025-03-01 ${10 + i}:00:00'}
+                ],
+              );
+            }
+          }
+
+          controller.elapse(const Duration(hours: 1));
+        }
+      }, initialTime: DateTime(2025, 3, 1, 10));
     });
 
     test('clearing database clears sync status', () {
