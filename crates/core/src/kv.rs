@@ -9,6 +9,7 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
+use crate::bucket_priority::BucketPriority;
 use crate::create_sqlite_optional_text_fn;
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
@@ -46,13 +47,14 @@ fn powersync_last_synced_at_impl(
     let db = ctx.db_handle();
 
     // language=SQLite
-    let statement = db.prepare_v2("select value from ps_kv where key = 'last_synced_at'")?;
+    let statement = db.prepare_v2("select last_synced_at from ps_sync_state where priority = ?")?;
+    statement.bind_int(1, BucketPriority::SENTINEL.into())?;
 
     if statement.step()? == ResultCode::ROW {
         let client_id = statement.column_text(0)?;
-        return Ok(Some(client_id.to_string()));
+        Ok(Some(client_id.to_string()))
     } else {
-        return Ok(None);
+        Ok(None)
     }
 }
 

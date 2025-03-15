@@ -120,7 +120,7 @@ fn powersync_init_impl(
 
     setup_internal_views(local_db)?;
 
-    powersync_migrate(ctx, 6)?;
+    powersync_migrate(ctx, 8)?;
 
     Ok(String::from(""))
 }
@@ -162,6 +162,7 @@ DELETE FROM ps_buckets;
 DELETE FROM ps_untyped;
 DELETE FROM ps_updated_rows;
 DELETE FROM ps_kv WHERE key != 'client_id';
+DELETE FROM ps_sync_state;
 ",
     )?;
 

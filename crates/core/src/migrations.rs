@@ -8,6 +8,7 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
+use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
 use crate::fix035::apply_v035_fix;
 
@@ -308,6 +309,49 @@ json_array(
 ",
             )
             .into_db_result(local_db)?;
+    }
+
+    if current_version < 7 && target_version >= 7 {
+        const SENTINEL_PRIORITY: i32 = BucketPriority::SENTINEL.number;
+        let stmt = format!("\
+CREATE TABLE ps_sync_state (
+  priority INTEGER NOT NULL,
+  last_synced_at TEXT NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO ps_sync_state (priority, last_synced_at)
+  SELECT {}, value from ps_kv where key = 'last_synced_at';
+
+INSERT INTO ps_migration(id, down_migrations)
+VALUES(7,
+json_array(
+json_object('sql', 'INSERT OR REPLACE INTO ps_kv(key, value) SELECT ''last_synced_at'', last_synced_at FROM ps_sync_state WHERE priority = {}'),
+json_object('sql', 'DROP TABLE ps_sync_state'),
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 7')
+));
+", SENTINEL_PRIORITY, SENTINEL_PRIORITY);
+
+        local_db.exec_safe(&stmt).into_db_result(local_db)?;
+    }
+
+    if current_version < 8 && target_version >= 8 {
+        let stmt = "\
+ALTER TABLE ps_sync_state RENAME TO ps_sync_state_old;
+CREATE TABLE ps_sync_state (
+  priority INTEGER NOT NULL PRIMARY KEY,
+  last_synced_at TEXT NOT NULL
+) STRICT;
+INSERT INTO ps_sync_state (priority, last_synced_at)
+  SELECT priority, MAX(last_synced_at) FROM ps_sync_state_old GROUP BY priority;
+DROP TABLE ps_sync_state_old;
+INSERT INTO ps_migration(id, down_migrations) VALUES(8, json_array(
+json_object('sql', 'ALTER TABLE ps_sync_state RENAME TO ps_sync_state_new'),
+json_object('sql', 'CREATE TABLE ps_sync_state (\n  priority INTEGER NOT NULL,\n  last_synced_at TEXT NOT NULL\n) STRICT'),
+json_object('sql', 'INSERT INTO ps_sync_state SELECT * FROM ps_sync_state_new'),
+json_object('sql', 'DROP TABLE ps_sync_state_new'),
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 8')
+));
+";
+        local_db.exec_safe(&stmt).into_db_result(local_db)?;
     }
 
     Ok(())
