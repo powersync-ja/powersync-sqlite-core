@@ -10,6 +10,7 @@ use sqlite::{Connection, Context, ResultCode, Value};
 use sqlite_nostd::{self as sqlite, ManagedStmt};
 
 use crate::create_sqlite_text_fn;
+use crate::crud_vtab::PowerSyncCrudFlags;
 use crate::error::{PSResult, SQLiteError};
 use crate::util::*;
 
@@ -215,6 +216,7 @@ fn powersync_trigger_update_sql_impl(
     // TODO: allow accepting a column list
     let include_old = statement.column_type(4)? == sqlite::ColumnType::Text;
     let include_metadata = statement.column_int(5)? != 0;
+    let ignore_empty_update = statement.column_int(6)? != 0;
 
     let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
@@ -242,6 +244,9 @@ fn powersync_trigger_update_sql_impl(
         metadata_fragment = "";
     }
 
+    let mut crud_flags: PowerSyncCrudFlags = PowerSyncCrudFlags::default();
+    crud_flags.set_include_empty_update(!ignore_empty_update);
+
     return if !local_only && !insert_only {
         let trigger = format!("\
 CREATE TRIGGER {:}
@@ -255,10 +260,10 @@ BEGIN
   UPDATE {:}
       SET data = {:}
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:})){:}{:}));
+  INSERT INTO powersync_crud_(data, options) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:})){:}{:}), {:});
   INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, NEW.id);
   INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
-END", trigger_name, quoted_name, internal_name, json_fragment_new, type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment, type_string, MAX_OP_ID);
+END", trigger_name, quoted_name, internal_name, json_fragment_new, type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment, crud_flags.0, type_string, MAX_OP_ID);
         Ok(trigger)
     } else if local_only {
         let trigger = format!(

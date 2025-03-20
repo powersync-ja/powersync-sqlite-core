@@ -65,6 +65,51 @@ void main() {
       expect(r5['diff'], equals('{"b":"test"}'));
     });
 
+    test('includes empty updates by default', () {
+      db
+        ..execute('select powersync_replace_schema(?)', [
+          json.encode({
+            'tables': [
+              {
+                'name': 'items',
+                'columns': [
+                  {'name': 'col', 'type': 'text'}
+                ],
+              }
+            ]
+          })
+        ])
+        ..execute(
+            'INSERT INTO items (id, col) VALUES (uuid(), ?)', ['new item'])
+        ..execute('UPDATE items SET col = LOWER(col)');
+
+      // Should record insert and update operation.
+      expect(db.select('SELECT * FROM ps_crud'), hasLength(2));
+    });
+
+    test('can ignore empty updates', () {
+      db
+        ..execute('select powersync_replace_schema(?)', [
+          json.encode({
+            'tables': [
+              {
+                'name': 'items',
+                'columns': [
+                  {'name': 'col', 'type': 'text'}
+                ],
+                'ignore_empty_update': true,
+              }
+            ]
+          })
+        ])
+        ..execute(
+            'INSERT INTO items (id, col) VALUES (uuid(), ?)', ['new item'])
+        ..execute('UPDATE items SET col = LOWER(col)');
+
+      // The update which didn't change any rows should not be recorded.
+      expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+    });
+
     var runCrudTest = (int numberOfColumns) {
       var columns = [];
       for (var i = 0; i < numberOfColumns; i++) {

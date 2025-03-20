@@ -56,7 +56,8 @@ pub fn extract_table_info(
         json_extract(?1, '$.local_only') as local_only,
         json_extract(?1, '$.insert_only') as insert_only,
         json_extract(?1, '$.include_old') as include_old,
-        json_extract(?1, '$.include_metadata') as include_metadata",
+        json_extract(?1, '$.include_metadata') as include_metadata,
+        json_extract(?1, '$.ignore_empty_update') as ignore_empty_update",
     )?;
     statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
 
