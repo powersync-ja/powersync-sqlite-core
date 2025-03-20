@@ -5,6 +5,7 @@ use alloc::string::String;
 use core::ffi::{c_char, c_int, c_void};
 use core::slice;
 
+use const_format::formatcp;
 use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::ManagedStmt;
@@ -15,7 +16,7 @@ use crate::ext::SafeManagedStmt;
 use crate::vtab_util::*;
 
 // Structure:
-//   CREATE TABLE powersync_crud_(data TEXT);
+//   CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);
 //
 // This is a insert-only virtual table. It generates transaction ids in ps_tx, and inserts data in
 // ps_crud(tx_id, data).
@@ -29,8 +30,12 @@ struct VirtualTable {
     base: sqlite::vtab,
     db: *mut sqlite::sqlite3,
     current_tx: Option<i64>,
-    insert_statement: Option<ManagedStmt>
+    insert_statement: Option<ManagedStmt>,
 }
+
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct PowerSyncCrudFlags(pub u32);
 
 extern "C" fn connect(
     db: *mut sqlite::sqlite3,
@@ -40,8 +45,10 @@ extern "C" fn connect(
     vtab: *mut *mut sqlite::vtab,
     _err: *mut *mut c_char,
 ) -> c_int {
-    if let Err(rc) = sqlite::declare_vtab(db, "CREATE TABLE powersync_crud_(data TEXT);")
-    {
+    if let Err(rc) = sqlite::declare_vtab(
+        db,
+        "CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);",
+    ) {
         return rc as c_int;
     }
 
@@ -54,7 +61,7 @@ extern "C" fn connect(
             },
             db,
             current_tx: None,
-            insert_statement: None
+            insert_statement: None,
         }));
         *vtab = tab.cast::<sqlite::vtab>();
         let _ = sqlite::vtab_config(db, 0);
@@ -69,15 +76,22 @@ extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
     ResultCode::OK as c_int
 }
 
-
 fn begin_impl(tab: &mut VirtualTable) -> Result<(), SQLiteError> {
     let db = tab.db;
 
-    let insert_statement = db.prepare_v3("INSERT INTO ps_crud(tx_id, data) VALUES (?1, ?2)", 0)?;
+    const SQL: &str = formatcp!("\
+WITH insertion (tx_id, data) AS (VALUES (?1, ?2))
+INSERT INTO ps_crud(tx_id, data)
+SELECT * FROM insertion WHERE (?3 & {}) OR data->>'op' != 'PATCH' OR EXISTS (SELECT 1 FROM json_each(data->'data'));
+    ", PowerSyncCrudFlags::FLAG_INCLUDE_EMPTY_UPDATE);
+
+    // language=SQLite
+    let insert_statement = db.prepare_v3(SQL, 0)?;
     tab.insert_statement = Some(insert_statement);
 
     // language=SQLite
-    let statement = db.prepare_v2("UPDATE ps_tx SET next_tx = next_tx + 1 WHERE id = 1 RETURNING next_tx")?;
+    let statement =
+        db.prepare_v2("UPDATE ps_tx SET next_tx = next_tx + 1 WHERE id = 1 RETURNING next_tx")?;
     if statement.step()? == ResultCode::ROW {
         let tx_id = statement.column_int64(0)? - 1;
         tab.current_tx = Some(tx_id);
@@ -110,21 +124,30 @@ extern "C" fn rollback(vtab: *mut sqlite::vtab) -> c_int {
 }
 
 fn insert_operation(
-    vtab: *mut sqlite::vtab, data: &str) -> Result<(), SQLiteError> {
+    vtab: *mut sqlite::vtab,
+    data: &str,
+    flags: PowerSyncCrudFlags,
+) -> Result<(), SQLiteError> {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
     if tab.current_tx.is_none() {
-        return Err(SQLiteError(ResultCode::MISUSE, Some(String::from("No tx_id"))));
+        return Err(SQLiteError(
+            ResultCode::MISUSE,
+            Some(String::from("No tx_id")),
+        ));
     }
     let current_tx = tab.current_tx.unwrap();
     // language=SQLite
-    let statement = tab.insert_statement.as_ref().ok_or(SQLiteError::from(NULL))?;
+    let statement = tab
+        .insert_statement
+        .as_ref()
+        .ok_or(SQLiteError::from(NULL))?;
     statement.bind_int64(1, current_tx)?;
     statement.bind_text(2, data, sqlite::Destructor::STATIC)?;
+    statement.bind_int(3, flags.0 as i32)?;
     statement.exec()?;
 
     Ok(())
 }
-
 
 extern "C" fn update(
     vtab: *mut sqlite::vtab,
@@ -142,7 +165,13 @@ extern "C" fn update(
     } else if rowid.value_type() == sqlite::ColumnType::Null {
         // INSERT
         let data = args[2].text();
-        let result = insert_operation(vtab, data);
+        let flags = match args[3].value_type() {
+            // We don't ignore empty updates by default.
+            sqlite_nostd::ColumnType::Null => PowerSyncCrudFlags::default(),
+            _ => PowerSyncCrudFlags(args[3].int() as u32),
+        };
+
+        let result = insert_operation(vtab, data, flags);
         vtab_result(vtab, result)
     } else {
         // UPDATE - not supported
@@ -184,4 +213,27 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     db.create_module_v2("powersync_crud_", &MODULE, None, None)?;
 
     Ok(())
+}
+
+impl PowerSyncCrudFlags {
+    pub const FLAG_INCLUDE_EMPTY_UPDATE: u32 = 1 << 0;
+
+    pub fn set_include_empty_update(&mut self, value: bool) {
+        if value {
+            self.0 |= Self::FLAG_INCLUDE_EMPTY_UPDATE;
+        } else {
+            self.0 &= !Self::FLAG_INCLUDE_EMPTY_UPDATE;
+        }
+    }
+
+    pub fn has_include_empty_update(self) -> bool {
+        self.0 & Self::FLAG_INCLUDE_EMPTY_UPDATE != 0
+    }
+}
+
+impl Default for PowerSyncCrudFlags {
+    fn default() -> Self {
+        // For backwards-compatibility, we include empty updates by default.
+        return Self(Self::FLAG_INCLUDE_EMPTY_UPDATE);
+    }
 }
