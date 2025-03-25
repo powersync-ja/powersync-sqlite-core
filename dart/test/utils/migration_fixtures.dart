@@ -415,6 +415,8 @@ END
       SELECT CASE
       WHEN (NEW.id IS NULL)
       THEN RAISE (FAIL, 'id is required')
+      WHEN (typeof(NEW.id) != 'text')
+      THEN RAISE (FAIL, 'id should be text')
       END;
       INSERT INTO "ps_data__lists"
       SELECT NEW.id, json_object('description', NEW."description");
@@ -478,6 +480,8 @@ END
       SELECT CASE
       WHEN (NEW.id IS NULL)
       THEN RAISE (FAIL, 'id is required')
+      WHEN (typeof(NEW.id) != 'text')
+      THEN RAISE (FAIL, 'id should be text')
       END;
       INSERT INTO "ps_data__lists"
       SELECT NEW.id, json_object('description', NEW."description");
