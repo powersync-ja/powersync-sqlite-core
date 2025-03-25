@@ -11,7 +11,7 @@ use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
 use crate::error::SQLiteError;
-use crate::migrations::powersync_migrate;
+use crate::migrations::{powersync_migrate, LATEST_VERSION};
 use crate::util::quote_identifier;
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
@@ -120,7 +120,7 @@ fn powersync_init_impl(
 
     setup_internal_views(local_db)?;
 
-    powersync_migrate(ctx, 8)?;
+    powersync_migrate(ctx, LATEST_VERSION)?;
 
     Ok(String::from(""))
 }

@@ -264,8 +264,10 @@ GROUP BY b.row_type, b.row_id",
                     .db
                     .prepare_v2(   "\
                         UPDATE ps_buckets
-                            SET last_applied_op = last_op
-                            WHERE last_applied_op != last_op AND
+                            SET last_applied_op = last_op,
+                                    count_since_last = 0,
+                                    count_at_last = count_at_last + count_since_last
+                            WHERE ((last_applied_op != last_op) OR count_since_last) AND
                                 name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))",
                     )
                     .into_db_result(self.db)?;
@@ -277,8 +279,10 @@ GROUP BY b.row_type, b.row_id",
                 self.db
                     .exec_safe(
                         "UPDATE ps_buckets
-                                SET last_applied_op = last_op
-                                WHERE last_applied_op != last_op",
+                                SET last_applied_op = last_op,
+                                    count_since_last = 0,
+                                    count_at_last = count_at_last + count_since_last
+                                WHERE (last_applied_op != last_op) OR count_since_last",
                     )
                     .into_db_result(self.db)?;
             }
