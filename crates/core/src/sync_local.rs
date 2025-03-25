@@ -259,15 +259,16 @@ GROUP BY b.row_type, b.row_id",
     fn set_last_applied_op(&self) -> Result<(), SQLiteError> {
         match &self.partial {
             Some(partial) => {
+                // Note: This one deliberately doesn't reset count_since_last or updates
+                // count_at_last! We want a download progress to always cover a complete sync
+                // checkpoint instead of resetting for partial completions.
                 // language=SQLite
                 let updated = self
                     .db
                     .prepare_v2(   "\
                         UPDATE ps_buckets
-                            SET last_applied_op = last_op,
-                                    count_since_last = 0,
-                                    count_at_last = count_at_last + count_since_last
-                            WHERE ((last_applied_op != last_op) OR count_since_last) AND
+                            SET last_applied_op = last_op
+                            WHERE last_applied_op != last_op AND
                                 name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))",
                     )
                     .into_db_result(self.db)?;
