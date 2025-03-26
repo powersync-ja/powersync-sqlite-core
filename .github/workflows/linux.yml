@@ -1,9 +1,11 @@
 on:
   push:
+  pull_request:
 name: "linux"
 jobs:
   build_x86_64:
     name: Building Linux x86_64
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -21,6 +23,7 @@ jobs:
 
   build_aarch64:
     name: Building Linux aarch64
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-arm64
     steps:
       - uses: actions/checkout@v3
