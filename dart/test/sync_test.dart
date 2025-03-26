@@ -278,12 +278,11 @@ void main() {
         isTrue,
       );
 
-      // Despite committing data, a partial checkpoint should not clear download
-      // progress stats.
+      // Running partial or complete checkpoints should not reset stats, client
+      // SDKs are responsible for that.
       expectProgress(0, 2);
       expect(db.select('SELECT * FROM items'), isNotEmpty);
 
-      // Full checkpoint sets count_at_last
       expect(
         pushCheckpointComplete(
           '2',
@@ -292,19 +291,25 @@ void main() {
         ),
         isTrue,
       );
+      expectProgress(0, 2);
+
+      db.execute('''
+UPDATE ps_buckets SET count_since_last = 0, count_at_last = ?1->name
+  WHERE ?1->name IS NOT NULL
+''', [
+        json.encode({bucket: 2}),
+      ]);
       expectProgress(2, 0);
 
       // Run another iteration of this
       pushSyncData(bucket, '3', 'row-3', 'PUT', {'col': 'hi'});
       expectProgress(2, 1);
-      expect(
-        pushCheckpointComplete(
-          '3',
-          null,
-          [_bucketChecksum(bucket, 1, checksum: 0)],
-        ),
-        isTrue,
-      );
+      db.execute('''
+UPDATE ps_buckets SET count_since_last = 0, count_at_last = ?1->name
+  WHERE ?1->name IS NOT NULL
+''', [
+        json.encode({bucket: 3}),
+      ]);
       expectProgress(3, 0);
     });
   });
