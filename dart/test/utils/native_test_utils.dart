@@ -1,4 +1,5 @@
 import 'dart:ffi';
+import 'dart:io';
 
 import 'package:sqlite3/common.dart';
 import 'package:sqlite3/open.dart' as sqlite_open;
@@ -15,6 +16,12 @@ void applyOpenOverride() {
     return DynamicLibrary.open('libsqlite3.so.0');
   });
   sqlite_open.open.overrideFor(sqlite_open.OperatingSystem.macOS, () {
+    // Prefer using Homebrew's SQLite which allows loading extensions.
+    const fromHomebrew = '/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib';
+    if (File(fromHomebrew).existsSync()) {
+      return DynamicLibrary.open(fromHomebrew);
+    }
+
     return DynamicLibrary.open('libsqlite3.dylib');
   });
 }
