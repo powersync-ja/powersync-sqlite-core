@@ -248,6 +248,65 @@ void main() {
           {'r': isNull});
       expect(db.select('SELECT * FROM ps_sync_state'), hasLength(0));
     });
+
+    test('tracks download progress', () {
+      const bucket = 'bkt';
+      void expectProgress(int atLast, int sinceLast) {
+        final [row] = db.select(
+          'SELECT count_at_last, count_since_last FROM ps_buckets WHERE name = ?',
+          [bucket],
+        );
+        final [actualAtLast, actualSinceLast] = row.values;
+
+        expect(actualAtLast, atLast, reason: 'count_at_last mismatch');
+        expect(actualSinceLast, sinceLast, reason: 'count_since_last mismatch');
+      }
+
+      pushSyncData(bucket, '1', 'row-0', 'PUT', {'col': 'hi'});
+      expectProgress(0, 1);
+
+      pushSyncData(bucket, '2', 'row-1', 'PUT', {'col': 'hi'});
+      expectProgress(0, 2);
+
+      expect(
+        pushCheckpointComplete(
+          '2',
+          null,
+          [_bucketChecksum(bucket, 1, checksum: 0)],
+          priority: 1,
+        ),
+        isTrue,
+      );
+
+      // Despite committing data, a partial checkpoint should not clear download
+      // progress stats.
+      expectProgress(0, 2);
+      expect(db.select('SELECT * FROM items'), isNotEmpty);
+
+      // Full checkpoint sets count_at_last
+      expect(
+        pushCheckpointComplete(
+          '2',
+          null,
+          [_bucketChecksum(bucket, 1, checksum: 0)],
+        ),
+        isTrue,
+      );
+      expectProgress(2, 0);
+
+      // Run another iteration of this
+      pushSyncData(bucket, '3', 'row-3', 'PUT', {'col': 'hi'});
+      expectProgress(2, 1);
+      expect(
+        pushCheckpointComplete(
+          '3',
+          null,
+          [_bucketChecksum(bucket, 1, checksum: 0)],
+        ),
+        isTrue,
+      );
+      expectProgress(3, 0);
+    });
   });
 }
 
