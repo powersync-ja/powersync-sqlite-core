@@ -28,8 +28,8 @@ a checkpoint and that we have validated its checksum).
 5. `add_checksum`: TODO: Document further.
 6. `op_checksum`: TODO: Document further.
 7. `pending_delete`: TODO: Appears to be unused, document further.
-8. `count_at_last`: The amount of operations in the bucket at the last verified (perhaps partial) checkpoint.
-9. `count_since_last`: The amount of operations downloaded since the last verified (perhaps partial) checkpoint. 
+8. `count_at_last`: The amount of operations in the bucket at the last verified checkpoint.
+9. `count_since_last`: The amount of operations downloaded since the last verified checkpoint. 
 
 ## `ps_crud`
 
