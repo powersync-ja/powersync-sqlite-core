@@ -126,7 +126,7 @@ INSTEAD OF DELETE ON {quoted_name}
 FOR EACH ROW
 BEGIN
 DELETE FROM {internal_name} WHERE id = OLD.id;
-INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', OLD.id {old_fragment}));
+INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', OLD.id{old_fragment}));
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, OLD.id);
 INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
 END;"
@@ -143,7 +143,7 @@ FOR EACH ROW
 WHEN NEW._deleted IS TRUE
 BEGIN
 DELETE FROM {internal_name} WHERE id = NEW.id;
-INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', NEW.id {old_fragment}, 'metadata', NEW._metadata));
+INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', NEW.id{old_fragment}, 'metadata', NEW._metadata));
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
 INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
 END;"
@@ -218,7 +218,7 @@ fn powersync_trigger_insert_sql_impl(
       END;
       INSERT INTO {internal_name}
       SELECT NEW.id, {json_fragment};
-      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:})) {metadata_fragment}));
+      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:})){metadata_fragment}));
       INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
       INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
     END", type_string, json_fragment);
@@ -313,7 +313,7 @@ fn powersync_trigger_update_sql_impl(
         // If we're supposed to include metadata, we support UPDATE ... SET _deleted = TRUE with
         // another trigger (because there's no way to attach data to DELETE statements otherwise).
         let when = if table_info.flags.include_metadata() {
-            "WHEN NEW._deleted IS NOT TRUE"
+            " WHEN NEW._deleted IS NOT TRUE"
         } else {
             ""
         };
@@ -321,7 +321,7 @@ fn powersync_trigger_update_sql_impl(
         let trigger = format!("\
 CREATE TRIGGER {trigger_name}
 INSTEAD OF UPDATE ON {quoted_name}
-FOR EACH ROW {when}
+FOR EACH ROW{when}
 BEGIN
   SELECT CASE
   WHEN (OLD.id != NEW.id)
