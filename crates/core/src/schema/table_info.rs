@@ -73,6 +73,15 @@ impl TableInfo {
             _ => None,
         };
 
+        // Don't allow include_metadata for local_only tables, it breaks our trigger setup and makes
+        // no sense because these changes are never inserted into ps_crud.
+        if flags.include_metadata() && flags.local_only() {
+            return Err(SQLiteError(
+                ResultCode::ERROR,
+                Some("include_metadata and local_only are incompatible".to_string()),
+            ));
+        }
+
         return Ok(TableInfo {
             name,
             view_name,

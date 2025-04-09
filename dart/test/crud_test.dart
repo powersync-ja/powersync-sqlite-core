@@ -439,6 +439,39 @@ void main() {
         expect(op['data'], {'name': 'name.'});
         expect(op['metadata'], 'update');
       });
+
+      test('supports regular delete statements', () {
+        createTable({'include_metadata': true});
+        db.execute(
+          'INSERT INTO test (id, name, _metadata) VALUES (?, ?, ?)',
+          ['id', 'name', 'test insert'],
+        );
+        db.execute('delete from ps_crud;');
+        db.execute('delete from test');
+
+        final [row] = db.select('select data from ps_crud');
+        final op = jsonDecode(row[0] as String);
+        expect(op['op'], 'DELETE');
+        expect(op['metadata'], null);
+      });
+
+      test('supports deleting updates with metadata', () {
+        createTable({'include_metadata': true});
+        db.execute(
+          'INSERT INTO test (id, name, _metadata) VALUES (?, ?, ?)',
+          ['id', 'name', 'test insert'],
+        );
+        db.execute('delete from ps_crud;');
+        db.execute('update test set _deleted = TRUE, _metadata = ?',
+            ['custom delete']);
+
+        expect(db.select('select * from test'), hasLength(0));
+
+        final [row] = db.select('select data from ps_crud');
+        final op = jsonDecode(row[0] as String);
+        expect(op['op'], 'DELETE');
+        expect(op['metadata'], 'custom delete');
+      });
     });
   });
 }

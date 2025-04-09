@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;
+use core::fmt::Write;
 use streaming_iterator::StreamingIterator;
 
 use sqlite::{Connection, Context, ResultCode, Value};
@@ -52,6 +53,9 @@ fn powersync_view_sql_impl(
 
     if include_metadata {
         column_names_quoted.push(quote_identifier("_metadata"));
+        column_values.push(String::from("NULL"));
+
+        column_names_quoted.push(quote_identifier("_deleted"));
         column_values.push(String::from("NULL"));
     }
 
@@ -115,7 +119,7 @@ fn powersync_trigger_delete_sql_impl(
     };
 
     return if !local_only && !insert_only {
-        let trigger = format!(
+        let mut trigger = format!(
             "\
 CREATE TRIGGER {trigger_name}
 INSTEAD OF DELETE ON {quoted_name}
@@ -125,10 +129,31 @@ DELETE FROM {internal_name} WHERE id = OLD.id;
 INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', OLD.id {old_fragment}));
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, OLD.id);
 INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
-END",
+END;"
         );
+
+        // The DELETE statement can't include metadata for the delete operation, so we create
+        // another trigger to delete with a fake UPDATE syntax.
+        if table_info.flags.include_metadata() {
+            let trigger_name = quote_identifier_prefixed("ps_view_delete2_", view_name);
+            write!(&mut trigger,  "\
+CREATE TRIGGER {trigger_name}
+INSTEAD OF UPDATE ON {quoted_name}
+FOR EACH ROW
+WHEN NEW._deleted IS TRUE
+BEGIN
+DELETE FROM {internal_name} WHERE id = NEW.id;
+INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', NEW.id {old_fragment}, 'metadata', NEW._metadata));
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
+INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
+END;"
+                    ).expect("writing to string should be infallible");
+        }
+
         Ok(trigger)
     } else if local_only {
+        debug_assert!(!table_info.flags.include_metadata());
+
         let trigger = format!(
             "\
 CREATE TRIGGER {trigger_name}
@@ -285,10 +310,18 @@ fn powersync_trigger_update_sql_impl(
     };
 
     return if !local_only && !insert_only {
+        // If we're supposed to include metadata, we support UPDATE ... SET _deleted = TRUE with
+        // another trigger (because there's no way to attach data to DELETE statements otherwise).
+        let when = if table_info.flags.include_metadata() {
+            "WHEN NEW._deleted IS NOT TRUE"
+        } else {
+            ""
+        };
+
         let trigger = format!("\
 CREATE TRIGGER {trigger_name}
 INSTEAD OF UPDATE ON {quoted_name}
-FOR EACH ROW
+FOR EACH ROW {when}
 BEGIN
   SELECT CASE
   WHEN (OLD.id != NEW.id)
@@ -303,6 +336,8 @@ BEGIN
 END", type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment);
         Ok(trigger)
     } else if local_only {
+        debug_assert!(!table_info.flags.include_metadata());
+
         let trigger = format!(
             "\
 CREATE TRIGGER {trigger_name}
