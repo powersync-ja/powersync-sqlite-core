@@ -24,10 +24,6 @@ fn powersync_diff_impl(
     diff_objects_with_options(data_old, data_new, ignore_removed)
 }
 
-fn diff_objects(data_old: &str, data_new: &str) -> Result<String, SQLiteError> {
-    diff_objects_with_options(data_old, data_new, false)
-}
-
 /// Returns a JSON object containing entries from [data_new] that are not present in [data_old].
 ///
 /// When [ignore_removed_columns] is set, columns that are present in [data_old] but not in
@@ -107,6 +103,10 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn diff_objects(data_old: &str, data_new: &str) -> Result<String, SQLiteError> {
+        diff_objects_with_options(data_old, data_new, false)
+    }
 
     #[test]
     fn basic_diff_test() {

@@ -175,43 +175,48 @@ fn powersync_trigger_insert_sql_impl(
     let mut columns = ColumnNameAndTypeStatement::new(local_db, table)?;
     let json_fragment = json_object_fragment("NEW", &mut columns.names_iter())?;
 
+    let metadata_fragment = if table_info.flags.include_metadata() {
+        ", 'metadata', NEW._metadata"
+    } else {
+        ""
+    };
+
     return if !local_only && !insert_only {
         let trigger = format!("\
-    CREATE TRIGGER {:}
-    INSTEAD OF INSERT ON {:}
+    CREATE TRIGGER {trigger_name}
+    INSTEAD OF INSERT ON {quoted_name}
     FOR EACH ROW
     BEGIN
       SELECT CASE
       WHEN (NEW.id IS NULL)
       THEN RAISE (FAIL, 'id is required')
       END;
-      INSERT INTO {:}
-      SELECT NEW.id, {:};
-      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:}))));
-      INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, NEW.id);
-      INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
-    END", trigger_name, quoted_name, internal_name, json_fragment, type_string, json_fragment, type_string, MAX_OP_ID);
+      INSERT INTO {internal_name}
+      SELECT NEW.id, {json_fragment};
+      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:})) {metadata_fragment}));
+      INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
+      INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
+    END", type_string, json_fragment);
         Ok(trigger)
     } else if local_only {
         let trigger = format!(
             "\
-    CREATE TRIGGER {:}
-    INSTEAD OF INSERT ON {:}
+    CREATE TRIGGER {trigger_name}
+    INSTEAD OF INSERT ON {quoted_name}
     FOR EACH ROW
     BEGIN
-      INSERT INTO {:} SELECT NEW.id, {:};
+      INSERT INTO {internal_name} SELECT NEW.id, {json_fragment};
     END",
-            trigger_name, quoted_name, internal_name, json_fragment
         );
         Ok(trigger)
     } else if insert_only {
         let trigger = format!("\
-    CREATE TRIGGER {:}
-    INSTEAD OF INSERT ON {:}
+    CREATE TRIGGER {trigger_name}
+    INSTEAD OF INSERT ON {quoted_name}
     FOR EACH ROW
     BEGIN
       INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:}))));
-    END", trigger_name, quoted_name, type_string, json_fragment);
+    END", type_string, json_fragment);
         Ok(trigger)
     } else {
         Err(SQLiteError::from(ResultCode::MISUSE))
