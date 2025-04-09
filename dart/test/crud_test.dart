@@ -247,76 +247,126 @@ void main() {
             'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
       }
 
-      void insertThenUpdate() {
-        db
-          ..execute('insert into test (id, name, name2) values (?, ?, ?)',
-              ['id', 'name', 'name2'])
-          ..execute('delete from ps_crud')
-          ..execute('update test set name = name || ?', ['.']);
-      }
+      group('for updates', () {
+        void insertThenUpdate() {
+          db
+            ..execute('insert into test (id, name, name2) values (?, ?, ?)',
+                ['id', 'name', 'name2'])
+            ..execute('delete from ps_crud')
+            ..execute('update test set name = name || ?', ['.']);
+        }
 
-      test('are not tracked by default', () {
-        createTable();
-        insertThenUpdate();
+        test('is not tracked by default', () {
+          createTable();
+          insertThenUpdate();
 
-        final [row] = db.select('select data from ps_crud');
-        expect(jsonDecode(row[0] as String), isNot(contains('old')));
-      });
-
-      test('can be disabled', () {
-        createTable({'include_old': false});
-        insertThenUpdate();
-
-        final [row] = db.select('select data from ps_crud');
-        expect(jsonDecode(row[0] as String), isNot(contains('old')));
-      });
-
-      test('can be enabled for all columns', () {
-        createTable({'include_old': true});
-        insertThenUpdate();
-
-        final [row] = db.select('select data from ps_crud');
-        final op = jsonDecode(row[0] as String);
-        expect(op['data'], {'name': 'name.'});
-        expect(op['old'], {'name': 'name', 'name2': 'name2'});
-      });
-
-      test('can be enabled for some columns', () {
-        createTable({
-          'include_old': ['name']
+          final [row] = db.select('select data from ps_crud');
+          expect(jsonDecode(row[0] as String), isNot(contains('old')));
         });
-        insertThenUpdate();
 
-        final [row] = db.select('select data from ps_crud');
-        final op = jsonDecode(row[0] as String);
-        expect(op['data'], {'name': 'name.'});
-        expect(op['old'], {'name': 'name'});
+        test('can be disabled', () {
+          createTable({'include_old': false});
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          expect(jsonDecode(row[0] as String), isNot(contains('old')));
+        });
+
+        test('can be enabled for all columns', () {
+          createTable({'include_old': true});
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], {'name': 'name.'});
+          expect(op['old'], {'name': 'name', 'name2': 'name2'});
+        });
+
+        test('can be enabled for some columns', () {
+          createTable({
+            'include_old': ['name']
+          });
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], {'name': 'name.'});
+          expect(op['old'], {'name': 'name'});
+        });
+
+        test('can track changed values only', () {
+          createTable({
+            'include_old': true,
+            'include_old_only_when_changed': true,
+          });
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], {'name': 'name.'});
+          expect(op['old'], {'name': 'name'});
+        });
+
+        test('combined column filter and only tracking changes', () {
+          createTable({
+            'include_old': ['name2'],
+            'include_old_only_when_changed': true,
+          });
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], {'name': 'name.'});
+          expect(op['old'], {});
+        });
       });
 
-      test('can track changed values only', () {
-        createTable({
-          'include_old': true,
-          'include_old_only_when_changed': true,
+      group('for deletes', () {
+        void insertThenDelete() {
+          db
+            ..execute('insert into test (id, name, name2) values (?, ?, ?)',
+                ['id', 'name', 'name2'])
+            ..execute('delete from ps_crud')
+            ..execute('delete from test');
+        }
+
+        test('is not tracked by default', () {
+          createTable();
+          insertThenDelete();
+
+          final [row] = db.select('select data from ps_crud');
+          expect(jsonDecode(row[0] as String), isNot(contains('old')));
         });
-        insertThenUpdate();
 
-        final [row] = db.select('select data from ps_crud');
-        final op = jsonDecode(row[0] as String);
-        expect(op['data'], {'name': 'name.'});
-        expect(op['old'], {'name': 'name'});
-      });
+        test('can be disabled', () {
+          createTable({'include_old': false});
+          insertThenDelete();
 
-      test('combined column filter and only tracking changes', () {
-        createTable({
-          'include_old': ['name2'],
-          'include_old_only_when_changed': true,
+          final [row] = db.select('select data from ps_crud');
+          expect(jsonDecode(row[0] as String), isNot(contains('old')));
         });
-        insertThenUpdate();
 
-        final [row] = db.select('select data from ps_crud');
-        final op = jsonDecode(row[0] as String);
-        expect(op['data'], {'name': 'name.'});
-        expect(op['old'], {});
+        test('can be enabled for all columns', () {
+          createTable({'include_old': true});
+          insertThenDelete();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], null);
+          expect(op['old'], {'name': 'name', 'name2': 'name2'});
+        });
+
+        test('can be enabled for some columns', () {
+          createTable({
+            'include_old': ['name']
+          });
+          insertThenDelete();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], null);
+          expect(op['old'], {'name': 'name'});
+        });
       });
     });
   });

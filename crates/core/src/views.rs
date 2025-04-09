@@ -89,31 +89,54 @@ fn powersync_trigger_delete_sql_impl(
     let trigger_name = quote_identifier_prefixed("ps_view_delete_", view_name);
     let type_string = quote_string(name);
 
+    let db = ctx.db_handle();
+    let old_fragment: Cow<'static, str> = match table_info.diff_include_old {
+        Some(include_old) => {
+            let mut columns = ColumnNameAndTypeStatement::new(db, table)?;
+
+            let json = match include_old {
+                DiffIncludeOld::OnlyForColumns { columns } => {
+                    let mut iterator = columns.iter();
+                    let mut columns =
+                        streaming_iterator::from_fn(|| -> Option<Result<&str, ResultCode>> {
+                            Some(Ok(iterator.next()?.as_str()))
+                        });
+
+                    json_object_fragment("OLD", &mut columns)
+                }
+                DiffIncludeOld::ForAllColumns => {
+                    json_object_fragment("OLD", &mut columns.names_iter())
+                }
+            }?;
+
+            format!(", 'old', {json}").into()
+        }
+        None => "".into(),
+    };
+
     return if !local_only && !insert_only {
         let trigger = format!(
             "\
-CREATE TRIGGER {:}
-INSTEAD OF DELETE ON {:}
+CREATE TRIGGER {trigger_name}
+INSTEAD OF DELETE ON {quoted_name}
 FOR EACH ROW
 BEGIN
-DELETE FROM {:} WHERE id = OLD.id;
-INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {:}, 'id', OLD.id));
-INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, OLD.id);
-INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
+DELETE FROM {internal_name} WHERE id = OLD.id;
+INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', OLD.id {old_fragment}));
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, OLD.id);
+INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
 END",
-            trigger_name, quoted_name, internal_name, type_string, type_string, MAX_OP_ID
         );
         Ok(trigger)
     } else if local_only {
         let trigger = format!(
             "\
-CREATE TRIGGER {:}
-INSTEAD OF DELETE ON {:}
+CREATE TRIGGER {trigger_name}
+INSTEAD OF DELETE ON {quoted_name}
 FOR EACH ROW
 BEGIN
-DELETE FROM {:} WHERE id = OLD.id;
+DELETE FROM {internal_name} WHERE id = OLD.id;
 END",
-            trigger_name, quoted_name, internal_name
         );
         Ok(trigger)
     } else if insert_only {
