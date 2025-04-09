@@ -27,7 +27,8 @@ impl TableInfo {
         json_extract(?1, '$.local_only'),
         json_extract(?1, '$.insert_only'),
         json_extract(?1, '$.include_old'),
-        json_extract(?1, '$.include_metadata')",
+        json_extract(?1, '$.include_metadata'),
+        json_extract(?1, '$.include_old_only_when_changed')",
         )?;
         statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
 
@@ -42,11 +43,17 @@ impl TableInfo {
             let local_only = statement.column_int(2) != 0;
             let insert_only = statement.column_int(3) != 0;
             let include_metadata = statement.column_int(5) != 0;
+            let include_old_only_when_changed = statement.column_int(6) != 0;
 
             let mut flags = TableInfoFlags::default();
             flags = flags.set_flag(TableInfoFlags::LOCAL_ONLY, local_only);
             flags = flags.set_flag(TableInfoFlags::INSERT_ONLY, insert_only);
             flags = flags.set_flag(TableInfoFlags::INCLUDE_METADATA, include_metadata);
+            flags = flags.set_flag(
+                TableInfoFlags::INCLUDE_OLD_ONLY_IF_CHANGED,
+                include_old_only_when_changed,
+            );
+
             flags
         };
 
@@ -88,6 +95,7 @@ impl TableInfoFlags {
     pub const LOCAL_ONLY: u32 = 1;
     pub const INSERT_ONLY: u32 = 2;
     pub const INCLUDE_METADATA: u32 = 4;
+    pub const INCLUDE_OLD_ONLY_IF_CHANGED: u32 = 8;
 
     pub const fn local_only(self) -> bool {
         self.0 & Self::LOCAL_ONLY != 0
@@ -99,6 +107,10 @@ impl TableInfoFlags {
 
     pub const fn include_metadata(self) -> bool {
         self.0 & Self::INCLUDE_METADATA != 0
+    }
+
+    pub const fn include_old_only_if_changed(self) -> bool {
+        self.0 & Self::INCLUDE_OLD_ONLY_IF_CHANGED != 0
     }
 
     const fn with_flag(self, flag: u32) -> Self {

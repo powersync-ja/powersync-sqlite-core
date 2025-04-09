@@ -19,11 +19,24 @@ fn powersync_diff_impl(
 ) -> Result<String, SQLiteError> {
     let data_old = args[0].text();
     let data_new = args[1].text();
+    let ignore_removed = args.get(2).map_or(false, |v| v.int() != 0);
 
-    diff_objects(data_old, data_new)
+    diff_objects_with_options(data_old, data_new, ignore_removed)
 }
 
-pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, SQLiteError> {
+fn diff_objects(data_old: &str, data_new: &str) -> Result<String, SQLiteError> {
+    diff_objects_with_options(data_old, data_new, false)
+}
+
+/// Returns a JSON object containing entries from [data_new] that are not present in [data_old].
+///
+/// When [ignore_removed_columns] is set, columns that are present in [data_old] but not in
+/// [data_new] will not be present in the returned object. Otherwise, they will be set to `null`.
+fn diff_objects_with_options(
+    data_old: &str,
+    data_new: &str,
+    ignore_removed_columns: bool,
+) -> Result<String, SQLiteError> {
     let v_new: json::Value = json::from_str(data_new)?;
     let v_old: json::Value = json::from_str(data_old)?;
 
@@ -38,9 +51,11 @@ pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, SQLiteErro
         }
 
         // Add missing nulls to left
-        for key in right.keys() {
-            if !left.contains_key(key) {
-                left.insert(key.clone(), json::Value::Null);
+        if !ignore_removed_columns {
+            for key in right.keys() {
+                if !left.contains_key(key) {
+                    left.insert(key.clone(), json::Value::Null);
+                }
             }
         }
 
@@ -67,6 +82,17 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     db.create_function_v2(
         "powersync_diff",
         2,
+        sqlite::UTF8 | sqlite::DETERMINISTIC,
+        None,
+        Some(powersync_diff),
+        None,
+        None,
+        None,
+    )?;
+
+    db.create_function_v2(
+        "powersync_diff",
+        3,
         sqlite::UTF8 | sqlite::DETERMINISTIC,
         None,
         Some(powersync_diff),

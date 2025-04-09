@@ -224,9 +224,9 @@ fn powersync_trigger_update_sql_impl(
     let json_fragment_new = json_object_fragment("NEW", &mut columns.names_iter())?;
     let json_fragment_old = json_object_fragment("OLD", &mut columns.names_iter())?;
 
-    let old_fragment: Cow<'static, str> = match &table_info.diff_include_old {
-        None => "".into(),
-        Some(DiffIncludeOld::ForAllColumns) => format!(", 'old', {:}", json_fragment_old).into(),
+    let mut old_values_fragment = match &table_info.diff_include_old {
+        None => None,
+        Some(DiffIncludeOld::ForAllColumns) => Some(json_fragment_old.clone()),
         Some(DiffIncludeOld::OnlyForColumns { columns }) => {
             let mut iterator = columns.iter();
             let mut columns =
@@ -234,9 +234,20 @@ fn powersync_trigger_update_sql_impl(
                     Some(Ok(iterator.next()?.as_str()))
                 });
 
-            let json_fragment = json_object_fragment("OLD", &mut columns)?;
-            format!(", 'old', {:}", json_fragment).into()
+            Some(json_object_fragment("OLD", &mut columns)?)
         }
+    };
+
+    if table_info.flags.include_old_only_if_changed() {
+        // We're setting ignore_removed_columns here because values that are present in the new
+        // values but not in the old values should not lead to a null entry.
+        old_values_fragment = old_values_fragment
+            .map(|f| format!("json(powersync_diff({json_fragment_new}, {f}, TRUE))"));
+    }
+
+    let old_fragment: Cow<'static, str> = match old_values_fragment {
+        Some(f) => format!(", 'old', {f}").into(),
+        None => "".into(),
     };
 
     let metadata_fragment = if table_info.flags.include_metadata() {
@@ -247,38 +258,37 @@ fn powersync_trigger_update_sql_impl(
 
     return if !local_only && !insert_only {
         let trigger = format!("\
-CREATE TRIGGER {:}
-INSTEAD OF UPDATE ON {:}
+CREATE TRIGGER {trigger_name}
+INSTEAD OF UPDATE ON {quoted_name}
 FOR EACH ROW
 BEGIN
   SELECT CASE
   WHEN (OLD.id != NEW.id)
   THEN RAISE (FAIL, 'Cannot update id')
   END;
-  UPDATE {:}
-      SET data = {:}
+  UPDATE {internal_name}
+      SET data = {json_fragment_new}
       WHERE id = NEW.id;
   INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:})){:}{:}));
-  INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({:}, NEW.id);
-  INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {:});
-END", trigger_name, quoted_name, internal_name, json_fragment_new, type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment, type_string, MAX_OP_ID);
+  INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
+  INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
+END", type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment);
         Ok(trigger)
     } else if local_only {
         let trigger = format!(
             "\
-CREATE TRIGGER {:}
-INSTEAD OF UPDATE ON {:}
+CREATE TRIGGER {trigger_name}
+INSTEAD OF UPDATE ON {quoted_name}
 FOR EACH ROW
 BEGIN
   SELECT CASE
   WHEN (OLD.id != NEW.id)
   THEN RAISE (FAIL, 'Cannot update id')
   END;
-  UPDATE {:}
-      SET data = {:}
+  UPDATE {internal_name}
+      SET data = {json_fragment_new}
       WHERE id = NEW.id;
-END",
-            trigger_name, quoted_name, internal_name, json_fragment_new
+END"
         );
         Ok(trigger)
     } else if insert_only {
