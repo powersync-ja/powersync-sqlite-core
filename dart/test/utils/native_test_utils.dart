@@ -14,7 +14,7 @@ CommonDatabase openTestDatabase() {
     return DynamicLibrary.open('libsqlite3.so.0');
   });
   sqlite_open.open.overrideFor(sqlite_open.OperatingSystem.macOS, () {
-    return DynamicLibrary.open('libsqlite3.dylib');
+    return DynamicLibrary.open('/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib');
   });
   var lib = DynamicLibrary.open(getLibraryForPlatform(path: libPath));
   var extension = SqliteExtension.inLibrary(lib, 'sqlite3_powersync_init');

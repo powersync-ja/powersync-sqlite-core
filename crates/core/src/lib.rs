@@ -25,7 +25,7 @@ mod macros;
 mod migrations;
 mod operations;
 mod operations_vtab;
-mod schema_management;
+mod schema;
 mod sync_local;
 mod sync_types;
 mod util;
@@ -62,7 +62,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::checkpoint::register(db)?;
     crate::kv::register(db)?;
 
-    crate::schema_management::register(db)?;
+    crate::schema::register(db)?;
     crate::operations_vtab::register(db)?;
     crate::crud_vtab::register(db)?;
 

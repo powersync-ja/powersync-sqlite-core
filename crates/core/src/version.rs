@@ -3,7 +3,6 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 use core::ffi::c_int;
-use core::slice;
 
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
@@ -22,7 +21,11 @@ fn powersync_rs_version_impl(
     Ok(version)
 }
 
-create_sqlite_text_fn!(powersync_rs_version, powersync_rs_version_impl, "powersync_rs_version");
+create_sqlite_text_fn!(
+    powersync_rs_version,
+    powersync_rs_version_impl,
+    "powersync_rs_version"
+);
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     db.create_function_v2(

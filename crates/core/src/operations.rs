@@ -69,13 +69,13 @@ FROM json_each(?) e",
     bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
     bucket_statement.step()?;
 
-    let bucket_id = bucket_statement.column_int64(0)?;
+    let bucket_id = bucket_statement.column_int64(0);
 
     // This is an optimization for initial sync - we can avoid persisting individual REMOVE
     // operations when last_applied_op = 0.
     // We do still need to do the "supersede_statement" step for this case, since a REMOVE
     // operation can supersede another PUT operation we're syncing at the same time.
-    let mut is_empty = bucket_statement.column_int64(1)? == 0;
+    let mut is_empty = bucket_statement.column_int64(1) == 0;
 
     // Statement to supersede (replace) operations with the same key.
     // language=SQLite
@@ -105,11 +105,11 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
     let mut op_checksum: i32 = 0;
 
     while iterate_statement.step()? == ResultCode::ROW {
-        let op_id = iterate_statement.column_int64(0)?;
+        let op_id = iterate_statement.column_int64(0);
         let op = iterate_statement.column_text(1)?;
         let object_type = iterate_statement.column_text(2);
         let object_id = iterate_statement.column_text(3);
-        let checksum = iterate_statement.column_int(4)?;
+        let checksum = iterate_statement.column_int(4);
         let op_data = iterate_statement.column_text(5);
 
         last_op = Some(op_id);
@@ -129,7 +129,7 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
 
             while supersede_statement.step()? == ResultCode::ROW {
                 // Superseded (deleted) a previous operation, add the checksum
-                let supersede_checksum = supersede_statement.column_int(1)?;
+                let supersede_checksum = supersede_statement.column_int(1);
                 add_checksum = add_checksum.wrapping_add(supersede_checksum);
                 op_checksum = op_checksum.wrapping_sub(supersede_checksum);
 
@@ -268,7 +268,7 @@ pub fn delete_bucket(db: *mut sqlite::sqlite3, name: &str) -> Result<(), SQLiteE
     statement.bind_text(1, name, sqlite::Destructor::STATIC)?;
 
     if statement.step()? == ResultCode::ROW {
-        let bucket_id = statement.column_int64(0)?;
+        let bucket_id = statement.column_int64(0);
 
         // language=SQLite
         let updated_statement = db.prepare_v2(

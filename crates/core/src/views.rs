@@ -1,16 +1,18 @@
 extern crate alloc;
 
+use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;
-use core::slice;
+use streaming_iterator::StreamingIterator;
 
 use sqlite::{Connection, Context, ResultCode, Value};
-use sqlite_nostd::{self as sqlite, ManagedStmt};
+use sqlite_nostd::{self as sqlite};
 
 use crate::create_sqlite_text_fn;
-use crate::error::{PSResult, SQLiteError};
+use crate::error::SQLiteError;
+use crate::schema::{ColumnInfo, ColumnNameAndTypeStatement, DiffIncludeOld, TableInfo};
 use crate::util::*;
 
 fn powersync_view_sql_impl(
@@ -19,26 +21,25 @@ fn powersync_view_sql_impl(
 ) -> Result<String, SQLiteError> {
     let db = ctx.db_handle();
     let table = args[0].text();
-    let statement = extract_table_info(db, table)?;
+    let table_info = TableInfo::parse_from(db, table)?;
 
-    let name = statement.column_text(0)?;
-    let view_name = statement.column_text(1)?;
-    let local_only = statement.column_int(2)? != 0;
-    let include_metadata = statement.column_int(5)? != 0;
+    let name = &table_info.name;
+    let view_name = &table_info.view_name;
+    let local_only = table_info.flags.local_only();
+    let include_metadata = table_info.flags.include_metadata();
 
     let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
 
-    let stmt2 = db.prepare_v2("select json_extract(e.value, '$.name') as name, json_extract(e.value, '$.type') as type from json_each(json_extract(?, '$.columns')) e")?;
-    stmt2.bind_text(1, table, sqlite::Destructor::STATIC)?;
+    let mut columns = ColumnNameAndTypeStatement::new(db, table)?;
+    let mut iter = columns.streaming_iter();
 
     let mut column_names_quoted: Vec<String> = alloc::vec![];
     let mut column_values: Vec<String> = alloc::vec![];
     column_names_quoted.push(quote_identifier("id"));
     column_values.push(String::from("id"));
-    while stmt2.step()? == ResultCode::ROW {
-        let name = stmt2.column_text(0)?;
-        let type_name = stmt2.column_text(1)?;
+    while let Some(row) = iter.next() {
+        let ColumnInfo { name, type_name } = row.clone()?;
         column_names_quoted.push(quote_identifier(name));
 
         let foo = format!(
@@ -76,12 +77,12 @@ fn powersync_trigger_delete_sql_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
     let table = args[0].text();
-    let statement = extract_table_info(ctx.db_handle(), table)?;
+    let table_info = TableInfo::parse_from(ctx.db_handle(), table)?;
 
-    let name = statement.column_text(0)?;
-    let view_name = statement.column_text(1)?;
-    let local_only = statement.column_int(2)? != 0;
-    let insert_only = statement.column_int(3)? != 0;
+    let name = &table_info.name;
+    let view_name = &table_info.view_name;
+    let local_only = table_info.flags.local_only();
+    let insert_only = table_info.flags.insert_only();
 
     let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
@@ -134,12 +135,12 @@ fn powersync_trigger_insert_sql_impl(
 ) -> Result<String, SQLiteError> {
     let table = args[0].text();
 
-    let statement = extract_table_info(ctx.db_handle(), table)?;
+    let table_info = TableInfo::parse_from(ctx.db_handle(), table)?;
 
-    let name = statement.column_text(0)?;
-    let view_name = statement.column_text(1)?;
-    let local_only = statement.column_int(2)? != 0;
-    let insert_only = statement.column_int(3)? != 0;
+    let name = &table_info.name;
+    let view_name = &table_info.view_name;
+    let local_only = table_info.flags.local_only();
+    let insert_only = table_info.flags.insert_only();
 
     let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
@@ -147,9 +148,9 @@ fn powersync_trigger_insert_sql_impl(
     let type_string = quote_string(name);
 
     let local_db = ctx.db_handle();
-    let stmt2 = local_db.prepare_v2("select json_extract(e.value, '$.name') as name from json_each(json_extract(?, '$.columns')) e")?;
-    stmt2.bind_text(1, table, sqlite::Destructor::STATIC)?;
-    let json_fragment = json_object_fragment("NEW", &stmt2)?;
+
+    let mut columns = ColumnNameAndTypeStatement::new(local_db, table)?;
+    let json_fragment = json_object_fragment("NEW", &mut columns.names_iter())?;
 
     return if !local_only && !insert_only {
         let trigger = format!("\
@@ -206,15 +207,12 @@ fn powersync_trigger_update_sql_impl(
 ) -> Result<String, SQLiteError> {
     let table = args[0].text();
 
-    let statement = extract_table_info(ctx.db_handle(), table)?;
+    let table_info = TableInfo::parse_from(ctx.db_handle(), table)?;
 
-    let name = statement.column_text(0)?;
-    let view_name = statement.column_text(1)?;
-    let local_only = statement.column_int(2)? != 0;
-    let insert_only = statement.column_int(3)? != 0;
-    // TODO: allow accepting a column list
-    let include_old = statement.column_type(4)? == sqlite::ColumnType::Text;
-    let include_metadata = statement.column_int(5)? != 0;
+    let name = &table_info.name;
+    let view_name = &table_info.view_name;
+    let insert_only = table_info.flags.insert_only();
+    let local_only = table_info.flags.local_only();
 
     let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
@@ -222,25 +220,30 @@ fn powersync_trigger_update_sql_impl(
     let type_string = quote_string(name);
 
     let db = ctx.db_handle();
-    let stmt2 = db.prepare_v2("select json_extract(e.value, '$.name') as name from json_each(json_extract(?, '$.columns')) e").into_db_result(db)?;
-    stmt2.bind_text(1, table, sqlite::Destructor::STATIC)?;
-    let json_fragment_new = json_object_fragment("NEW", &stmt2)?;
-    stmt2.reset()?;
-    let json_fragment_old = json_object_fragment("OLD", &stmt2)?;
-    let old_fragment: String;
-    let metadata_fragment: &str;
+    let mut columns = ColumnNameAndTypeStatement::new(db, table)?;
+    let json_fragment_new = json_object_fragment("NEW", &mut columns.names_iter())?;
+    let json_fragment_old = json_object_fragment("OLD", &mut columns.names_iter())?;
 
-    if include_old {
-        old_fragment = format!(", 'old', {:}", json_fragment_old);
-    } else {
-        old_fragment = String::from("");
-    }
+    let old_fragment: Cow<'static, str> = match &table_info.diff_include_old {
+        None => "".into(),
+        Some(DiffIncludeOld::ForAllColumns) => format!(", 'old', {:}", json_fragment_old).into(),
+        Some(DiffIncludeOld::OnlyForColumns { columns }) => {
+            let mut iterator = columns.iter();
+            let mut columns =
+                streaming_iterator::from_fn(|| -> Option<Result<&str, ResultCode>> {
+                    Some(Ok(iterator.next()?.as_str()))
+                });
 
-    if include_metadata {
-        metadata_fragment = ", 'metadata', NEW._metadata";
+            let json_fragment = json_object_fragment("OLD", &mut columns)?;
+            format!(", 'old', {:}", json_fragment).into()
+        }
+    };
+
+    let metadata_fragment = if table_info.flags.include_metadata() {
+        ", 'metadata', NEW._metadata"
     } else {
-        metadata_fragment = "";
-    }
+        ""
+    };
 
     return if !local_only && !insert_only {
         let trigger = format!("\
@@ -342,15 +345,18 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 /// Given a query returning column names, return a JSON object fragment for a trigger.
 ///
 /// Example output with prefix "NEW": "json_object('id', NEW.id, 'name', NEW.name, 'age', NEW.age)".
-fn json_object_fragment(prefix: &str, name_results: &ManagedStmt) -> Result<String, SQLiteError> {
+fn json_object_fragment<'a>(
+    prefix: &str,
+    name_results: &mut dyn StreamingIterator<Item = Result<&'a str, ResultCode>>,
+) -> Result<String, SQLiteError> {
     // floor(SQLITE_MAX_FUNCTION_ARG / 2).
     // To keep databases portable, we use the default limit of 100 args for this,
     // and don't try to query the limit dynamically.
     const MAX_ARG_COUNT: usize = 50;
 
     let mut column_names_quoted: Vec<String> = alloc::vec![];
-    while name_results.step()? == ResultCode::ROW {
-        let name = name_results.column_text(0)?;
+    while let Some(row) = name_results.next() {
+        let name = (*row)?;
 
         let quoted: String = format!(
             "{:}, {:}.{:}",

@@ -226,5 +226,71 @@ void main() {
         runCrudTestInsertOnly(numberOfColumns);
       });
     }
+
+    group('tracks previous values', () {
+      void createTable([Map<String, Object?> options = const {}]) {
+        final tableSchema = {
+          'tables': [
+            {
+              'name': 'test',
+              'columns': [
+                {'name': 'name', 'type': 'text'},
+                {'name': 'name2', 'type': 'text'},
+              ],
+              ...options,
+            }
+          ]
+        };
+
+        db.select('select powersync_init()');
+        db.select(
+            'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
+      }
+
+      void insertThenUpdate() {
+        db
+          ..execute('insert into test (id, name) values (?, ?)', ['id', 'test'])
+          ..execute('delete from ps_crud')
+          ..execute('update test set name = name || ?', ['.']);
+      }
+
+      test('are not tracked by default', () {
+        createTable();
+        insertThenUpdate();
+
+        final [row] = db.select('select data from ps_crud');
+        expect(jsonDecode(row[0] as String), isNot(contains('old')));
+      });
+
+      test('can be disabled', () {
+        createTable({'include_old': false});
+        insertThenUpdate();
+
+        final [row] = db.select('select data from ps_crud');
+        expect(jsonDecode(row[0] as String), isNot(contains('old')));
+      });
+
+      test('can be enabled for all columns', () {
+        createTable({'include_old': true});
+        insertThenUpdate();
+
+        final [row] = db.select('select data from ps_crud');
+        final op = jsonDecode(row[0] as String);
+        expect(op['data'], {'name': 'test.'});
+        expect(op['old'], {'name': 'test', 'name2': null});
+      });
+
+      test('can be enabled for some columns', () {
+        createTable({
+          'include_old': ['name']
+        });
+        insertThenUpdate();
+
+        final [row] = db.select('select data from ps_crud');
+        final op = jsonDecode(row[0] as String);
+        expect(op['data'], {'name': 'test.'});
+        expect(op['old'], {'name': 'test'});
+      });
+    });
   });
 }
