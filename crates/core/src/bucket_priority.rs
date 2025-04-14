@@ -4,7 +4,7 @@ use sqlite_nostd::ResultCode;
 use crate::error::SQLiteError;
 
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BucketPriority {
     pub number: i32,
 }

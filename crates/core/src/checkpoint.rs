@@ -13,7 +13,7 @@ use sqlite_nostd::{Connection, Context, Value};
 
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
-use crate::sync_types::Checkpoint;
+use crate::sync::line::Checkpoint;
 
 #[derive(Serialize, Deserialize)]
 struct CheckpointResult {
