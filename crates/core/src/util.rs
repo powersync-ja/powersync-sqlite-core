@@ -6,6 +6,9 @@ use alloc::string::String;
 use serde::Deserialize;
 use serde_json as json;
 
+#[cfg(not(feature = "getrandom"))]
+use crate::sqlite;
+
 use uuid::Uuid;
 
 #[cfg(not(feature = "getrandom"))]
