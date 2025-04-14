@@ -2,7 +2,6 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use core::ffi::{c_char, c_int, c_void};
-use core::slice;
 
 use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
@@ -137,6 +136,7 @@ static MODULE: sqlite_nostd::module = sqlite_nostd::module {
     xRelease: None,
     xRollbackTo: None,
     xShadowName: None,
+    xIntegrity: None,
 };
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {

@@ -4,7 +4,6 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;
-use core::slice;
 
 use serde::{Deserialize, Serialize};
 use serde_json as json;
@@ -59,9 +58,9 @@ GROUP BY bucket_list.bucket",
     while statement.step()? == ResultCode::ROW {
         let name = statement.column_text(0)?;
         // checksums with column_int are wrapped to i32 by SQLite
-        let add_checksum = statement.column_int(1)?;
-        let oplog_checksum = statement.column_int(2)?;
-        let expected_checksum = statement.column_int(3)?;
+        let add_checksum = statement.column_int(1);
+        let oplog_checksum = statement.column_int(2);
+        let expected_checksum = statement.column_int(3);
 
         // wrapping add is like +, but safely overflows
         let checksum = oplog_checksum.wrapping_add(add_checksum);

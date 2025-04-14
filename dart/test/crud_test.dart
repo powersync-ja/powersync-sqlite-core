@@ -226,5 +226,252 @@ void main() {
         runCrudTestInsertOnly(numberOfColumns);
       });
     }
+
+    group('tracks previous values', () {
+      void createTable([Map<String, Object?> options = const {}]) {
+        final tableSchema = {
+          'tables': [
+            {
+              'name': 'test',
+              'columns': [
+                {'name': 'name', 'type': 'text'},
+                {'name': 'name2', 'type': 'text'},
+              ],
+              ...options,
+            }
+          ]
+        };
+
+        db.select('select powersync_init()');
+        db.select(
+            'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
+      }
+
+      group('for updates', () {
+        void insertThenUpdate() {
+          db
+            ..execute('insert into test (id, name, name2) values (?, ?, ?)',
+                ['id', 'name', 'name2'])
+            ..execute('delete from ps_crud')
+            ..execute('update test set name = name || ?', ['.']);
+        }
+
+        test('is not tracked by default', () {
+          createTable();
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          expect(jsonDecode(row[0] as String), isNot(contains('old')));
+        });
+
+        test('can be disabled', () {
+          createTable({'include_old': false});
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          expect(jsonDecode(row[0] as String), isNot(contains('old')));
+        });
+
+        test('can be enabled for all columns', () {
+          createTable({'include_old': true});
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], {'name': 'name.'});
+          expect(op['old'], {'name': 'name', 'name2': 'name2'});
+        });
+
+        test('can be enabled for some columns', () {
+          createTable({
+            'include_old': ['name']
+          });
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], {'name': 'name.'});
+          expect(op['old'], {'name': 'name'});
+        });
+
+        test('can track changed values only', () {
+          createTable({
+            'include_old': true,
+            'include_old_only_when_changed': true,
+          });
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], {'name': 'name.'});
+          expect(op['old'], {'name': 'name'});
+        });
+
+        test('combined column filter and only tracking changes', () {
+          createTable({
+            'include_old': ['name2'],
+            'include_old_only_when_changed': true,
+          });
+          insertThenUpdate();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], {'name': 'name.'});
+          expect(op['old'], {});
+        });
+      });
+
+      group('for deletes', () {
+        void insertThenDelete() {
+          db
+            ..execute('insert into test (id, name, name2) values (?, ?, ?)',
+                ['id', 'name', 'name2'])
+            ..execute('delete from ps_crud')
+            ..execute('delete from test');
+        }
+
+        test('is not tracked by default', () {
+          createTable();
+          insertThenDelete();
+
+          final [row] = db.select('select data from ps_crud');
+          expect(jsonDecode(row[0] as String), isNot(contains('old')));
+        });
+
+        test('can be disabled', () {
+          createTable({'include_old': false});
+          insertThenDelete();
+
+          final [row] = db.select('select data from ps_crud');
+          expect(jsonDecode(row[0] as String), isNot(contains('old')));
+        });
+
+        test('can be enabled for all columns', () {
+          createTable({'include_old': true});
+          insertThenDelete();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], null);
+          expect(op['old'], {'name': 'name', 'name2': 'name2'});
+        });
+
+        test('can be enabled for some columns', () {
+          createTable({
+            'include_old': ['name']
+          });
+          insertThenDelete();
+
+          final [row] = db.select('select data from ps_crud');
+          final op = jsonDecode(row[0] as String);
+          expect(op['data'], null);
+          expect(op['old'], {'name': 'name'});
+        });
+      });
+    });
+
+    group('including metadata', () {
+      void createTable([Map<String, Object?> options = const {}]) {
+        final tableSchema = {
+          'tables': [
+            {
+              'name': 'test',
+              'columns': [
+                {'name': 'name', 'type': 'text'},
+              ],
+              ...options,
+            }
+          ]
+        };
+
+        db.select('select powersync_init()');
+        db.select(
+            'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
+      }
+
+      test('is disabled by default', () {
+        createTable();
+        expect(
+          () => db.execute(
+            'INSERT INTO test (id, name, _metadata) VALUES (?, ?, ?)',
+            ['id', 'name', 'test insert'],
+          ),
+          throwsA(isA<SqliteException>()),
+        );
+      });
+
+      test('can be disabled', () {
+        createTable({'include_metadata': false});
+        expect(
+          () => db.execute(
+            'INSERT INTO test (id, name, _metadata) VALUES (?, ?, ?)',
+            ['id', 'name', 'test insert'],
+          ),
+          throwsA(isA<SqliteException>()),
+        );
+      });
+
+      test('supports insert statements', () {
+        createTable({'include_metadata': true});
+        db.execute(
+          'INSERT INTO test (id, name, _metadata) VALUES (?, ?, ?)',
+          ['id', 'name', 'test insert'],
+        );
+
+        final [row] = db.select('select data from ps_crud');
+        final op = jsonDecode(row[0] as String);
+        expect(op['data'], {'name': 'name'});
+        expect(op['metadata'], 'test insert');
+      });
+
+      test('supports update statements', () {
+        createTable({'include_metadata': true});
+        db.execute(
+          'INSERT INTO test (id, name, _metadata) VALUES (?, ?, ?)',
+          ['id', 'name', 'test insert'],
+        );
+        db.execute('delete from ps_crud;');
+        db.execute(
+            'update test set name = name || ?, _metadata = ?', ['.', 'update']);
+
+        final [row] = db.select('select data from ps_crud');
+        final op = jsonDecode(row[0] as String);
+        expect(op['data'], {'name': 'name.'});
+        expect(op['metadata'], 'update');
+      });
+
+      test('supports regular delete statements', () {
+        createTable({'include_metadata': true});
+        db.execute(
+          'INSERT INTO test (id, name, _metadata) VALUES (?, ?, ?)',
+          ['id', 'name', 'test insert'],
+        );
+        db.execute('delete from ps_crud;');
+        db.execute('delete from test');
+
+        final [row] = db.select('select data from ps_crud');
+        final op = jsonDecode(row[0] as String);
+        expect(op['op'], 'DELETE');
+        expect(op['metadata'], null);
+      });
+
+      test('supports deleting updates with metadata', () {
+        createTable({'include_metadata': true});
+        db.execute(
+          'INSERT INTO test (id, name, _metadata) VALUES (?, ?, ?)',
+          ['id', 'name', 'test insert'],
+        );
+        db.execute('delete from ps_crud;');
+        db.execute('update test set _deleted = TRUE, _metadata = ?',
+            ['custom delete']);
+
+        expect(db.select('select * from test'), hasLength(0));
+
+        final [row] = db.select('select data from ps_crud');
+        final op = jsonDecode(row[0] as String);
+        expect(op['op'], 'DELETE');
+        expect(op['metadata'], 'custom delete');
+      });
+    });
   });
 }

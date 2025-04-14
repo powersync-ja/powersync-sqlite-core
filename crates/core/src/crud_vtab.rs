@@ -3,7 +3,6 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
 use core::ffi::{c_char, c_int, c_void};
-use core::slice;
 
 use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
@@ -29,7 +28,7 @@ struct VirtualTable {
     base: sqlite::vtab,
     db: *mut sqlite::sqlite3,
     current_tx: Option<i64>,
-    insert_statement: Option<ManagedStmt>
+    insert_statement: Option<ManagedStmt>,
 }
 
 extern "C" fn connect(
@@ -40,8 +39,7 @@ extern "C" fn connect(
     vtab: *mut *mut sqlite::vtab,
     _err: *mut *mut c_char,
 ) -> c_int {
-    if let Err(rc) = sqlite::declare_vtab(db, "CREATE TABLE powersync_crud_(data TEXT);")
-    {
+    if let Err(rc) = sqlite::declare_vtab(db, "CREATE TABLE powersync_crud_(data TEXT);") {
         return rc as c_int;
     }
 
@@ -54,7 +52,7 @@ extern "C" fn connect(
             },
             db,
             current_tx: None,
-            insert_statement: None
+            insert_statement: None,
         }));
         *vtab = tab.cast::<sqlite::vtab>();
         let _ = sqlite::vtab_config(db, 0);
@@ -69,7 +67,6 @@ extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
     ResultCode::OK as c_int
 }
 
-
 fn begin_impl(tab: &mut VirtualTable) -> Result<(), SQLiteError> {
     let db = tab.db;
 
@@ -77,9 +74,10 @@ fn begin_impl(tab: &mut VirtualTable) -> Result<(), SQLiteError> {
     tab.insert_statement = Some(insert_statement);
 
     // language=SQLite
-    let statement = db.prepare_v2("UPDATE ps_tx SET next_tx = next_tx + 1 WHERE id = 1 RETURNING next_tx")?;
+    let statement =
+        db.prepare_v2("UPDATE ps_tx SET next_tx = next_tx + 1 WHERE id = 1 RETURNING next_tx")?;
     if statement.step()? == ResultCode::ROW {
-        let tx_id = statement.column_int64(0)? - 1;
+        let tx_id = statement.column_int64(0) - 1;
         tab.current_tx = Some(tx_id);
     } else {
         return Err(SQLiteError::from(ResultCode::ABORT));
@@ -109,22 +107,26 @@ extern "C" fn rollback(vtab: *mut sqlite::vtab) -> c_int {
     ResultCode::OK as c_int
 }
 
-fn insert_operation(
-    vtab: *mut sqlite::vtab, data: &str) -> Result<(), SQLiteError> {
+fn insert_operation(vtab: *mut sqlite::vtab, data: &str) -> Result<(), SQLiteError> {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
     if tab.current_tx.is_none() {
-        return Err(SQLiteError(ResultCode::MISUSE, Some(String::from("No tx_id"))));
+        return Err(SQLiteError(
+            ResultCode::MISUSE,
+            Some(String::from("No tx_id")),
+        ));
     }
     let current_tx = tab.current_tx.unwrap();
     // language=SQLite
-    let statement = tab.insert_statement.as_ref().ok_or(SQLiteError::from(NULL))?;
+    let statement = tab
+        .insert_statement
+        .as_ref()
+        .ok_or(SQLiteError::from(NULL))?;
     statement.bind_int64(1, current_tx)?;
     statement.bind_text(2, data, sqlite::Destructor::STATIC)?;
     statement.exec()?;
 
     Ok(())
 }
-
 
 extern "C" fn update(
     vtab: *mut sqlite::vtab,
@@ -178,6 +180,7 @@ static MODULE: sqlite_nostd::module = sqlite_nostd::module {
     xRelease: None,
     xRollbackTo: None,
     xShadowName: None,
+    xIntegrity: None,
 };
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {

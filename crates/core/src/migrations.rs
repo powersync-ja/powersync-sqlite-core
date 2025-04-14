@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         return Err(SQLiteError::from(ResultCode::ABORT));
     }
 
-    let mut current_version = current_version_stmt.column_int(0)?;
+    let mut current_version = current_version_stmt.column_int(0);
 
     while current_version > target_version {
         // Run down migrations.
@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
                 Some("Down migration failed - could not get version".to_string()),
             ));
         }
-        let new_version = current_version_stmt.column_int(0)?;
+        let new_version = current_version_stmt.column_int(0);
         if new_version >= current_version {
             // Database down from version $currentVersion to $version failed - version not updated after dow migration
             return Err(SQLiteError(

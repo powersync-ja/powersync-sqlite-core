@@ -4,7 +4,6 @@ use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use core::ffi::c_int;
-use core::slice;
 
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
@@ -13,7 +12,6 @@ use sqlite_nostd::{Connection, Context};
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
 use crate::util::*;
-
 
 fn uuid_v4_impl(
     _ctx: *mut sqlite::context,
