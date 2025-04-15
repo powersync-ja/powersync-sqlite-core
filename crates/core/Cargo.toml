@@ -21,6 +21,7 @@ serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
 streaming-iterator = { version = "0.1.9", default-features = false, features = ["alloc"] }
 const_format = "0.2.34"
+lock_api = { version = "0.4.12", default-features = false }
 
 [dependencies.uuid]
 version = "1.4.1"

@@ -9,41 +9,45 @@ use crate::{
 
 #[derive(Deserialize, Debug)]
 
-pub enum SyncLine {
-    #[serde(rename = "checkpoint")]
-    Checkpoint(Checkpoint),
-    #[serde(rename = "checkpoint_diff")]
-    CheckpointDiff(CheckpointDiff),
+pub enum SyncLine<'a> {
+    #[serde(rename = "checkpoint", borrow)]
+    Checkpoint(Checkpoint<'a>),
+    #[serde(rename = "checkpoint_diff", borrow)]
+    CheckpointDiff(CheckpointDiff<'a>),
 
     #[serde(rename = "checkpoint_complete")]
     CheckpointComplete(CheckpointComplete),
     #[serde(rename = "partial_checkpoint_complete")]
     CheckpointPartiallyComplete(CheckpointPartiallyComplete),
 
-    #[serde(rename = "data")]
-    Data(DataLine),
+    #[serde(rename = "data", borrow)]
+    Data(DataLine<'a>),
 
     #[serde(rename = "token_expires_in")]
     KeepAlive(TokenExpiresIn),
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Checkpoint {
+pub struct Checkpoint<'a> {
     #[serde(deserialize_with = "deserialize_string_to_i64")]
     pub last_op_id: i64,
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     pub write_checkpoint: Option<i64>,
-    pub buckets: Vec<BucketChecksum>,
+    #[serde(borrow)]
+    pub buckets: Vec<BucketChecksum<'a>>,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct CheckpointDiff {
+pub struct CheckpointDiff<'a> {
     #[serde(deserialize_with = "deserialize_string_to_i64")]
     pub last_op_id: i64,
-    pub updated_buckets: Vec<BucketChecksum>,
-    pub removed_buckets: Vec<String>,
-    pub write_checkpoint: Option<String>,
+    #[serde(borrow)]
+    pub updated_buckets: Vec<BucketChecksum<'a>>,
+    #[serde(borrow)]
+    pub removed_buckets: Vec<&'a str>,
+    #[serde(borrow)]
+    pub write_checkpoint: Option<&'a str>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -60,8 +64,8 @@ pub struct CheckpointPartiallyComplete {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct BucketChecksum {
-    pub bucket: String,
+pub struct BucketChecksum<'a> {
+    pub bucket: &'a str,
     pub checksum: i32,
     pub priority: Option<BucketPriority>,
     pub count: Option<i64>,
@@ -71,15 +75,15 @@ pub struct BucketChecksum {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct DataLine {
-    pub bucket: String,
+pub struct DataLine<'a> {
+    pub bucket: &'a str,
     pub data: Vec<OplogEntry>,
     #[serde(default)]
     pub has_more: bool,
-    #[serde(default)]
-    pub after: Option<String>,
-    #[serde(default)]
-    pub next_after: Option<String>,
+    #[serde(default, borrow)]
+    pub after: Option<&'a str>,
+    #[serde(default, borrow)]
+    pub next_after: Option<&'a str>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -113,8 +117,6 @@ pub struct TokenExpiresIn(pub i32);
 #[cfg(test)]
 mod tests {
     use core::assert_matches::assert_matches;
-
-    use alloc::vec;
 
     use super::*;
 
@@ -224,7 +226,7 @@ mod tests {
                 object_type: Some(_),
                 op: OpType::PUT,
                 subkey: None,
-                data,
+                data: _,
             }
         );
     }

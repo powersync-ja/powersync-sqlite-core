@@ -1,13 +1,23 @@
 extern crate alloc;
 
+use core::ptr::null_mut;
+
 use alloc::format;
 use alloc::string::String;
 
+use lock_api::{GuardSend, Mutex, RawMutex};
+use serde::de::Visitor;
 use serde::Deserialize;
 use serde_json as json;
+use sqlite_nostd::bindings::SQLITE_MUTEX_FAST;
+use sqlite_nostd::{
+    sqlite3_mutex_alloc, sqlite3_mutex_enter, sqlite3_mutex_free, sqlite3_mutex_leave,
+    sqlite3_mutex_try,
+};
 
-#[cfg(not(feature = "getrandom"))]
+#[cfg(feature = "getrandom")]
 use crate::sqlite;
+use crate::sqlite::bindings::sqlite3_mutex;
 
 use uuid::Uuid;
 
@@ -46,25 +56,81 @@ pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Erro
 where
     D: serde::Deserializer<'de>,
 {
-    let value = json::Value::deserialize(deserializer)?;
-
-    match value {
-        json::Value::String(s) => s.parse::<i64>().map_err(serde::de::Error::custom),
-        _ => Err(serde::de::Error::custom("Expected a string.")),
-    }
+    deserialize_optional_string_to_i64(deserializer)?
+        .ok_or_else(|| serde::de::Error::custom("Expected a string."))
 }
 
 pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let value = json::Value::deserialize(deserializer)?;
+    struct ValueVisitor;
 
-    match value {
-        json::Value::Null => Ok(None),
-        json::Value::String(s) => s.parse::<i64>().map(Some).map_err(serde::de::Error::custom),
-        _ => Err(serde::de::Error::custom("Expected a string or null.")),
+    impl<'de> Visitor<'de> for ValueVisitor {
+        type Value = Option<i64>;
+
+        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+            formatter.write_str("a string or null")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            v.parse::<i64>().map(Some).map_err(serde::de::Error::custom)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
     }
+
+    // Using a custom visitor here to avoid an intermediate string allocation
+    deserializer.deserialize_any(ValueVisitor)
+}
+
+struct SqliteMutex {
+    ptr: *mut sqlite3_mutex,
+}
+
+impl SqliteMutex {
+    pub fn new() -> Self {
+        Self {
+            ptr: sqlite3_mutex_alloc(SQLITE_MUTEX_FAST as i32),
+        }
+    }
+}
+
+unsafe impl RawMutex for SqliteMutex {
+    const INIT: Self = SqliteMutex { ptr: null_mut() };
+
+    type GuardMarker = GuardSend;
+
+    fn lock(&self) {
+        sqlite3_mutex_enter(self.ptr);
+    }
+
+    fn try_lock(&self) -> bool {
+        sqlite3_mutex_try(self.ptr) == 0
+    }
+
+    unsafe fn unlock(&self) {
+        sqlite3_mutex_free(self.ptr);
+    }
+}
+
+impl Drop for SqliteMutex {
+    fn drop(&mut self) {
+        sqlite3_mutex_free(self.ptr);
+    }
+}
+
+pub fn sqlite3_mutex<T>(value: T) -> Mutex<SqliteMutex, T> {
+    let raw = SqliteMutex::new();
+    Mutex::from_raw(raw, value)
 }
 
 // Use getrandom crate to generate UUID.
