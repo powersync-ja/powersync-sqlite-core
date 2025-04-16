@@ -14,6 +14,7 @@ use futures_lite::FutureExt;
 use serde_json::Map;
 
 use crate::{
+    bson,
     bucket_priority::BucketPriority,
     error::SQLiteError,
     kv::client_id,
@@ -138,7 +139,7 @@ impl StreamingSyncIteration {
                 }
                 SyncEvent::SyncStreamClosed { error: _ } => break,
                 SyncEvent::TextLine { data } => serde_json::from_str(data)?,
-                SyncEvent::BinaryLine { data } => todo!(),
+                SyncEvent::BinaryLine { data } => bson::from_bytes(data)?,
             };
 
             match line {

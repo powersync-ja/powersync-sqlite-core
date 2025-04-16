@@ -2,6 +2,8 @@ use alloc::string::{String, ToString};
 use core::error::Error;
 use sqlite_nostd::{sqlite3, Connection, ResultCode};
 
+use crate::bson::BsonError;
+
 #[derive(Debug)]
 pub struct SQLiteError(pub ResultCode, pub Option<String>);
 
@@ -43,5 +45,11 @@ impl From<ResultCode> for SQLiteError {
 impl From<serde_json::Error> for SQLiteError {
     fn from(value: serde_json::Error) -> Self {
         SQLiteError(ResultCode::ABORT, Some(value.to_string()))
+    }
+}
+
+impl From<BsonError> for SQLiteError {
+    fn from(value: BsonError) -> Self {
+        SQLiteError(ResultCode::ERROR, Some(value.to_string()))
     }
 }
