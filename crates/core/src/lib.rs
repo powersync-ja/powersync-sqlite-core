@@ -2,8 +2,8 @@
 #![feature(vec_into_raw_parts)]
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
-#![feature(error_in_core)]
 #![feature(assert_matches)]
+#![feature(strict_overflow_ops)]
 
 extern crate alloc;
 
@@ -12,6 +12,7 @@ use core::ffi::{c_char, c_int};
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 
+mod bson;
 mod bucket_priority;
 mod checkpoint;
 mod crud_vtab;

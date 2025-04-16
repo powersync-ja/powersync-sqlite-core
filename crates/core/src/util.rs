@@ -5,7 +5,7 @@ use core::ptr::null_mut;
 use alloc::format;
 use alloc::string::String;
 
-use lock_api::{GuardSend, Mutex, RawMutex};
+use lock_api::{GuardSend, Mutex as MutexApi, RawMutex};
 use serde::de::Visitor;
 use serde::Deserialize;
 use serde_json as json;
@@ -92,7 +92,7 @@ where
     deserializer.deserialize_any(ValueVisitor)
 }
 
-struct SqliteMutex {
+pub struct SqliteMutex {
     ptr: *mut sqlite3_mutex,
 }
 
@@ -128,9 +128,11 @@ impl Drop for SqliteMutex {
     }
 }
 
-pub fn sqlite3_mutex<T>(value: T) -> Mutex<SqliteMutex, T> {
+pub type Mutex<T> = MutexApi<SqliteMutex, T>;
+
+pub fn sqlite3_mutex<T>(value: T) -> Mutex<T> {
     let raw = SqliteMutex::new();
-    Mutex::from_raw(raw, value)
+    MutexApi::from_raw(raw, value)
 }
 
 // Use getrandom crate to generate UUID.
