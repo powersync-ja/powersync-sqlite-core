@@ -8,6 +8,8 @@ use serde::de::{self, StdError};
 
 use crate::error::SQLiteError;
 
+use super::parser::ElementType;
+
 #[derive(Debug)]
 pub struct BsonError {
     /// Using a [Box] here keeps the size of this type as small, which makes results of this error
@@ -31,6 +33,12 @@ pub enum ErrorKind {
     UnexpectedEoF,
     InvalidEndOfDocument,
     InvalidSize,
+    InvalidStateExpectedType,
+    InvalidStateExpectedName,
+    InvalidStateExpectedValue,
+    ExpectedEnum { actual: ElementType },
+    ExpectedString,
+    UnexpectedEndOfDocumentForEnumVariant,
 }
 
 impl BsonError {

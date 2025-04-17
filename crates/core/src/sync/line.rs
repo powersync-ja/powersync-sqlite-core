@@ -165,12 +165,23 @@ mod tests {
         assert_eq!(bucket.bucket, "a");
         assert_eq!(bucket.checksum, 10);
         assert_eq!(bucket.priority, Some(BucketPriority { number: 1 }));
+
+        assert_matches!(
+            deserialize(
+                r#"{"checkpoint":{"write_checkpoint":null,"last_op_id":"1","buckets":[{"bucket":"a","checksum":0,"priority":3,"count":1}]}}"#
+            ),
+            SyncLine::Checkpoint(Checkpoint {
+                last_op_id: 1,
+                write_checkpoint: None,
+                buckets: _,
+            })
+        );
     }
 
     #[test]
     fn parse_checkpoint_diff() {
         let SyncLine::CheckpointDiff(diff) = deserialize(
-            r#"{"checkpoint_diff": {"last_op_id": "10", "buckets": [], "updated_buckets": [], "removed_buckets": []}}"#,
+            r#"{"checkpoint_diff": {"last_op_id": "10", "buckets": [], "updated_buckets": [], "removed_buckets": [], "write_checkpoint": null}}"#,
         ) else {
             panic!("Expected checkpoint diff")
         };

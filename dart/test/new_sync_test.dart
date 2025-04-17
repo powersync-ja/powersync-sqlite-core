@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:bson/bson.dart';
 import 'package:sqlite3/common.dart';
@@ -39,7 +40,9 @@ void _syncTests<T>({
 
   List<Object?> syncLine(Object? line) {
     if (isBson) {
-      return invokeControl('line_binary', BsonCodec.serialize(line).byteList);
+      final serialized = BsonCodec.serialize(line).byteList;
+      print(serialized.asRustByteString);
+      return invokeControl('line_binary', serialized);
     } else {
       return invokeControl('line_text', jsonEncode(line));
     }
@@ -47,7 +50,73 @@ void _syncTests<T>({
 
   test('starting stream', () {
     final result = invokeControl('start', null);
+
+    expect(result, [
+      {'UpdateSyncStatus': anything},
+      {'EstablishSyncStream': anything},
+    ]);
   });
+
+  test('simple sync iteration', () {
+    invokeControl('start', null);
+
+    expect(
+      syncLine({
+        'checkpoint': {
+          'last_op_id': '1',
+          'write_checkpoint': null,
+          'buckets': [
+            {
+              'bucket': 'a',
+              'checksum': 0,
+              'priority': 3,
+              'count': 1,
+            }
+          ],
+        },
+      }),
+      [
+        {
+          'UpdateSyncStatus': {
+            'status': {
+              'connected': true,
+              'connecting': false,
+              'priority_status': [],
+              'downloading': {
+                'buckets': {
+                  'a': {
+                    'priority': 3,
+                    'at_last': 0,
+                    'since_last': 0,
+                    'target_count': 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
+    );
+  });
+}
+
+extension on Uint8List {
+  String get asRustByteString {
+    final buffer = StringBuffer('b"');
+
+    for (final byte in this) {
+      switch (byte) {
+        case >= 32 && < 127:
+          buffer.writeCharCode(byte);
+        default:
+          // Escape
+          buffer.write('\\x${byte.toRadixString(16).padLeft(2, '0')}');
+      }
+    }
+
+    buffer.write('"');
+    return buffer.toString();
+  }
 }
 
 const _schema = {

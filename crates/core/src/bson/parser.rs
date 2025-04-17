@@ -16,7 +16,7 @@ impl<'de> Parser<'de> {
     }
 
     #[cold]
-    fn error(&self, kind: ErrorKind) -> BsonError {
+    pub fn error(&self, kind: ErrorKind) -> BsonError {
         BsonError::new(Some(self.offset), kind)
     }
 
@@ -167,6 +167,7 @@ impl<'de> Parser<'de> {
 #[repr(transparent)]
 pub struct BinarySubtype(pub u8);
 
+#[derive(Clone, Debug)]
 pub enum ElementType {
     Double = 1,
     String = 2,

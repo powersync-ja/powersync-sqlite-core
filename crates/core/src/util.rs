@@ -103,10 +103,17 @@ where
         {
             Ok(None)
         }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_str(self)
+        }
     }
 
     // Using a custom visitor here to avoid an intermediate string allocation
-    deserializer.deserialize_any(ValueVisitor)
+    deserializer.deserialize_option(ValueVisitor)
 }
 
 pub struct SqliteMutex {

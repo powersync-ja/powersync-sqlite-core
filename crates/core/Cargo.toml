@@ -35,7 +35,7 @@ features = []
 
 
 [features]
-default = ["getrandom"]
+default = ["getrandom", "loadable_extension"]
 
 loadable_extension = ["sqlite_nostd/loadable_extension"]
 static = ["sqlite_nostd/static"]

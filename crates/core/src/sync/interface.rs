@@ -106,6 +106,26 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
                     },
                 },
                 "stop" => SyncControlRequest::StopSyncStream,
+                "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
+                    data: if payload.value_type() == ColumnType::Text {
+                        payload.text()
+                    } else {
+                        return Err(SQLiteError(
+                            ResultCode::MISUSE,
+                            Some("Second argument must be a string".to_string()),
+                        ));
+                    },
+                }),
+                "line_binary" => SyncControlRequest::SyncEvent(SyncEvent::BinaryLine {
+                    data: if payload.value_type() == ColumnType::Blob {
+                        payload.blob()
+                    } else {
+                        return Err(SQLiteError(
+                            ResultCode::MISUSE,
+                            Some("Second argument must be a byte array".to_string()),
+                        ));
+                    },
+                }),
                 _ => {
                     return Err(SQLiteError(
                         ResultCode::MISUSE,
