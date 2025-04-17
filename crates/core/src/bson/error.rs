@@ -2,7 +2,6 @@ use core::fmt::Display;
 
 use alloc::{
     boxed::Box,
-    format,
     string::{String, ToString},
 };
 use serde::de::{self, StdError};

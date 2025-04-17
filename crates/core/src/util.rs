@@ -12,9 +12,10 @@ use serde_json as json;
 use sqlite_nostd::bindings::SQLITE_MUTEX_FAST;
 use sqlite_nostd::{
     sqlite3_mutex_alloc, sqlite3_mutex_enter, sqlite3_mutex_free, sqlite3_mutex_leave,
-    sqlite3_mutex_try,
+    sqlite3_mutex_try, Connection, Context,
 };
 
+use crate::error::SQLiteError;
 #[cfg(feature = "getrandom")]
 use crate::sqlite;
 use crate::sqlite::bindings::sqlite3_mutex;
@@ -50,6 +51,22 @@ pub fn internal_table_name(name: &str) -> String {
 
 pub fn quote_identifier_prefixed(prefix: &str, name: &str) -> String {
     return format!("\"{:}{:}\"", prefix, name.replace("\"", "\"\""));
+}
+
+pub fn context_set_error(ctx: *mut sqlite::context, error: SQLiteError, description: &'static str) {
+    let SQLiteError(code, message) = error;
+
+    if message.is_some() {
+        ctx.result_error(&format!("{:} {:}", description, message.unwrap()));
+    } else {
+        let error = ctx.db_handle().errmsg().unwrap();
+        if error == "not an error" {
+            ctx.result_error(&format!("{:}", description));
+        } else {
+            ctx.result_error(&format!("{:} {:}", description, error));
+        }
+    }
+    ctx.result_error_code(code);
 }
 
 pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
@@ -118,7 +135,7 @@ unsafe impl RawMutex for SqliteMutex {
     }
 
     unsafe fn unlock(&self) {
-        sqlite3_mutex_free(self.ptr);
+        sqlite3_mutex_leave(self.ptr);
     }
 }
 

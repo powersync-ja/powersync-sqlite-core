@@ -8,9 +8,9 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
 use crate::fix035::apply_v035_fix;
+use crate::sync::bucket_priority::BucketPriority;
 
 pub const LATEST_VERSION: i32 = 9;
 

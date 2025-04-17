@@ -1,12 +1,13 @@
 use core::{
     future::Future,
+    marker::PhantomData,
     pin::Pin,
     task::{Context, Poll, RawWakerVTable, Waker},
 };
 
 use alloc::{
     boxed::Box,
-    collections::btree_map::BTreeMap,
+    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     string::{String, ToString},
     vec::Vec,
 };
@@ -15,7 +16,6 @@ use serde_json::Map;
 
 use crate::{
     bson,
-    bucket_priority::BucketPriority,
     error::SQLiteError,
     kv::client_id,
     util::{sqlite3_mutex, Mutex},
@@ -23,41 +23,64 @@ use crate::{
 use sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
 use super::{
-    interface::{BucketRequest, Instruction, StreamingSyncRequest, SyncEvent},
-    line::SyncLine,
+    bucket_priority::BucketPriority,
+    interface::{BucketRequest, Instruction, StreamingSyncRequest, SyncControlRequest, SyncEvent},
+    line::{BucketChecksum, Checkpoint, SyncLine},
+    storage_adapter::{BucketDescription, StorageAdapter},
+    sync_status::{DownloadSyncStatus, SyncDownloadProgress, SyncStatusContainer},
 };
 
 pub struct SyncClient {
+    db: *mut sqlite::sqlite3,
     state: Mutex<ClientState>,
 }
 
 impl SyncClient {
-    pub fn new() -> Self {
+    pub fn new(db: *mut sqlite::sqlite3) -> Self {
         Self {
+            db,
             state: sqlite3_mutex(ClientState::Idle),
         }
     }
 
-    pub fn push_event<'a>(&self, event: SyncEvent<'a>) -> Vec<Instruction> {
-        let mut active = ActiveEvent {
-            handled: false,
-            event,
-            instructions: Vec::new(),
-        };
-
+    pub fn push_event<'a>(
+        &self,
+        event: SyncControlRequest<'a>,
+    ) -> Result<Vec<Instruction>, SQLiteError> {
         let mut state = self.state.lock();
-        match &mut *state {
-            ClientState::Idle => todo!(),
-            ClientState::IterationActive(handle) => {
-                let done = handle.run(&mut active);
+
+        match event {
+            SyncControlRequest::StartSyncStream { parameters } => {
+                state.tear_down()?;
+
+                let mut handle = SyncIterationHandle::new(self.db, parameters)?;
+                let instructions = handle.initialize()?;
+                *state = ClientState::IterationActive(handle);
+
+                Ok(instructions)
+            }
+            SyncControlRequest::SyncEvent(sync_event) => {
+                let mut active = ActiveEvent::new(sync_event);
+
+                let ClientState::IterationActive(handle) = &mut *state else {
+                    return Err(SQLiteError(
+                        ResultCode::MISUSE,
+                        Some("No iteration is active".to_string()),
+                    ));
+                };
+
+                let done = handle.run(&mut active)?;
                 if done {
                     *state = ClientState::Idle;
                 }
+
+                Ok(active.instructions)
+            }
+            SyncControlRequest::StopSyncStream => {
+                state.tear_down()?;
+                Ok(Vec::new())
             }
         }
-
-        debug_assert!(active.handled);
-        active.instructions
     }
 }
 
@@ -66,12 +89,51 @@ enum ClientState {
     IterationActive(SyncIterationHandle),
 }
 
+impl ClientState {
+    fn tear_down(&mut self) -> Result<(), SQLiteError> {
+        if let ClientState::IterationActive(old) = self {
+            old.tear_down()?;
+        };
+
+        *self = ClientState::Idle;
+        Ok(())
+    }
+}
+
 struct SyncIterationHandle {
-    future: Pin<Box<dyn Future<Output = ()>>>,
+    future: Pin<Box<dyn Future<Output = Result<(), SQLiteError>>>>,
 }
 
 impl SyncIterationHandle {
-    fn run(&mut self, active: &mut ActiveEvent) -> bool {
+    fn new(
+        db: *mut sqlite::sqlite3,
+        parameters: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<Self, ResultCode> {
+        let runner = StreamingSyncIteration {
+            db,
+            parameters,
+            adapter: StorageAdapter::new(db)?,
+            status: SyncStatusContainer::new(),
+        };
+        let future = runner.run().boxed_local();
+
+        Ok(Self { future })
+    }
+
+    fn initialize(&mut self) -> Result<Vec<Instruction>, SQLiteError> {
+        let mut event = ActiveEvent::new(SyncEvent::Initialize);
+        let result = self.run(&mut event)?;
+        assert!(!result, "Stream client aborted initialization");
+
+        Ok(event.instructions)
+    }
+
+    fn tear_down(&mut self) -> Result<(), SQLiteError> {
+        self.run(&mut ActiveEvent::new(SyncEvent::TearDown))?;
+        Ok(())
+    }
+
+    fn run(&mut self, active: &mut ActiveEvent) -> Result<bool, SQLiteError> {
         // Using a noop waker because the only event thing StreamingSyncIteration::run polls on is
         // the next incoming sync event.
         let waker = unsafe {
@@ -80,10 +142,16 @@ impl SyncIterationHandle {
                 Waker::noop().vtable(),
             )
         };
-        let mut context = Context::from_waker(Waker::noop());
+        let mut context = Context::from_waker(&waker);
 
-        let result = self.future.poll(&mut context);
-        result.is_ready()
+        Ok(
+            if let Poll::Ready(result) = self.future.poll(&mut context) {
+                result?;
+                true
+            } else {
+                false
+            },
+        )
     }
 }
 
@@ -93,15 +161,27 @@ struct ActiveEvent<'a> {
     instructions: Vec<Instruction>,
 }
 
+impl<'a> ActiveEvent<'a> {
+    pub fn new(event: SyncEvent<'a>) -> Self {
+        Self {
+            handled: false,
+            event,
+            instructions: Vec::new(),
+        }
+    }
+}
+
 struct StreamingSyncIteration {
     db: *mut sqlite::sqlite3,
+    adapter: StorageAdapter,
     parameters: Option<serde_json::Map<String, serde_json::Value>>,
+    status: SyncStatusContainer,
 }
 
 impl StreamingSyncIteration {
-    fn receive_event<'a>(&'a self) -> impl Future<Output = &'a mut ActiveEvent<'a>> {
+    fn receive_event<'a>() -> impl Future<Output = &'a mut ActiveEvent<'a>> {
         struct Wait<'a> {
-            a: &'a StreamingSyncIteration,
+            a: PhantomData<&'a StreamingSyncIteration>,
         }
 
         impl<'a> Future for Wait<'a> {
@@ -109,7 +189,7 @@ impl StreamingSyncIteration {
 
             fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
                 let context = cx.waker().data().cast_mut() as *mut ActiveEvent;
-                let mut context = unsafe { &mut *context };
+                let context = unsafe { &mut *context };
 
                 if context.handled {
                     Poll::Pending
@@ -120,7 +200,7 @@ impl StreamingSyncIteration {
             }
         }
 
-        Wait { a: self }
+        Wait { a: PhantomData }
     }
 
     async fn run(mut self) -> Result<(), SQLiteError> {
@@ -131,19 +211,45 @@ impl StreamingSyncIteration {
         let mut bucket_map = self.prepare_request().await?;
 
         loop {
-            let event = self.receive_event().await;
+            let event = Self::receive_event().await;
 
             let line: SyncLine = match event.event {
-                SyncEvent::StartSyncStream => {
-                    panic!("Starting sync stream should have reset iteration")
+                SyncEvent::Initialize { .. } => {
+                    panic!("Initialize should only be emited once")
                 }
-                SyncEvent::SyncStreamClosed { error: _ } => break,
+                SyncEvent::TearDown => break,
                 SyncEvent::TextLine { data } => serde_json::from_str(data)?,
                 SyncEvent::BinaryLine { data } => bson::from_bytes(data)?,
             };
 
             match line {
-                SyncLine::Checkpoint(checkpoint) => todo!(),
+                SyncLine::Checkpoint(checkpoint) => {
+                    let new_target = OwnedCheckpoint::from(&checkpoint);
+
+                    let mut to_delete: BTreeSet<&str> =
+                        bucket_map.keys().map(|s| s.as_str()).collect();
+                    let mut new_buckets = BTreeMap::<String, Option<BucketDescription>>::new();
+                    for bucket in &new_target.buckets {
+                        new_buckets.insert(
+                            bucket.bucket.clone(),
+                            Some(BucketDescription {
+                                priority: bucket.priority.unwrap_or(BucketPriority::FALLBACK),
+                                name: bucket.bucket.clone(),
+                            }),
+                        );
+                        to_delete.remove(bucket.bucket.as_str());
+                    }
+
+                    self.adapter.delete_buckets(to_delete)?;
+                    let progress = self.load_progress(&new_target)?;
+                    self.status.update(
+                        |s| s.start_tracking_checkpoint(progress),
+                        &mut event.instructions,
+                    );
+
+                    bucket_map = new_buckets;
+                    target = Some(new_target);
+                }
                 SyncLine::CheckpointDiff(checkpoint_diff) => todo!(),
                 SyncLine::CheckpointComplete(checkpoint_complete) => todo!(),
                 SyncLine::CheckpointPartiallyComplete(checkpoint_partially_complete) => todo!(),
@@ -155,66 +261,65 @@ impl StreamingSyncIteration {
         Ok(())
     }
 
+    fn load_progress(
+        &self,
+        checkpoint: &OwnedCheckpoint,
+    ) -> Result<SyncDownloadProgress, SQLiteError> {
+        let local_progress = self.adapter.local_progress()?;
+        Ok(SyncDownloadProgress::for_checkpoint(
+            checkpoint,
+            local_progress,
+        )?)
+    }
+
     async fn prepare_request(
         &mut self,
     ) -> Result<BTreeMap<String, Option<BucketDescription>>, SQLiteError> {
-        let event = self.receive_event().await;
-        assert!(matches!(event.event, SyncEvent::StartSyncStream));
+        let event = Self::receive_event().await;
+        let SyncEvent::Initialize = event.event else {
+            return Err(SQLiteError::from(ResultCode::MISUSE));
+        };
 
-        let (request, bucket_map) = self.collect_local_bucket_state()?;
-        event
-            .instructions
-            .push(Instruction::EstablishSyncStream { request });
-        Ok(bucket_map)
-    }
+        self.status
+            .update(|s| s.start_connecting(), &mut event.instructions);
 
-    fn collect_local_bucket_state(
-        &self,
-    ) -> Result<
-        (
-            StreamingSyncRequest,
-            BTreeMap<String, Option<BucketDescription>>,
-        ),
-        SQLiteError,
-    > {
-        // language=SQLite
-        let statement = self.db.prepare_v2(
-            "SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0 AND name != '$local'",
-        )?;
-
-        let mut requests = Vec::<BucketRequest>::new();
-        let mut local_state = BTreeMap::<String, Option<BucketDescription>>::new();
-
-        while statement.step()? == ResultCode::ROW {
-            let bucket_name = statement.column_text(0)?.to_string();
-            let last_op = statement.column_int64(1);
-
-            requests.push(BucketRequest {
-                name: bucket_name.clone(),
-                after: last_op.to_string(),
-            });
-            local_state.insert(bucket_name, None);
-        }
-
+        let (requests, bucket_map) = self.adapter.collect_local_bucket_state()?;
         let request = StreamingSyncRequest {
             buckets: requests,
             include_checksum: true,
             raw_data: true,
             client_id: client_id(self.db)?,
-            parameters: self.parameters.clone(),
+            parameters: self.parameters.take(),
         };
 
-        Ok((request, local_state))
+        event
+            .instructions
+            .push(Instruction::EstablishSyncStream { request });
+        Ok(bucket_map)
     }
 }
 
-struct OwnedCheckpoint {
-    last_op_id: i64,
-    write_checkpoint: Option<i64>,
-    buckets: Vec<OwnedBucketChecksum>,
+pub struct OwnedCheckpoint {
+    pub last_op_id: i64,
+    pub write_checkpoint: Option<i64>,
+    pub buckets: Vec<OwnedBucketChecksum>,
 }
 
-struct OwnedBucketChecksum {
+impl From<&'_ Checkpoint<'_>> for OwnedCheckpoint {
+    fn from(value: &'_ Checkpoint<'_>) -> Self {
+        Self {
+            last_op_id: value.last_op_id,
+            write_checkpoint: value.write_checkpoint,
+            buckets: value
+                .buckets
+                .iter()
+                .map(OwnedBucketChecksum::from)
+                .collect(),
+        }
+    }
+}
+
+pub struct OwnedBucketChecksum {
     pub bucket: String,
     pub checksum: i32,
     pub priority: Option<BucketPriority>,
@@ -222,7 +327,14 @@ struct OwnedBucketChecksum {
     pub last_op_id: Option<i64>,
 }
 
-struct BucketDescription {
-    priority: BucketPriority,
-    name: String,
+impl From<&'_ BucketChecksum<'_>> for OwnedBucketChecksum {
+    fn from(value: &'_ BucketChecksum<'_>) -> Self {
+        Self {
+            bucket: value.bucket.to_string(),
+            checksum: value.checksum,
+            priority: value.priority,
+            count: value.count,
+            last_op_id: value.last_op_id,
+        }
+    }
 }

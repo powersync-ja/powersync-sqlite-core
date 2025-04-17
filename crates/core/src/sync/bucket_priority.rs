@@ -1,10 +1,10 @@
-use serde::{de::Visitor, Deserialize};
+use serde::{de::Visitor, Deserialize, Serialize};
 use sqlite_nostd::ResultCode;
 
 use crate::error::SQLiteError;
 
 #[repr(transparent)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BucketPriority {
     pub number: i32,
 }
@@ -13,6 +13,9 @@ impl BucketPriority {
     pub fn may_publish_with_outstanding_uploads(self) -> bool {
         self == BucketPriority::HIGHEST
     }
+
+    /// The priority to use when the sync service doesn't attach priorities in checkpoints.
+    pub const FALLBACK: BucketPriority = BucketPriority { number: 3 };
 
     pub const HIGHEST: BucketPriority = BucketPriority { number: 0 };
 
@@ -85,5 +88,14 @@ impl<'de> Deserialize<'de> for BucketPriority {
         }
 
         deserializer.deserialize_i32(PriorityVisitor)
+    }
+}
+
+impl Serialize for BucketPriority {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_i32(self.number)
     }
 }

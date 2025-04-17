@@ -2,10 +2,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::{
-    bucket_priority::BucketPriority,
-    util::{deserialize_optional_string_to_i64, deserialize_string_to_i64},
-};
+use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64};
+
+use super::bucket_priority::BucketPriority;
 
 #[derive(Deserialize, Debug)]
 

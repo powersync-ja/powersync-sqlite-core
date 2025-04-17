@@ -1,5 +1,4 @@
 #![no_main]
-#![no_std]
 #![allow(internal_features)]
 #![feature(lang_items)]
 #![feature(core_intrinsics)]
@@ -15,19 +14,6 @@ use sqlite_nostd::SQLite3Allocator;
 #[cfg(not(test))]
 #[global_allocator]
 static ALLOCATOR: SQLite3Allocator = SQLite3Allocator {};
-
-// Custom Panic handler for WASM and other no_std builds
-#[cfg(not(test))]
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    core::intrinsics::abort()
-}
-
-#[cfg(not(target_family = "wasm"))]
-#[cfg(not(test))]
-#[lang = "eh_personality"]
-extern "C" fn eh_personality() {}
-
 
 #[no_mangle]
 pub extern "C" fn core_init(_dummy: *mut c_char) -> c_int {

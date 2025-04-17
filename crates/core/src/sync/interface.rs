@@ -1,9 +1,32 @@
+use core::cell::RefCell;
+use core::ffi::{c_int, c_void};
+
+use alloc::boxed::Box;
+use alloc::rc::Rc;
+use alloc::string::ToString;
 use alloc::{string::String, vec::Vec};
 use serde::Serialize;
+use sqlite::{ResultCode, Value};
+use sqlite_nostd::{self as sqlite, ColumnType};
+use sqlite_nostd::{Connection, Context};
+
+use crate::error::SQLiteError;
+use crate::util::context_set_error;
+
+use super::streaming_sync::SyncClient;
+use super::sync_status::DownloadSyncStatus;
+
+pub enum SyncControlRequest<'a> {
+    StartSyncStream {
+        parameters: Option<serde_json::Map<String, serde_json::Value>>,
+    },
+    StopSyncStream,
+    SyncEvent(SyncEvent<'a>),
+}
 
 pub enum SyncEvent<'a> {
-    StartSyncStream,
-    SyncStreamClosed { error: bool },
+    Initialize,
+    TearDown,
     TextLine { data: &'a str },
     BinaryLine { data: &'a [u8] },
 }
@@ -11,8 +34,17 @@ pub enum SyncEvent<'a> {
 /// An instruction sent by the core extension to the SDK.
 #[derive(Serialize)]
 pub enum Instruction {
-    LogLine { severity: LogSeverity, line: String },
-    EstablishSyncStream { request: StreamingSyncRequest },
+    LogLine {
+        severity: LogSeverity,
+        line: String,
+    },
+    UpdateSyncStatus {
+        status: Rc<RefCell<DownloadSyncStatus>>,
+    },
+    EstablishSyncStream {
+        request: StreamingSyncRequest,
+    },
+    FlushFileSystem,
     CloseSyncStream,
 }
 
@@ -36,4 +68,82 @@ pub struct StreamingSyncRequest {
 pub struct BucketRequest {
     pub name: String,
     pub after: String,
+}
+
+struct SqlController {
+    client: SyncClient,
+}
+
+pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+    extern "C" fn control(
+        ctx: *mut sqlite::context,
+        argc: c_int,
+        argv: *mut *mut sqlite::value,
+    ) -> () {
+        let result = (|| -> Result<(), SQLiteError> {
+            let controller = unsafe { ctx.user_data().cast::<SqlController>().as_ref() }
+                .ok_or_else(|| SQLiteError::from(ResultCode::INTERNAL))?;
+
+            let args = sqlite::args!(argc, argv);
+            let [op, payload] = args else {
+                return Err(ResultCode::MISUSE.into());
+            };
+
+            if op.value_type() != ColumnType::Text {
+                return Err(SQLiteError(
+                    ResultCode::MISUSE,
+                    Some("First argument must be a string".to_string()),
+                ));
+            }
+
+            let op = op.text();
+            let event = match op {
+                "start" => SyncControlRequest::StartSyncStream {
+                    parameters: if payload.value_type() == ColumnType::Text {
+                        Some(serde_json::from_str(payload.text())?)
+                    } else {
+                        None
+                    },
+                },
+                "stop" => SyncControlRequest::StopSyncStream,
+                _ => {
+                    return Err(SQLiteError(
+                        ResultCode::MISUSE,
+                        Some("Unknown operation".to_string()),
+                    ))
+                }
+            };
+
+            let instructions = controller.client.push_event(event)?;
+            let formatted = serde_json::to_string(&instructions)?;
+            ctx.result_text_transient(&formatted);
+
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            context_set_error(ctx, e, "powersync_control");
+        }
+    }
+
+    unsafe extern "C" fn destroy(ptr: *mut c_void) {
+        drop(Box::from_raw(ptr.cast::<SqlController>()));
+    }
+
+    let controller = Box::new(SqlController {
+        client: SyncClient::new(db),
+    });
+
+    db.create_function_v2(
+        "powersync_control",
+        2,
+        sqlite::UTF8 | sqlite::DIRECTONLY,
+        Some(Box::into_raw(controller).cast()),
+        Some(control),
+        None,
+        None,
+        Some(destroy),
+    )?;
+
+    Ok(())
 }

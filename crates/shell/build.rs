@@ -1,4 +1,3 @@
-
 fn main() {
     let mut cfg = cc::Build::new();
 
@@ -8,7 +7,7 @@ fn main() {
     cfg.include("../sqlite/sqlite");
 
     // General SQLite options
-    cfg.define("SQLITE_THREADSAFE", Some("0"));
+    cfg.define("SQLITE_THREADSAFE", Some("1"));
     cfg.define("SQLITE_ENABLE_BYTECODE_VTAB", Some("1"));
 
     // Call core_init() in main.rs

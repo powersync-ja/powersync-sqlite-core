@@ -2,7 +2,7 @@ extern crate alloc;
 
 use core::ffi::{c_char, c_int};
 
-use sqlite::{ResultCode};
+use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::VTab;
 
@@ -21,7 +21,6 @@ pub extern "C" fn vtab_no_filter(
     ResultCode::MISUSE as c_int
 }
 
-
 pub extern "C" fn vtab_no_next(_cursor: *mut sqlite::vtab_cursor) -> c_int {
     ResultCode::MISUSE as c_int
 }
@@ -38,15 +37,24 @@ pub extern "C" fn vtab_no_column(
     ResultCode::MISUSE as c_int
 }
 
-pub extern "C" fn vtab_no_rowid(_cursor: *mut sqlite::vtab_cursor, _row_id: *mut sqlite::int64) -> c_int {
+pub extern "C" fn vtab_no_rowid(
+    _cursor: *mut sqlite::vtab_cursor,
+    _row_id: *mut sqlite::int64,
+) -> c_int {
     ResultCode::MISUSE as c_int
 }
 
-pub extern "C" fn vtab_no_best_index(_vtab: *mut sqlite::vtab, _index_info: *mut sqlite::index_info) -> c_int {
+pub extern "C" fn vtab_no_best_index(
+    _vtab: *mut sqlite::vtab,
+    _index_info: *mut sqlite::index_info,
+) -> c_int {
     return ResultCode::MISUSE as c_int;
 }
 
-pub extern "C" fn vtab_no_open(_vtab: *mut sqlite::vtab, _cursor: *mut *mut sqlite::vtab_cursor) -> c_int {
+pub extern "C" fn vtab_no_open(
+    _vtab: *mut sqlite::vtab,
+    _cursor: *mut *mut sqlite::vtab_cursor,
+) -> c_int {
     ResultCode::MISUSE as c_int
 }
 

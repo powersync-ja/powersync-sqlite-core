@@ -13,7 +13,6 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 
 mod bson;
-mod bucket_priority;
 mod checkpoint;
 mod crud_vtab;
 mod diff;
@@ -62,6 +61,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::view_admin::register(db)?;
     crate::checkpoint::register(db)?;
     crate::kv::register(db)?;
+    sync::register(db)?;
 
     crate::schema::register(db)?;
     crate::operations_vtab::register(db)?;

@@ -1,4 +1,12 @@
+use sqlite_nostd::{self as sqlite, ResultCode};
+
+pub mod bucket_priority;
 mod interface;
 pub mod line;
+mod storage_adapter;
 mod streaming_sync;
-mod vtab;
+mod sync_status;
+
+pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+    interface::register(db)
+}
