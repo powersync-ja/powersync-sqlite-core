@@ -1,11 +1,13 @@
-use de::Deserializer;
+pub use de::Deserializer;
 pub use error::BsonError;
 use parser::Parser;
 use serde::Deserialize;
+pub use writer::BsonWriter;
 
 mod de;
 mod error;
 mod parser;
+mod writer;
 
 /// Deserializes BSON [bytes] into a structure [T].
 pub fn from_bytes<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, BsonError> {

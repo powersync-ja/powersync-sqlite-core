@@ -1,7 +1,12 @@
-use alloc::string::String;
-use alloc::vec::Vec;
-use serde::Deserialize;
+use core::any::TypeId;
 
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use alloc::{borrow::Cow, string::String};
+use serde::de::DeserializeSeed;
+use serde::{de::Visitor, Deserialize};
+
+use crate::bson::{self, BsonWriter};
 use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64};
 
 use super::bucket_priority::BucketPriority;
@@ -76,7 +81,7 @@ pub struct BucketChecksum<'a> {
 #[derive(Deserialize, Debug)]
 pub struct DataLine<'a> {
     pub bucket: &'a str,
-    pub data: Vec<OplogEntry>,
+    pub data: Vec<OplogEntry<'a>>,
     #[serde(default)]
     pub has_more: bool,
     #[serde(default, borrow)]
@@ -86,20 +91,26 @@ pub struct DataLine<'a> {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct OplogEntry {
+pub struct OplogEntry<'a> {
     pub checksum: i32,
     #[serde(deserialize_with = "deserialize_string_to_i64")]
     pub op_id: i64,
     pub op: OpType,
-    #[serde(default)]
-    pub object_id: Option<String>,
-    #[serde(default)]
-    pub object_type: Option<String>,
-    #[serde(default)]
-    pub subkey: Option<String>,
+    #[serde(default, borrow)]
+    pub object_id: Option<&'a str>,
+    #[serde(default, borrow)]
+    pub object_type: Option<&'a str>,
+    #[serde(default, borrow)]
+    pub subkey: Option<&'a str>,
     // TODO: BSON?
-    #[serde(default)]
-    pub data: Option<String>,
+    #[serde(default, borrow)]
+    pub data: Option<OplogData<'a>>,
+}
+
+#[derive(Debug)]
+enum OplogData<'a> {
+    JsonString { data: Cow<'a, str> },
+    BsonDocument { data: Cow<'a, [u8]> },
 }
 
 #[derive(Deserialize, Debug, Clone, Copy)]
@@ -112,6 +123,150 @@ pub enum OpType {
 
 #[derive(Deserialize, Debug)]
 pub struct TokenExpiresIn(pub i32);
+
+impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Data can come in the following formats:
+        //
+        //  1. A `Map<String, PrimitiveValue>`
+        //  2. A string encoding a `Map<String, PrimitiveValue>` as JSON.
+        //  2. A `Map<String, PrimitiveValue>`, encoded as JSON.
+        struct ReadDataVisitor;
+
+        impl<'de> Visitor<'de> for ReadDataVisitor {
+            type Value = OplogData<'de>;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                formatter.write_str("a string or an object")
+            }
+
+            fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                // Sync service sent data as JSON string. We will save that same string into
+                // ps_oplog without any transformations.
+                Ok(OplogData::JsonString {
+                    data: Cow::Borrowed(v),
+                })
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                // Same case, but if the deserializer doesn't let us borrow the JSON string.
+                Ok(OplogData::JsonString {
+                    data: Cow::Owned(v.to_string()),
+                })
+            }
+
+            fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(OplogData::BsonDocument {
+                    data: Cow::Borrowed(v),
+                })
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                // Ok, we have a sub-document / JSON object. We can't save that as-is, we need to
+                // serialize it. serde_json's Serializer is std-only, so we use a small serializer
+                // to BSON that supports only the values we care about.
+                let mut writer = BsonWriter::new();
+
+                struct PendingKey<'a, 'de> {
+                    key: &'de str,
+                    writer: &'a mut BsonWriter,
+                }
+
+                impl<'a, 'de> Visitor<'de> for PendingKey<'a, 'de> {
+                    type Value = ();
+
+                    fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                        formatter.write_str("SQLite-compatible value")
+                    }
+
+                    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        self.writer.put_str(self.key, v);
+                        Ok(())
+                    }
+
+                    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        self.writer.put_float(self.key, v);
+                        Ok(())
+                    }
+
+                    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        self.writer.put_int(self.key, v as i64);
+                        Ok(())
+                    }
+
+                    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        self.writer.put_int(self.key, v);
+                        Ok(())
+                    }
+                }
+
+                impl<'a, 'de> DeserializeSeed<'de> for PendingKey<'a, 'de> {
+                    type Value = ();
+
+                    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+                    where
+                        D: serde::Deserializer<'de>,
+                    {
+                        deserializer.deserialize_any(self)
+                    }
+                }
+
+                while let Some(key) = map.next_key::<&'de str>()? {
+                    let pending = PendingKey {
+                        key,
+                        writer: &mut writer,
+                    };
+                    map.next_value_seed(pending)?;
+                }
+
+                Ok(OplogData::BsonDocument {
+                    data: Cow::Owned(writer.finish()),
+                })
+            }
+        }
+
+        let is_from_bson = !deserializer.is_human_readable();
+        if is_from_bson {
+            // If possible, try to read the data document as a BSON blob instead parsing individual
+            // fields from it. We don't actually care about contents here (we'll just store them in
+            // the database), so we just need the unparsed document.
+            deserializer.deserialize_enum(
+                bson::Deserializer::SPECIAL_CASE_EMBEDDED_DOCUMENT,
+                &[],
+                ReadDataVisitor,
+            )
+        } else {
+            deserializer.deserialize_any(ReadDataVisitor)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

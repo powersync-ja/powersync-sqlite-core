@@ -33,6 +33,13 @@ enum DeserializerPosition {
 }
 
 impl<'de> Deserializer<'de> {
+    /// When used as a name hint to [de::Deserialize.deserialize_enum], the BSON deserializer will
+    /// report documents a byte array view instead of parsing them.
+    ///
+    /// This is used as an internal optimization when we want to keep a reference to a BSON sub-
+    /// document without actually inspecting the structure of that document.
+    pub const SPECIAL_CASE_EMBEDDED_DOCUMENT: &'static str = "\0SpecialCaseEmbedDoc";
+
     pub fn outside_of_document(parser: Parser<'de>) -> Self {
         Self {
             parser,
@@ -74,13 +81,13 @@ impl<'de> Deserializer<'de> {
         }
     }
 
-    fn object_reader(&mut self) -> Result<BsonObject<'de>, BsonError> {
+    fn object_reader(&mut self) -> Result<Deserializer<'de>, BsonError> {
         let parser = self.parser.document_scope()?;
         let deserializer = Deserializer {
             parser,
             position: DeserializerPosition::BeforeTypeOrAtEndOfDocument,
         };
-        Ok(BsonObject { de: deserializer })
+        Ok(deserializer)
     }
 
     fn advance_to_next_name(&mut self) -> Result<Option<()>, BsonError> {
@@ -98,6 +105,10 @@ impl<'de> Deserializer<'de> {
 impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     type Error = BsonError;
 
+    fn is_human_readable(&self) -> bool {
+        false
+    }
+
     fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
@@ -108,12 +119,12 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             ElementType::Double => visitor.visit_f64(self.parser.read_double()?),
             ElementType::String => visitor.visit_borrowed_str(self.parser.read_string()?),
             ElementType::Document => {
-                let object = self.object_reader()?;
-                visitor.visit_map(object)
+                let mut object = self.object_reader()?;
+                visitor.visit_map(&mut object)
             }
             ElementType::Array => {
-                let object = self.object_reader()?;
-                visitor.visit_seq(object)
+                let mut object = self.object_reader()?;
+                visitor.visit_seq(&mut object)
             }
             ElementType::Binary => {
                 let (_, bytes) = self.parser.read_binary()?;
@@ -150,13 +161,26 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         V: Visitor<'de>,
     {
         let kind = self.prepare_to_read_value()?;
+
+        // With this special name, the visitor indicates that it doesn't actually want to read an
+        // enum, it wants to read values regularly. Except that a document appearing at this
+        // position should not be parsed, it should be forwarded as an embedded byte array.
+        if name == Deserializer::SPECIAL_CASE_EMBEDDED_DOCUMENT {
+            return if matches!(kind, ElementType::Document) {
+                let object = self.object_reader()?;
+                visitor.visit_borrowed_bytes(object.parser.remaining())
+            } else {
+                self.deserialize_any(visitor)
+            };
+        }
+
         match kind {
             ElementType::String => {
                 visitor.visit_enum(self.parser.read_string()?.into_deserializer())
             }
             ElementType::Document => {
                 let mut object = self.object_reader()?;
-                visitor.visit_enum(object)
+                visitor.visit_enum(&mut object)
             }
             _ => Err(self.parser.error(ErrorKind::ExpectedEnum { actual: kind })),
         }
@@ -180,32 +204,28 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     }
 }
 
-struct BsonObject<'de> {
-    de: Deserializer<'de>,
-}
-
-impl<'de> MapAccess<'de> for BsonObject<'de> {
+impl<'de> MapAccess<'de> for Deserializer<'de> {
     type Error = BsonError;
 
     fn next_key_seed<K>(&mut self, seed: K) -> Result<Option<K::Value>, Self::Error>
     where
         K: DeserializeSeed<'de>,
     {
-        if let None = self.de.advance_to_next_name()? {
+        if let None = self.advance_to_next_name()? {
             return Ok(None);
         }
-        Ok(Some(seed.deserialize(&mut self.de)?))
+        Ok(Some(seed.deserialize(self)?))
     }
 
     fn next_value_seed<V>(&mut self, seed: V) -> Result<V::Value, Self::Error>
     where
         V: DeserializeSeed<'de>,
     {
-        seed.deserialize(&mut self.de)
+        seed.deserialize(self)
     }
 }
 
-impl<'de> SeqAccess<'de> for BsonObject<'de> {
+impl<'de> SeqAccess<'de> for Deserializer<'de> {
     type Error = BsonError;
 
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
@@ -213,63 +233,62 @@ impl<'de> SeqAccess<'de> for BsonObject<'de> {
         T: DeserializeSeed<'de>,
     {
         // Array elements are encoded as an object like `{"0": value, "1": another}`
-        if let None = self.de.advance_to_next_name()? {
+        if let None = self.advance_to_next_name()? {
             return Ok(None);
         }
 
         // Skip name
-        debug_assert_matches!(self.de.position, DeserializerPosition::BeforeName { .. });
-        self.de.read_entry_key()?;
+        debug_assert_matches!(self.position, DeserializerPosition::BeforeName { .. });
+        self.read_entry_key()?;
 
         // And deserialize value!
-        Ok(Some(seed.deserialize(&mut self.de)?))
+        Ok(Some(seed.deserialize(self)?))
     }
 }
 
-impl<'de> EnumAccess<'de> for BsonObject<'de> {
+impl<'a, 'de> EnumAccess<'de> for &'a mut Deserializer<'de> {
     type Error = BsonError;
     type Variant = Self;
 
-    fn variant_seed<V>(mut self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self::Variant), Self::Error>
     where
         V: DeserializeSeed<'de>,
     {
-        if let None = self.de.advance_to_next_name()? {
+        if let None = self.advance_to_next_name()? {
             return Err(self
-                .de
                 .parser
                 .error(ErrorKind::UnexpectedEndOfDocumentForEnumVariant));
         }
 
-        let value = seed.deserialize(&mut self.de)?;
+        let value = seed.deserialize(&mut *self)?;
         Ok((value, self))
     }
 }
 
-impl<'de> VariantAccess<'de> for BsonObject<'de> {
+impl<'a, 'de> VariantAccess<'de> for &'a mut Deserializer<'de> {
     type Error = BsonError;
 
     fn unit_variant(self) -> Result<(), Self::Error> {
         // Unit variants are encoded as simple string values, which are handled directly in
         // Deserializer::deserialize_enum.
-        Err(self.de.parser.error(ErrorKind::ExpectedString))
+        Err(self.parser.error(ErrorKind::ExpectedString))
     }
 
-    fn newtype_variant_seed<T>(mut self, seed: T) -> Result<T::Value, Self::Error>
+    fn newtype_variant_seed<T>(self, seed: T) -> Result<T::Value, Self::Error>
     where
         T: DeserializeSeed<'de>,
     {
         // Newtype variants are represented as `{ NAME: VALUE }`, so we just have to deserialize the
         // value here.
-        seed.deserialize(&mut self.de)
+        seed.deserialize(self)
     }
 
-    fn tuple_variant<V>(mut self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
+    fn tuple_variant<V>(self, len: usize, visitor: V) -> Result<V::Value, Self::Error>
     where
         V: Visitor<'de>,
     {
         // Tuple variants are represented as `{ NAME: VALUES[] }`, so we deserialize the array here.
-        de::Deserializer::deserialize_seq(&mut self.de, visitor)
+        de::Deserializer::deserialize_seq(self, visitor)
     }
 
     fn struct_variant<V>(
@@ -281,6 +300,6 @@ impl<'de> VariantAccess<'de> for BsonObject<'de> {
         V: Visitor<'de>,
     {
         // Struct variants are represented as `{ NAME: { ... } }`, so we deserialize the struct.
-        de::Deserializer::deserialize_map(&mut self.de, visitor)
+        de::Deserializer::deserialize_map(self, visitor)
     }
 }

@@ -2,7 +2,7 @@ use core::{
     future::Future,
     marker::PhantomData,
     pin::Pin,
-    task::{Context, Poll, RawWakerVTable, Waker},
+    task::{Context, Poll, Waker},
 };
 
 use alloc::{
@@ -253,7 +253,10 @@ impl StreamingSyncIteration {
                 SyncLine::CheckpointDiff(checkpoint_diff) => todo!(),
                 SyncLine::CheckpointComplete(checkpoint_complete) => todo!(),
                 SyncLine::CheckpointPartiallyComplete(checkpoint_partially_complete) => todo!(),
-                SyncLine::Data(data_line) => todo!(),
+                SyncLine::Data(data_line) => {
+                    self.status
+                        .update(|s| s.track_line(&data_line), &mut event.instructions);
+                }
                 SyncLine::KeepAlive(token_expires_in) => todo!(),
             }
         }

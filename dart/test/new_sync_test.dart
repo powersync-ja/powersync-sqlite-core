@@ -41,7 +41,7 @@ void _syncTests<T>({
   List<Object?> syncLine(Object? line) {
     if (isBson) {
       final serialized = BsonCodec.serialize(line).byteList;
-      print(serialized.asRustByteString);
+      // print(serialized.asRustByteString);
       return invokeControl('line_binary', serialized);
     } else {
       return invokeControl('line_text', jsonEncode(line));
@@ -101,6 +101,7 @@ void _syncTests<T>({
 }
 
 extension on Uint8List {
+  // ignore: unused_element
   String get asRustByteString {
     final buffer = StringBuffer('b"');
 

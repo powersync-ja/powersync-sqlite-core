@@ -6,7 +6,7 @@ use sqlite_nostd::ResultCode;
 use streaming_iterator::StreamingIterator;
 
 use super::{
-    bucket_priority::BucketPriority, interface::Instruction,
+    bucket_priority::BucketPriority, interface::Instruction, line::DataLine,
     storage_adapter::PersistedBucketProgress, streaming_sync::OwnedCheckpoint,
 };
 
@@ -30,10 +30,19 @@ impl DownloadSyncStatus {
         self.connected = true;
     }
 
+    /// Transitions state after receiving a checkpoint line.
+    ///
+    /// This sets the [downloading] state to include [progress].
     pub fn start_tracking_checkpoint<'a>(&mut self, progress: SyncDownloadProgress) {
         self.mark_connected();
 
         self.downloading = Some(progress);
+    }
+
+    pub fn track_line(&mut self, line: &DataLine) {
+        if let Some(ref mut downloading) = self.downloading {
+            downloading.increment_download_count(line);
+        }
     }
 }
 
@@ -142,5 +151,11 @@ impl SyncDownloadProgress {
         }
 
         Ok(Self { buckets })
+    }
+
+    pub fn increment_download_count(&mut self, line: &DataLine) {
+        if let Some(mut info) = self.buckets.get_mut(line.bucket) {
+            info.since_last += line.data.len() as i64
+        }
     }
 }

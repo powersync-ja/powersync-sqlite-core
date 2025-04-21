@@ -162,6 +162,10 @@ impl<'de> Parser<'de> {
             false
         })
     }
+
+    pub fn remaining(&self) -> &'de [u8] {
+        self.remaining_input
+    }
 }
 
 #[repr(transparent)]
