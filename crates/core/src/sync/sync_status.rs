@@ -142,7 +142,7 @@ impl SyncDownloadProgress {
                 Err(e) => return Err(*e),
             };
 
-            let Some(mut progress) = buckets.get_mut(row.bucket) else {
+            let Some(progress) = buckets.get_mut(row.bucket) else {
                 continue;
             };
 
@@ -154,7 +154,7 @@ impl SyncDownloadProgress {
     }
 
     pub fn increment_download_count(&mut self, line: &DataLine) {
-        if let Some(mut info) = self.buckets.get_mut(line.bucket) {
+        if let Some(info) = self.buckets.get_mut(line.bucket) {
             info.since_last += line.data.len() as i64
         }
     }

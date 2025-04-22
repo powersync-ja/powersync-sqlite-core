@@ -6,8 +6,6 @@ use alloc::{
 };
 use serde::de::{self, StdError};
 
-use crate::error::SQLiteError;
-
 use super::parser::ElementType;
 
 #[derive(Debug)]

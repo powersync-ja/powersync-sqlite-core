@@ -1,3 +1,5 @@
+use core::assert_matches::debug_assert_matches;
+
 use alloc::{
     collections::btree_map::BTreeMap,
     string::{String, ToString},
@@ -15,7 +17,7 @@ use super::{bucket_priority::BucketPriority, interface::BucketRequest};
 /// This is used to encapsulate some SQL queries used for the sync implementation, making the code
 /// in `streaming_sync.rs` easier to read.
 pub struct StorageAdapter {
-    db: *mut sqlite::sqlite3,
+    pub db: *mut sqlite::sqlite3,
     progress_stmt: ManagedStmt,
 }
 
@@ -105,8 +107,36 @@ impl StorageAdapter {
             }
         }))
     }
+
+    pub fn lookup_bucket(&self, bucket: &str) -> Result<BucketInfo, ResultCode> {
+        // We do an ON CONFLICT UPDATE simply so that the RETURNING bit works for existing rows.
+        // We can consider splitting this into separate SELECT and INSERT statements.
+        // language=SQLite
+        let bucket_statement = self.db.prepare_v2(
+            "INSERT INTO ps_buckets(name)
+                            VALUES(?)
+                        ON CONFLICT DO UPDATE
+                            SET last_applied_op = last_applied_op
+                        RETURNING id, last_applied_op",
+        )?;
+        bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
+        let res = bucket_statement.step()?;
+        debug_assert_matches!(res, ResultCode::ROW);
+
+        let bucket_id = bucket_statement.column_int64(0);
+        let last_applied_op = bucket_statement.column_int64(1);
+
+        return Ok(BucketInfo {
+            id: bucket_id,
+            last_applied_op,
+        });
+    }
 }
 
+pub struct BucketInfo {
+    pub id: i64,
+    pub last_applied_op: i64,
+}
 /// Information about the amount of operations a bucket had at the last checkpoint and how many
 /// operations have been inserted in the meantime.
 pub struct PersistedBucketProgress<'a> {

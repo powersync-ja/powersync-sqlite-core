@@ -25,7 +25,7 @@ impl BsonWriter {
     pub fn put_str(&mut self, name: &str, value: &str) {
         self.put_entry(ElementType::String, name);
 
-        let bytes = name.as_bytes();
+        let bytes = value.as_bytes();
         self.output.put_i32_le(bytes.len() as i32);
         self.output.put_slice(bytes);
         self.output.push(0);

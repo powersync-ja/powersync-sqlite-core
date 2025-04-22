@@ -3,7 +3,8 @@ use sqlite_nostd::{self as sqlite, ResultCode};
 pub mod bucket_priority;
 mod interface;
 pub mod line;
-mod storage_adapter;
+pub mod operations;
+pub mod storage_adapter;
 mod streaming_sync;
 mod sync_status;
 

@@ -7,8 +7,6 @@ use alloc::string::String;
 
 use lock_api::{GuardSend, Mutex as MutexApi, RawMutex};
 use serde::de::Visitor;
-use serde::Deserialize;
-use serde_json as json;
 use sqlite_nostd::bindings::SQLITE_MUTEX_FAST;
 use sqlite_nostd::{
     sqlite3_mutex_alloc, sqlite3_mutex_enter, sqlite3_mutex_free, sqlite3_mutex_leave,

@@ -12,7 +12,6 @@ use alloc::{
     vec::Vec,
 };
 use futures_lite::FutureExt;
-use serde_json::Map;
 
 use crate::{
     bson,
@@ -24,10 +23,11 @@ use sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
 use super::{
     bucket_priority::BucketPriority,
-    interface::{BucketRequest, Instruction, StreamingSyncRequest, SyncControlRequest, SyncEvent},
+    interface::{Instruction, StreamingSyncRequest, SyncControlRequest, SyncEvent},
     line::{BucketChecksum, Checkpoint, SyncLine},
+    operations::insert_bucket_operations,
     storage_adapter::{BucketDescription, StorageAdapter},
-    sync_status::{DownloadSyncStatus, SyncDownloadProgress, SyncStatusContainer},
+    sync_status::{SyncDownloadProgress, SyncStatusContainer},
 };
 
 pub struct SyncClient {
@@ -256,6 +256,7 @@ impl StreamingSyncIteration {
                 SyncLine::Data(data_line) => {
                     self.status
                         .update(|s| s.track_line(&data_line), &mut event.instructions);
+                    insert_bucket_operations(&self.adapter, &data_line)?;
                 }
                 SyncLine::KeepAlive(token_expires_in) => todo!(),
             }

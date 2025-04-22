@@ -1,8 +1,6 @@
-use core::any::TypeId;
-
+use alloc::borrow::Cow;
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use alloc::{borrow::Cow, string::String};
 use serde::de::DeserializeSeed;
 use serde::{de::Visitor, Deserialize};
 
@@ -108,12 +106,12 @@ pub struct OplogEntry<'a> {
 }
 
 #[derive(Debug)]
-enum OplogData<'a> {
+pub enum OplogData<'a> {
     JsonString { data: Cow<'a, str> },
     BsonDocument { data: Cow<'a, [u8]> },
 }
 
-#[derive(Deserialize, Debug, Clone, Copy)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpType {
     CLEAR,
     MOVE,
