@@ -100,7 +100,6 @@ pub struct OplogEntry<'a> {
     pub object_type: Option<&'a str>,
     #[serde(default, borrow)]
     pub subkey: Option<&'a str>,
-    // TODO: BSON?
     #[serde(default, borrow)]
     pub data: Option<OplogData<'a>>,
 }
