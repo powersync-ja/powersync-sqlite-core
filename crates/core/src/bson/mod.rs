@@ -1,6 +1,5 @@
 pub use de::Deserializer;
 pub use error::BsonError;
-use parser::Parser;
 use serde::Deserialize;
 pub use writer::BsonWriter;
 

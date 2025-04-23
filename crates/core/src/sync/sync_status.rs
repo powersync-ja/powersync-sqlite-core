@@ -75,7 +75,7 @@ impl DownloadSyncStatus {
 
         let lowest_priority = applied
             .buckets
-            .iter()
+            .values()
             .map(|bkt| bkt.priority)
             .max()
             .unwrap_or(BucketPriority::SENTINEL);
@@ -167,7 +167,7 @@ impl SyncDownloadProgress {
         >,
     ) -> Result<Self, ResultCode> {
         let mut buckets = BTreeMap::<String, BucketProgress>::new();
-        for bucket in &checkpoint.buckets {
+        for bucket in checkpoint.buckets.values() {
             buckets.insert(
                 bucket.bucket.clone(),
                 BucketProgress {

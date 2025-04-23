@@ -25,7 +25,7 @@ use sqlite_nostd::{self as sqlite, ResultCode};
 use super::{
     bucket_priority::BucketPriority,
     interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},
-    line::{BucketChecksum, Checkpoint, SyncLine},
+    line::{BucketChecksum, Checkpoint, CheckpointDiff, SyncLine},
     operations::insert_bucket_operations,
     storage_adapter::{BucketDescription, StorageAdapter, SyncLocalResult},
     sync_status::{SyncDownloadProgress, SyncStatusContainer},
@@ -205,11 +205,10 @@ impl StreamingSyncIteration {
     }
 
     async fn run(mut self) -> Result<(), SQLiteError> {
-        let mut target = None::<OwnedCheckpoint>;
         let mut validated = None::<OwnedCheckpoint>;
         let mut applied = None::<OwnedCheckpoint>;
 
-        let mut bucket_map = self.prepare_request().await?;
+        let mut target = SyncTarget::BeforeCheckpoint(self.prepare_request().await?);
 
         loop {
             let event = Self::receive_event().await;
@@ -225,35 +224,40 @@ impl StreamingSyncIteration {
 
             match line {
                 SyncLine::Checkpoint(checkpoint) => {
-                    let new_target = OwnedCheckpoint::from(&checkpoint);
+                    let to_delete = target.track_checkpoint(&checkpoint);
 
-                    let mut to_delete: BTreeSet<&str> =
-                        bucket_map.keys().map(|s| s.as_str()).collect();
-                    let mut new_buckets = BTreeMap::<String, Option<BucketDescription>>::new();
-                    for bucket in &new_target.buckets {
-                        new_buckets.insert(
-                            bucket.bucket.clone(),
-                            Some(BucketDescription {
-                                priority: bucket.priority,
-                                name: bucket.bucket.clone(),
-                            }),
-                        );
-                        to_delete.remove(bucket.bucket.as_str());
-                    }
-
-                    self.adapter.delete_buckets(to_delete)?;
-                    let progress = self.load_progress(&new_target)?;
+                    self.adapter
+                        .delete_buckets(to_delete.iter().map(|b| b.as_str()))?;
+                    let progress = self.load_progress(target.target_checkpoint().unwrap())?;
                     self.status.update(
                         |s| s.start_tracking_checkpoint(progress),
                         &mut event.instructions,
                     );
-
-                    bucket_map = new_buckets;
-                    target = Some(new_target);
                 }
-                SyncLine::CheckpointDiff(checkpoint_diff) => todo!(),
+                SyncLine::CheckpointDiff(diff) => {
+                    let Some(target) = target.target_checkpoint_mut() else {
+                        event.instructions.push(Instruction::LogLine {
+                            severity: LogSeverity::WARNING,
+                            line: "Received checkpoint_diff without previous checkpoint"
+                                .to_string(),
+                        });
+                        break;
+                    };
+
+                    target.apply_diff(&diff);
+                    self.adapter
+                        .delete_buckets(diff.removed_buckets.iter().copied())?;
+
+                    let progress = self.load_progress(target)?;
+                    self.status.update(
+                        |s| s.start_tracking_checkpoint(progress),
+                        &mut event.instructions,
+                    );
+                }
                 SyncLine::CheckpointComplete(checkpoint_complete) => {
-                    let target = target.as_ref().expect("should have target checkpoint");
+                    let target = target
+                        .target_checkpoint()
+                        .expect("should have target checkpoint");
                     let result = self.adapter.sync_local(target, None)?;
 
                     match result {
@@ -286,7 +290,9 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointPartiallyComplete(complete) => {
                     let priority = complete.priority;
-                    let target = target.as_ref().expect("should have target checkpoint");
+                    let target = target
+                        .target_checkpoint()
+                        .expect("should have target checkpoint");
                     let result = self.adapter.sync_local(target, Some(priority))?;
 
                     match result {
@@ -340,9 +346,7 @@ impl StreamingSyncIteration {
         )?)
     }
 
-    async fn prepare_request(
-        &mut self,
-    ) -> Result<BTreeMap<String, Option<BucketDescription>>, SQLiteError> {
+    async fn prepare_request(&mut self) -> Result<Vec<String>, SQLiteError> {
         let event = Self::receive_event().await;
         let SyncEvent::Initialize = event.event else {
             return Err(SQLiteError::from(ResultCode::MISUSE));
@@ -351,7 +355,8 @@ impl StreamingSyncIteration {
         self.status
             .update(|s| s.start_connecting(), &mut event.instructions);
 
-        let (requests, bucket_map) = self.adapter.collect_local_bucket_state()?;
+        let requests = self.adapter.collect_bucket_requests()?;
+        let local_bucket_names: Vec<String> = requests.iter().map(|s| s.after.clone()).collect();
         let request = StreamingSyncRequest {
             buckets: requests,
             include_checksum: true,
@@ -363,27 +368,81 @@ impl StreamingSyncIteration {
         event
             .instructions
             .push(Instruction::EstablishSyncStream { request });
-        Ok(bucket_map)
+        Ok(local_bucket_names)
+    }
+}
+
+enum SyncTarget {
+    /// We've received a checkpoint line towards the given checkpoint. The tracked checkpoint is
+    /// updated for subsequent checkpoint or checkpoint_diff lines.
+    Tracking(OwnedCheckpoint),
+    /// We have not received a checkpoint message yet. We still keep a list of local buckets around
+    /// so that we know which ones to delete depending on the first checkpoint message.
+    BeforeCheckpoint(Vec<String>),
+}
+
+impl SyncTarget {
+    fn target_checkpoint(&self) -> Option<&OwnedCheckpoint> {
+        match self {
+            Self::Tracking(cp) => Some(cp),
+            _ => None,
+        }
+    }
+
+    fn target_checkpoint_mut(&mut self) -> Option<&mut OwnedCheckpoint> {
+        match self {
+            Self::Tracking(cp) => Some(cp),
+            _ => None,
+        }
+    }
+
+    fn track_checkpoint<'a>(&mut self, checkpoint: &Checkpoint<'a>) -> BTreeSet<String> {
+        let mut to_delete: BTreeSet<String> = match &self {
+            SyncTarget::Tracking(checkpoint) => checkpoint.buckets.keys().cloned().collect(),
+            SyncTarget::BeforeCheckpoint(buckets) => buckets.iter().cloned().collect(),
+        };
+
+        let mut buckets = BTreeMap::<String, OwnedBucketChecksum>::new();
+        for bucket in &checkpoint.buckets {
+            buckets.insert(bucket.bucket.to_string(), OwnedBucketChecksum::from(bucket));
+            to_delete.remove(bucket.bucket);
+        }
+
+        *self = SyncTarget::Tracking(OwnedCheckpoint::from_checkpoint(checkpoint, buckets));
+        to_delete
     }
 }
 
 pub struct OwnedCheckpoint {
     pub last_op_id: i64,
     pub write_checkpoint: Option<i64>,
-    pub buckets: Vec<OwnedBucketChecksum>,
+    pub buckets: BTreeMap<String, OwnedBucketChecksum>,
 }
 
-impl From<&'_ Checkpoint<'_>> for OwnedCheckpoint {
-    fn from(value: &'_ Checkpoint<'_>) -> Self {
+impl OwnedCheckpoint {
+    fn from_checkpoint<'a>(
+        checkpoint: &Checkpoint<'a>,
+        buckets: BTreeMap<String, OwnedBucketChecksum>,
+    ) -> Self {
         Self {
-            last_op_id: value.last_op_id,
-            write_checkpoint: value.write_checkpoint,
-            buckets: value
-                .buckets
-                .iter()
-                .map(OwnedBucketChecksum::from)
-                .collect(),
+            last_op_id: checkpoint.last_op_id,
+            write_checkpoint: checkpoint.write_checkpoint,
+            buckets: buckets,
         }
+    }
+
+    fn apply_diff<'a>(&mut self, diff: &CheckpointDiff<'a>) {
+        for removed in &diff.removed_buckets {
+            self.buckets.remove(*removed);
+        }
+
+        for updated in &diff.updated_buckets {
+            let owned = OwnedBucketChecksum::from(updated);
+            self.buckets.insert(owned.bucket.clone(), owned);
+        }
+
+        self.last_op_id = diff.last_op_id;
+        self.write_checkpoint = diff.write_checkpoint;
     }
 }
 
@@ -400,6 +459,13 @@ impl OwnedBucketChecksum {
         match prio {
             None => true,
             Some(prio) => self.priority >= prio,
+        }
+    }
+
+    fn description(&self) -> BucketDescription {
+        BucketDescription {
+            priority: self.priority,
+            name: self.bucket.clone(),
         }
     }
 }

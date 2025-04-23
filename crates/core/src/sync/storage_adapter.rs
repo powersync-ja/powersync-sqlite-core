@@ -1,7 +1,6 @@
 use core::{assert_matches::debug_assert_matches, fmt::Display};
 
 use alloc::{
-    collections::btree_map::BTreeMap,
     string::{String, ToString},
     vec::Vec,
 };
@@ -47,22 +46,13 @@ impl StorageAdapter {
         })
     }
 
-    pub fn collect_local_bucket_state(
-        &self,
-    ) -> Result<
-        (
-            Vec<BucketRequest>,
-            BTreeMap<String, Option<BucketDescription>>,
-        ),
-        SQLiteError,
-    > {
+    pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>, SQLiteError> {
         // language=SQLite
         let statement = self.db.prepare_v2(
             "SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0 AND name != '$local'",
         )?;
 
         let mut requests = Vec::<BucketRequest>::new();
-        let mut local_state = BTreeMap::<String, Option<BucketDescription>>::new();
 
         while statement.step()? == ResultCode::ROW {
             let bucket_name = statement.column_text(0)?.to_string();
@@ -72,10 +62,9 @@ impl StorageAdapter {
                 name: bucket_name.clone(),
                 after: last_op.to_string(),
             });
-            local_state.insert(bucket_name, None);
         }
 
-        Ok((requests, local_state))
+        Ok(requests)
     }
 
     pub fn delete_buckets<'a>(
@@ -179,7 +168,7 @@ GROUP BY bucket_list.bucket",
         }
 
         let mut buckets = Vec::<BucketInfo>::new();
-        for bucket in &checkpoint.buckets {
+        for bucket in checkpoint.buckets.values() {
             if bucket.is_in_priority(priority) {
                 buckets.push(BucketInfo {
                     bucket: &bucket.bucket,
@@ -228,7 +217,7 @@ GROUP BY bucket_list.bucket",
             .db
             .prepare_v2("UPDATE ps_buckets SET last_op = ? WHERE name = ?")?;
 
-        for bucket in &checkpoint.buckets {
+        for bucket in checkpoint.buckets.values() {
             if bucket.is_in_priority(priority) {
                 update_bucket.bind_int64(1, checkpoint.last_op_id)?;
                 update_bucket.bind_text(2, &bucket.bucket, sqlite::Destructor::STATIC)?;
@@ -255,7 +244,7 @@ GROUP BY bucket_list.bucket",
                     priority,
                     buckets: checkpoint
                         .buckets
-                        .iter()
+                        .values()
                         .filter_map(|item| {
                             if item.is_in_priority(Some(priority)) {
                                 Some(item.bucket.as_str())

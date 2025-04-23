@@ -48,8 +48,8 @@ pub struct CheckpointDiff<'a> {
     pub updated_buckets: Vec<BucketChecksum<'a>>,
     #[serde(borrow)]
     pub removed_buckets: Vec<&'a str>,
-    #[serde(borrow)]
-    pub write_checkpoint: Option<&'a str>,
+    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
+    pub write_checkpoint: Option<i64>,
 }
 
 #[derive(Deserialize, Debug)]
