@@ -147,6 +147,25 @@ impl<'de> Parser<'de> {
         self.subreader(total_size - 4)
     }
 
+    /// Skips over a document at the current offset, returning the bytes making up the document.
+    pub fn skip_document(&mut self) -> Result<&'de [u8], BsonError> {
+        let Some(peek_size) = self.remaining_input.get(0..4) else {
+            return Err(self.error(ErrorKind::UnexpectedEoF));
+        };
+
+        let parsed_size = u32::try_from(i32::from_le_bytes(
+            peek_size.try_into().expect("should have correct length"),
+        ))
+        .and_then(usize::try_from)
+        .map_err(|_| self.error(ErrorKind::InvalidSize))?;
+
+        if parsed_size < 5 || parsed_size >= self.remaining_input.len() {
+            return Err(self.error(ErrorKind::InvalidSize))?;
+        }
+
+        Ok(self.subreader(parsed_size)?.remaining())
+    }
+
     /// If only a single byte is left in the current scope, assert that it is a zero byte.
     ///
     /// Otherwise returns false as we haven't reached the end of a document.

@@ -26,7 +26,7 @@ impl BsonWriter {
         self.put_entry(ElementType::String, name);
 
         let bytes = value.as_bytes();
-        self.output.put_i32_le(bytes.len() as i32);
+        self.output.put_i32_le((bytes.len() + 1) as i32);
         self.output.put_slice(bytes);
         self.output.push(0);
     }

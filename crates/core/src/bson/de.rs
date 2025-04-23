@@ -166,8 +166,8 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         // position should not be parsed, it should be forwarded as an embedded byte array.
         if name == Deserializer::SPECIAL_CASE_EMBEDDED_DOCUMENT {
             return if matches!(kind, ElementType::Document) {
-                let object = self.object_reader()?;
-                visitor.visit_borrowed_bytes(object.parser.remaining())
+                let object = self.parser.skip_document()?;
+                visitor.visit_borrowed_bytes(object)
             } else {
                 self.deserialize_any(visitor)
             };

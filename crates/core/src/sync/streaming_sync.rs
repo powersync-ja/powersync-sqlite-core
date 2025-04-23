@@ -70,10 +70,18 @@ impl SyncClient {
                     ));
                 };
 
-                let done = handle.run(&mut active)?;
-                if done {
-                    *state = ClientState::Idle;
-                }
+                match handle.run(&mut active) {
+                    Err(e) => {
+                        *state = ClientState::Idle;
+                        return Err(e);
+                    }
+                    Ok(done) => {
+                        if done {
+                            active.instructions.push(Instruction::CloseSyncStream);
+                            *state = ClientState::Idle;
+                        }
+                    }
+                };
 
                 Ok(active.instructions)
             }
@@ -236,12 +244,12 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointDiff(diff) => {
                     let Some(target) = target.target_checkpoint_mut() else {
-                        event.instructions.push(Instruction::LogLine {
-                            severity: LogSeverity::WARNING,
-                            line: "Received checkpoint_diff without previous checkpoint"
-                                .to_string(),
-                        });
-                        break;
+                        return Err(SQLiteError(
+                            ResultCode::ABORT,
+                            Some(
+                                "Received checkpoint_diff without previous checkpoint".to_string(),
+                            ),
+                        ));
                     };
 
                     target.apply_diff(&diff);
@@ -255,9 +263,15 @@ impl StreamingSyncIteration {
                     );
                 }
                 SyncLine::CheckpointComplete(checkpoint_complete) => {
-                    let target = target
-                        .target_checkpoint()
-                        .expect("should have target checkpoint");
+                    let Some(target) = target.target_checkpoint_mut() else {
+                        return Err(SQLiteError(
+                            ResultCode::ABORT,
+                            Some(
+                                "Received checkpoint complete without previous checkpoint"
+                                    .to_string(),
+                            ),
+                        ));
+                    };
                     let result = self.adapter.sync_local(target, None)?;
 
                     match result {
@@ -272,7 +286,11 @@ impl StreamingSyncIteration {
                             break;
                         }
                         SyncLocalResult::PendingLocalChanges => {
-                            todo!("Await pending uploads and try again")
+                            event.instructions.push(Instruction::LogLine {
+                                severity: LogSeverity::WARNING,
+                                line: format!("TODO: Await pending uploads and try again"),
+                            });
+                            break;
                         }
                         SyncLocalResult::ChangesApplied => {
                             event.instructions.push(Instruction::LogLine {
@@ -290,9 +308,15 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointPartiallyComplete(complete) => {
                     let priority = complete.priority;
-                    let target = target
-                        .target_checkpoint()
-                        .expect("should have target checkpoint");
+                    let Some(target) = target.target_checkpoint_mut() else {
+                        return Err(SQLiteError(
+                            ResultCode::ABORT,
+                            Some(
+                                "Received checkpoint complete without previous checkpoint"
+                                    .to_string(),
+                            ),
+                        ));
+                    };
                     let result = self.adapter.sync_local(target, Some(priority))?;
 
                     match result {
@@ -356,7 +380,7 @@ impl StreamingSyncIteration {
             .update(|s| s.start_connecting(), &mut event.instructions);
 
         let requests = self.adapter.collect_bucket_requests()?;
-        let local_bucket_names: Vec<String> = requests.iter().map(|s| s.after.clone()).collect();
+        let local_bucket_names: Vec<String> = requests.iter().map(|s| s.name.clone()).collect();
         let request = StreamingSyncRequest {
             buckets: requests,
             include_checksum: true,
@@ -372,6 +396,7 @@ impl StreamingSyncIteration {
     }
 }
 
+#[derive(Debug)]
 enum SyncTarget {
     /// We've received a checkpoint line towards the given checkpoint. The tracked checkpoint is
     /// updated for subsequent checkpoint or checkpoint_diff lines.
@@ -413,6 +438,7 @@ impl SyncTarget {
     }
 }
 
+#[derive(Debug)]
 pub struct OwnedCheckpoint {
     pub last_op_id: i64,
     pub write_checkpoint: Option<i64>,
@@ -446,6 +472,7 @@ impl OwnedCheckpoint {
     }
 }
 
+#[derive(Debug)]
 pub struct OwnedBucketChecksum {
     pub bucket: String,
     pub checksum: i32,
@@ -459,13 +486,6 @@ impl OwnedBucketChecksum {
         match prio {
             None => true,
             Some(prio) => self.priority >= prio,
-        }
-    }
-
-    fn description(&self) -> BucketDescription {
-        BucketDescription {
-            priority: self.priority,
-            name: self.bucket.clone(),
         }
     }
 }

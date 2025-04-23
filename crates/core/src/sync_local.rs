@@ -115,7 +115,7 @@ impl<'a> SyncOperation<'a> {
             let type_name = statement.column_text(0)?;
             let id = statement.column_text(1)?;
             let buckets = statement.column_int(3);
-            let data = statement.column_text(2);
+            let data = statement.column_value(2)?;
 
             let table_name = internal_table_name(type_name);
 
@@ -137,7 +137,7 @@ impl<'a> SyncOperation<'a> {
                         .prepare_v2(&format!("REPLACE INTO {}(id, data) VALUES(?, ?)", quoted))
                         .into_db_result(self.db)?;
                     insert_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
-                    insert_statement.bind_text(2, data?, sqlite::Destructor::STATIC)?;
+                    insert_statement.bind_value(2, data)?;
                     insert_statement.exec()?;
                 }
             } else {
@@ -160,7 +160,7 @@ impl<'a> SyncOperation<'a> {
                         .into_db_result(self.db)?;
                     insert_statement.bind_text(1, type_name, sqlite::Destructor::STATIC)?;
                     insert_statement.bind_text(2, id, sqlite::Destructor::STATIC)?;
-                    insert_statement.bind_text(3, data?, sqlite::Destructor::STATIC)?;
+                    insert_statement.bind_value(3, data)?;
                     insert_statement.exec()?;
                 }
             }

@@ -271,6 +271,25 @@ GROUP BY bucket_list.bucket",
         if sync_result == 1 {
             // TODO: Force compact
 
+            if priority.is_none() {
+                // Reset progress counters. We only do this for a complete sync, as we want a
+                // download progress to always cover a complete checkpoint instead of resetting for
+                // partial completions.
+                let update = self.db.prepare_v2(
+                    "UPDATE ps_buckets SET count_since_last = 0, count_at_last = ? WHERE name = ?",
+                )?;
+
+                for bucket in checkpoint.buckets.values() {
+                    if let Some(count) = bucket.count {
+                        update.bind_int64(1, count)?;
+                        update.bind_text(2, bucket.bucket.as_str(), sqlite::Destructor::STATIC)?;
+
+                        update.exec()?;
+                        update.reset()?;
+                    }
+                }
+            }
+
             Ok(SyncLocalResult::ChangesApplied)
         } else {
             Ok(SyncLocalResult::PendingLocalChanges)
