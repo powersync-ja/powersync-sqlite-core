@@ -8,6 +8,7 @@ use core::{
 use alloc::{
     boxed::Box,
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    format,
     string::{String, ToString},
     vec::Vec,
 };
@@ -19,14 +20,14 @@ use crate::{
     kv::client_id,
     util::{sqlite3_mutex, Mutex},
 };
-use sqlite_nostd::{self as sqlite, Connection, ResultCode};
+use sqlite_nostd::{self as sqlite, ResultCode};
 
 use super::{
     bucket_priority::BucketPriority,
-    interface::{Instruction, StreamingSyncRequest, SyncControlRequest, SyncEvent},
+    interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},
     line::{BucketChecksum, Checkpoint, SyncLine},
     operations::insert_bucket_operations,
-    storage_adapter::{BucketDescription, StorageAdapter},
+    storage_adapter::{BucketDescription, StorageAdapter, SyncLocalResult},
     sync_status::{SyncDownloadProgress, SyncStatusContainer},
 };
 
@@ -233,7 +234,7 @@ impl StreamingSyncIteration {
                         new_buckets.insert(
                             bucket.bucket.clone(),
                             Some(BucketDescription {
-                                priority: bucket.priority.unwrap_or(BucketPriority::FALLBACK),
+                                priority: bucket.priority,
                                 name: bucket.bucket.clone(),
                             }),
                         );
@@ -251,8 +252,71 @@ impl StreamingSyncIteration {
                     target = Some(new_target);
                 }
                 SyncLine::CheckpointDiff(checkpoint_diff) => todo!(),
-                SyncLine::CheckpointComplete(checkpoint_complete) => todo!(),
-                SyncLine::CheckpointPartiallyComplete(checkpoint_partially_complete) => todo!(),
+                SyncLine::CheckpointComplete(checkpoint_complete) => {
+                    let target = target.as_ref().expect("should have target checkpoint");
+                    let result = self.adapter.sync_local(target, None)?;
+
+                    match result {
+                        SyncLocalResult::ChecksumFailure(checkpoint_result) => {
+                            // This means checksums failed. Start again with a new checkpoint.
+                            // TODO: better back-off
+                            // await new Promise((resolve) => setTimeout(resolve, 50));
+                            event.instructions.push(Instruction::LogLine {
+                                severity: LogSeverity::WARNING,
+                                line: format!("Could not apply checkpoint, {checkpoint_result}"),
+                            });
+                            break;
+                        }
+                        SyncLocalResult::PendingLocalChanges => {
+                            todo!("Await pending uploads and try again")
+                        }
+                        SyncLocalResult::ChangesApplied => {
+                            event.instructions.push(Instruction::LogLine {
+                                severity: LogSeverity::DEBUG,
+                                line: format!("Validated checkpoint"),
+                            });
+
+                            let now = self.adapter.now()?;
+                            self.status.update(
+                                |status| status.applied_checkpoint(target, now),
+                                &mut event.instructions,
+                            );
+                        }
+                    }
+                }
+                SyncLine::CheckpointPartiallyComplete(complete) => {
+                    let priority = complete.priority;
+                    let target = target.as_ref().expect("should have target checkpoint");
+                    let result = self.adapter.sync_local(target, Some(priority))?;
+
+                    match result {
+                        SyncLocalResult::ChecksumFailure(checkpoint_result) => {
+                            // This means checksums failed. Start again with a new checkpoint.
+                            // TODO: better back-off
+                            // await new Promise((resolve) => setTimeout(resolve, 50));
+                            event.instructions.push(Instruction::LogLine {
+                                severity: LogSeverity::WARNING,
+                                line: format!(
+                                    "Could not apply partial checkpoint, {checkpoint_result}"
+                                ),
+                            });
+                            break;
+                        }
+                        SyncLocalResult::PendingLocalChanges => {
+                            // If we have pending uploads, we can't complete new checkpoints outside
+                            // of priority 0. We'll resolve this for a complete checkpoint later.
+                        }
+                        SyncLocalResult::ChangesApplied => {
+                            let now = self.adapter.now()?;
+                            self.status.update(
+                                |status| {
+                                    status.partial_checkpoint_complete(priority, now);
+                                },
+                                &mut event.instructions,
+                            );
+                        }
+                    }
+                }
                 SyncLine::Data(data_line) => {
                     self.status
                         .update(|s| s.track_line(&data_line), &mut event.instructions);
@@ -326,9 +390,18 @@ impl From<&'_ Checkpoint<'_>> for OwnedCheckpoint {
 pub struct OwnedBucketChecksum {
     pub bucket: String,
     pub checksum: i32,
-    pub priority: Option<BucketPriority>,
+    pub priority: BucketPriority,
     pub count: Option<i64>,
     pub last_op_id: Option<i64>,
+}
+
+impl OwnedBucketChecksum {
+    pub fn is_in_priority(&self, prio: Option<BucketPriority>) -> bool {
+        match prio {
+            None => true,
+            Some(prio) => self.priority >= prio,
+        }
+    }
 }
 
 impl From<&'_ BucketChecksum<'_>> for OwnedBucketChecksum {
@@ -336,7 +409,7 @@ impl From<&'_ BucketChecksum<'_>> for OwnedBucketChecksum {
         Self {
             bucket: value.bucket.to_string(),
             checksum: value.checksum,
-            priority: value.priority,
+            priority: value.priority.unwrap_or(BucketPriority::FALLBACK),
             count: value.count,
             last_op_id: value.last_op_id,
         }

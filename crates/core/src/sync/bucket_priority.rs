@@ -46,7 +46,13 @@ impl Into<i32> for BucketPriority {
 
 impl PartialOrd<BucketPriority> for BucketPriority {
     fn partial_cmp(&self, other: &BucketPriority) -> Option<core::cmp::Ordering> {
-        Some(self.number.partial_cmp(&other.number)?.reverse())
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BucketPriority {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.number.cmp(&other.number).reverse()
     }
 }
 

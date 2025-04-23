@@ -1,16 +1,25 @@
-use core::assert_matches::debug_assert_matches;
+use core::{assert_matches::debug_assert_matches, fmt::Display};
 
 use alloc::{
     collections::btree_map::BTreeMap,
     string::{String, ToString},
     vec::Vec,
 };
+use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 use streaming_iterator::StreamingIterator;
 
-use crate::{error::SQLiteError, operations::delete_bucket};
+use crate::{
+    error::SQLiteError,
+    ext::SafeManagedStmt,
+    operations::delete_bucket,
+    sync_local::{PartialSyncOperation, SyncOperation},
+};
 
-use super::{bucket_priority::BucketPriority, interface::BucketRequest};
+use super::{
+    bucket_priority::BucketPriority, interface::BucketRequest, streaming_sync::OwnedCheckpoint,
+    sync_status::Timestamp,
+};
 
 /// An adapter for storing sync state.
 ///
@@ -19,16 +28,22 @@ use super::{bucket_priority::BucketPriority, interface::BucketRequest};
 pub struct StorageAdapter {
     pub db: *mut sqlite::sqlite3,
     progress_stmt: ManagedStmt,
+    time_stmt: ManagedStmt,
 }
 
 impl StorageAdapter {
     pub fn new(db: *mut sqlite::sqlite3) -> Result<Self, ResultCode> {
+        // language=SQLite
         let progress =
             db.prepare_v2("SELECT name, count_at_last, count_since_last FROM ps_buckets")?;
+
+        // language=SQLite
+        let time = db.prepare_v2("SELECT unixepoch()")?;
 
         Ok(Self {
             db,
             progress_stmt: progress,
+            time_stmt: time,
         })
     }
 
@@ -131,12 +146,200 @@ impl StorageAdapter {
             last_applied_op,
         });
     }
+
+    fn validate_checkpoint(
+        &self,
+        checkpoint: &OwnedCheckpoint,
+        priority: Option<BucketPriority>,
+    ) -> Result<CheckpointResult, SQLiteError> {
+        // language=SQLite
+        let statement = self.db.prepare_v2(
+            "WITH
+bucket_list(bucket, checksum) AS (
+SELECT
+    json_extract(json_each.value, '$.bucket') as bucket,
+    json_extract(json_each.value, '$.checksum') as checksum
+FROM json_each(?1)
+)
+SELECT
+bucket_list.bucket as bucket,
+IFNULL(buckets.add_checksum, 0) as add_checksum,
+IFNULL(buckets.op_checksum, 0) as oplog_checksum,
+bucket_list.checksum as expected_checksum
+FROM bucket_list
+LEFT OUTER JOIN ps_buckets AS buckets ON
+ buckets.name = bucket_list.bucket
+GROUP BY bucket_list.bucket",
+        )?;
+
+        #[derive(Serialize)]
+        struct BucketInfo<'a> {
+            bucket: &'a str,
+            checksum: i32,
+        }
+
+        let mut buckets = Vec::<BucketInfo>::new();
+        for bucket in &checkpoint.buckets {
+            if bucket.is_in_priority(priority) {
+                buckets.push(BucketInfo {
+                    bucket: &bucket.bucket,
+                    checksum: bucket.checksum,
+                });
+            }
+        }
+
+        let bucket_desc = serde_json::to_string(&buckets)?;
+        statement.bind_text(1, &bucket_desc, sqlite::Destructor::STATIC)?;
+
+        let mut failures: Vec<String> = Vec::new();
+        while statement.step()? == ResultCode::ROW {
+            let name = statement.column_text(0)?;
+            // checksums with column_int are wrapped to i32 by SQLite
+            let add_checksum = statement.column_int(1);
+            let oplog_checksum = statement.column_int(2);
+            let expected_checksum = statement.column_int(3);
+
+            // wrapping add is like +, but safely overflows
+            let checksum = oplog_checksum.wrapping_add(add_checksum);
+
+            if checksum != expected_checksum {
+                failures.push(String::from(name));
+            }
+        }
+
+        Ok(CheckpointResult {
+            failed_buckets: failures,
+        })
+    }
+
+    pub fn sync_local(
+        &self,
+        checkpoint: &OwnedCheckpoint,
+        priority: Option<BucketPriority>,
+    ) -> Result<SyncLocalResult, SQLiteError> {
+        let checksums = self.validate_checkpoint(checkpoint, priority)?;
+
+        if !checksums.is_valid() {
+            self.delete_buckets(checksums.failed_buckets.iter().map(|i| i.as_str()))?;
+            return Ok(SyncLocalResult::ChecksumFailure(checksums));
+        }
+
+        let update_bucket = self
+            .db
+            .prepare_v2("UPDATE ps_buckets SET last_op = ? WHERE name = ?")?;
+
+        for bucket in &checkpoint.buckets {
+            if bucket.is_in_priority(priority) {
+                update_bucket.bind_int64(1, checkpoint.last_op_id)?;
+                update_bucket.bind_text(2, &bucket.bucket, sqlite::Destructor::STATIC)?;
+                update_bucket.exec()?;
+            }
+        }
+
+        if let (None, Some(write_checkpoint)) = (&priority, &checkpoint.write_checkpoint) {
+            update_bucket.bind_int64(1, *write_checkpoint)?;
+            update_bucket.bind_text(2, "$local", sqlite::Destructor::STATIC)?;
+            update_bucket.exec()?;
+        }
+
+        #[derive(Serialize)]
+        struct PartialArgs<'a> {
+            priority: BucketPriority,
+            buckets: Vec<&'a str>,
+        }
+
+        let sync_result = match priority {
+            None => SyncOperation::new(self.db, None).apply(),
+            Some(priority) => {
+                let args = PartialArgs {
+                    priority,
+                    buckets: checkpoint
+                        .buckets
+                        .iter()
+                        .filter_map(|item| {
+                            if item.is_in_priority(Some(priority)) {
+                                Some(item.bucket.as_str())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect(),
+                };
+
+                // TODO: Avoid this serialization, it's currently used to bind JSON SQL parameters.
+                let serialized_args = serde_json::to_string(&args)?;
+                SyncOperation::new(
+                    self.db,
+                    Some(PartialSyncOperation {
+                        priority,
+                        args: &serialized_args,
+                    }),
+                )
+                .apply()
+            }
+        }?;
+
+        if sync_result == 1 {
+            // TODO: Force compact
+
+            Ok(SyncLocalResult::ChangesApplied)
+        } else {
+            Ok(SyncLocalResult::PendingLocalChanges)
+        }
+    }
+
+    pub fn now(&self) -> Result<Timestamp, ResultCode> {
+        self.time_stmt.reset()?;
+        self.time_stmt.step()?;
+
+        Ok(Timestamp(self.time_stmt.column_int64(0)))
+    }
 }
 
 pub struct BucketInfo {
     pub id: i64,
     pub last_applied_op: i64,
 }
+
+pub struct CheckpointResult {
+    failed_buckets: Vec<String>,
+}
+
+impl CheckpointResult {
+    pub fn is_valid(&self) -> bool {
+        self.failed_buckets.is_empty()
+    }
+}
+
+impl Display for CheckpointResult {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.is_valid() {
+            write!(f, "Valid checkpoint result")
+        } else {
+            write!(f, "Checksums didn't match, failed for: ")?;
+            for (i, item) in self.failed_buckets.iter().enumerate() {
+                if i != 0 {
+                    write!(f, ", ")?;
+                }
+
+                item.fmt(f)?;
+            }
+
+            Ok(())
+        }
+    }
+}
+
+pub enum SyncLocalResult {
+    /// Changes could not be applied due to a checksum mismatch.
+    ChecksumFailure(CheckpointResult),
+    /// Changes could not be applied because they would break consistency - we need to wait for
+    /// pending local CRUD data to be uploaded and acknowledged in a write checkpoint.
+    PendingLocalChanges,
+    /// The checkpoint has been applied and changes have been published.
+    ChangesApplied,
+}
+
 /// Information about the amount of operations a bucket had at the last checkpoint and how many
 /// operations have been inserted in the meantime.
 pub struct PersistedBucketProgress<'a> {

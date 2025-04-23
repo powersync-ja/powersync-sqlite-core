@@ -1,6 +1,5 @@
 extern crate alloc;
 
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;

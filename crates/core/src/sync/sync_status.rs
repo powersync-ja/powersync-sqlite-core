@@ -14,11 +14,19 @@ use super::{
 pub struct DownloadSyncStatus {
     pub connected: bool,
     pub connecting: bool,
+    /// Always sorted by descending [BucketPriority] in [SyncPriorityStatus] (or, in other words,
+    /// increasing priority numbers).
     pub priority_status: Vec<SyncPriorityStatus>,
     pub downloading: Option<SyncDownloadProgress>,
 }
 
 impl DownloadSyncStatus {
+    fn debug_assert_priority_status_is_sorted(&self) {
+        debug_assert!(self
+            .priority_status
+            .is_sorted_by(|a, b| a.priority >= b.priority))
+    }
+
     pub fn start_connecting(&mut self) {
         self.connected = false;
         self.downloading = None;
@@ -39,10 +47,44 @@ impl DownloadSyncStatus {
         self.downloading = Some(progress);
     }
 
+    /// Increments [SyncDownloadProgress] progress for the given [DataLine].
     pub fn track_line(&mut self, line: &DataLine) {
         if let Some(ref mut downloading) = self.downloading {
             downloading.increment_download_count(line);
         }
+    }
+
+    pub fn partial_checkpoint_complete(&mut self, priority: BucketPriority, now: Timestamp) {
+        self.debug_assert_priority_status_is_sorted();
+        // We can delete entries with a higher priority because this partial sync includes them.
+        self.priority_status.retain(|i| i.priority < priority);
+        self.priority_status.insert(
+            0,
+            SyncPriorityStatus {
+                priority: priority,
+                last_synced_at: Some(now),
+                has_synced: Some(true),
+            },
+        );
+        self.debug_assert_priority_status_is_sorted();
+    }
+
+    pub fn applied_checkpoint(&mut self, applied: &OwnedCheckpoint, now: Timestamp) {
+        self.downloading = None;
+        self.priority_status.clear();
+
+        let lowest_priority = applied
+            .buckets
+            .iter()
+            .map(|bkt| bkt.priority)
+            .max()
+            .unwrap_or(BucketPriority::SENTINEL);
+
+        self.priority_status.push(SyncPriorityStatus {
+            priority: lowest_priority,
+            last_synced_at: Some(now),
+            has_synced: Some(true),
+        });
     }
 }
 
@@ -80,6 +122,8 @@ impl SyncStatusContainer {
         let mut status = self.status.borrow_mut();
         apply(&mut *status);
 
+        // If apply() actually changed something (we compare hash codes to avoid copying), emit an
+        // instructions for clients to update the public sync status.
         let hash = FxBuildHasher.hash_one(&*status);
         if hash != self.last_published_hash {
             self.last_published_hash = hash;
@@ -91,7 +135,7 @@ impl SyncStatusContainer {
 }
 
 #[repr(transparent)]
-#[derive(Serialize, Hash)]
+#[derive(Serialize, Hash, Clone, Copy)]
 pub struct Timestamp(pub i64);
 
 #[derive(Serialize, Hash)]
@@ -127,7 +171,7 @@ impl SyncDownloadProgress {
             buckets.insert(
                 bucket.bucket.clone(),
                 BucketProgress {
-                    priority: bucket.priority.unwrap_or(BucketPriority::FALLBACK),
+                    priority: bucket.priority,
                     target_count: bucket.count.unwrap_or(0),
                     // Will be filled out later by iterating local_progress
                     at_last: 0,

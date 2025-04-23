@@ -1,5 +1,3 @@
-use alloc::format;
-
 use crate::error::SQLiteError;
 use crate::sync::line::DataLine;
 use crate::sync::operations::insert_bucket_operations;
