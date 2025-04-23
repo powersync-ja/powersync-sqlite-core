@@ -40,44 +40,51 @@ impl<'de> Deserializer<'de> {
     /// document without actually inspecting the structure of that document.
     pub const SPECIAL_CASE_EMBEDDED_DOCUMENT: &'static str = "\0SpecialCaseEmbedDoc";
 
-    pub fn outside_of_document(parser: Parser<'de>) -> Self {
+    fn outside_of_document(parser: Parser<'de>) -> Self {
         Self {
             parser,
             position: DeserializerPosition::OutsideOfDocument,
         }
     }
 
-    /// Prepares to read a value without actually reading it, returning the [ElementType] of the
-    /// upcoming key-value pair.
-    fn prepare_to_read_value(&mut self) -> Result<ElementType, BsonError> {
+    pub fn from_bytes(bytes: &'de [u8]) -> Self {
+        let parser = Parser::new(bytes);
+        Self::outside_of_document(parser)
+    }
+
+    fn prepare_to_read(&mut self, allow_key: bool) -> Result<KeyOrValue<'de>, BsonError> {
         match self.position.clone() {
             DeserializerPosition::OutsideOfDocument => {
                 // The next value we're reading is a document
                 self.position = DeserializerPosition::BeforeValue {
                     pending_type: ElementType::Document,
                 };
-                Ok(ElementType::Document)
+                Ok(KeyOrValue::PendingValue(ElementType::Document))
             }
-            DeserializerPosition::BeforeValue { pending_type } => Ok(pending_type),
+            DeserializerPosition::BeforeValue { pending_type } => {
+                Ok(KeyOrValue::PendingValue(pending_type))
+            }
             DeserializerPosition::BeforeTypeOrAtEndOfDocument { .. } => {
                 Err(self.parser.error(ErrorKind::InvalidStateExpectedType))
             }
-            DeserializerPosition::BeforeName { .. } => {
-                Err(self.parser.error(ErrorKind::InvalidStateExpectedName))
+            DeserializerPosition::BeforeName { pending_type } => {
+                if !allow_key {
+                    return Err(self.parser.error(ErrorKind::InvalidStateExpectedName));
+                }
+
+                self.position = DeserializerPosition::BeforeValue {
+                    pending_type: pending_type,
+                };
+                Ok(KeyOrValue::Key(self.parser.read_cstr()?))
             }
         }
     }
 
-    /// If the deserializer is in a suitable position, read the upcoming key.
-    fn read_entry_key(&mut self) -> Result<Option<&'de str>, BsonError> {
-        match self.position.clone() {
-            DeserializerPosition::BeforeName { pending_type } => {
-                self.position = DeserializerPosition::BeforeValue {
-                    pending_type: pending_type,
-                };
-                Ok(Some(self.parser.read_cstr()?))
-            }
-            _ => Ok(None),
+    fn prepare_to_read_value(&mut self) -> Result<ElementType, BsonError> {
+        let result = self.prepare_to_read(false)?;
+        match result {
+            KeyOrValue::Key(_) => unreachable!(),
+            KeyOrValue::PendingValue(element_type) => Ok(element_type),
         }
     }
 
@@ -113,7 +120,10 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     where
         V: Visitor<'de>,
     {
-        let element_type = self.prepare_to_read_value()?;
+        let element_type = match self.prepare_to_read(true)? {
+            KeyOrValue::Key(name) => return visitor.visit_borrowed_str(name),
+            KeyOrValue::PendingValue(element_type) => element_type,
+        };
 
         match element_type {
             ElementType::Double => visitor.visit_f64(self.parser.read_double()?),
@@ -133,22 +143,11 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
             ElementType::ObjectId => todo!(),
             ElementType::Boolean => visitor.visit_bool(self.parser.read_bool()?),
             ElementType::DatetimeUtc => todo!(),
-            ElementType::Null | ElementType::Undefined => visitor.visit_none(),
+            ElementType::Null | ElementType::Undefined => visitor.visit_unit(),
             ElementType::Int32 => visitor.visit_i32(self.parser.read_int32()?),
             ElementType::Int64 => visitor.visit_i64(self.parser.read_int64()?),
             ElementType::Timestamp => todo!(),
         }
-    }
-
-    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-    where
-        V: Visitor<'de>,
-    {
-        let Some(key) = self.read_entry_key()? else {
-            return Err(self.parser.error(ErrorKind::InvalidStateExpectedName));
-        };
-
-        visitor.visit_borrowed_str(key)
     }
 
     fn deserialize_enum<V>(
@@ -200,7 +199,7 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
         bytes byte_buf unit unit_struct newtype_struct seq tuple
-        tuple_struct map struct ignored_any
+        tuple_struct map struct ignored_any identifier
     }
 }
 
@@ -239,7 +238,7 @@ impl<'de> SeqAccess<'de> for Deserializer<'de> {
 
         // Skip name
         debug_assert_matches!(self.position, DeserializerPosition::BeforeName { .. });
-        self.read_entry_key()?;
+        self.prepare_to_read(true)?;
 
         // And deserialize value!
         Ok(Some(seed.deserialize(self)?))
@@ -302,4 +301,9 @@ impl<'a, 'de> VariantAccess<'de> for &'a mut Deserializer<'de> {
         // Struct variants are represented as `{ NAME: { ... } }`, so we deserialize the struct.
         de::Deserializer::deserialize_map(self, visitor)
     }
+}
+
+enum KeyOrValue<'de> {
+    Key(&'de str),
+    PendingValue(ElementType),
 }

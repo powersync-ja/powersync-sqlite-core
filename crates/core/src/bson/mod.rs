@@ -11,8 +11,7 @@ mod writer;
 
 /// Deserializes BSON [bytes] into a structure [T].
 pub fn from_bytes<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, BsonError> {
-    let parser = Parser::new(bytes);
-    let mut deserializer = Deserializer::outside_of_document(parser);
+    let mut deserializer = Deserializer::from_bytes(bytes);
 
     T::deserialize(&mut deserializer)
 }

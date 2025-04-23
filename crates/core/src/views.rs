@@ -44,7 +44,7 @@ fn powersync_view_sql_impl(
         column_names_quoted.push(quote_identifier(name));
 
         let foo = format!(
-            "CAST(json_extract(data, {:}) as {:})",
+            "CAST(powersync_extract(data, {:}) as {:})",
             quote_json_path(name),
             type_name
         );
