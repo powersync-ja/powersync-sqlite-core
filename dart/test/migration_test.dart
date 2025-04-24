@@ -246,5 +246,34 @@ ${fixtures.schema5.trim()}
 end''';
       expect(schema, equals(expected));
     });
+
+    test('schema 7 -> 8 migrates last_synced_at data', () {
+      db.execute(fixtures.expectedState[7]!);
+
+      for (var i = 0; i < 10; i++) {
+        db.execute(
+          'INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, ?);',
+          [2147483647, '2025-03-05 14:58:${i.toString().padLeft(2, '0')}'],
+        );
+
+        db.execute(
+          'INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, ?);',
+          [3, '2025-03-05 13:58:${i.toString().padLeft(2, '0')}'],
+        );
+      }
+
+      db.execute('SELECT powersync_test_migration(8);');
+
+      expect(db.select('SELECT * FROM ps_sync_state ORDER BY priority'), [
+        {
+          'priority': 3,
+          'last_synced_at': '2025-03-05 13:58:09',
+        },
+        {
+          'priority': 2147483647,
+          'last_synced_at': '2025-03-05 14:58:09',
+        }
+      ]);
+    });
   });
 }

@@ -12,6 +12,8 @@ use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
 use crate::fix035::apply_v035_fix;
 
+pub const LATEST_VERSION: i32 = 9;
+
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
     target_version: i32,
@@ -331,6 +333,41 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 7')
 ", SENTINEL_PRIORITY, SENTINEL_PRIORITY);
 
         local_db.exec_safe(&stmt).into_db_result(local_db)?;
+    }
+
+    if current_version < 8 && target_version >= 8 {
+        let stmt = "\
+ALTER TABLE ps_sync_state RENAME TO ps_sync_state_old;
+CREATE TABLE ps_sync_state (
+  priority INTEGER NOT NULL PRIMARY KEY,
+  last_synced_at TEXT NOT NULL
+) STRICT;
+INSERT INTO ps_sync_state (priority, last_synced_at)
+  SELECT priority, MAX(last_synced_at) FROM ps_sync_state_old GROUP BY priority;
+DROP TABLE ps_sync_state_old;
+INSERT INTO ps_migration(id, down_migrations) VALUES(8, json_array(
+json_object('sql', 'ALTER TABLE ps_sync_state RENAME TO ps_sync_state_new'),
+json_object('sql', 'CREATE TABLE ps_sync_state (\n  priority INTEGER NOT NULL,\n  last_synced_at TEXT NOT NULL\n) STRICT'),
+json_object('sql', 'INSERT INTO ps_sync_state SELECT * FROM ps_sync_state_new'),
+json_object('sql', 'DROP TABLE ps_sync_state_new'),
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 8')
+));
+";
+        local_db.exec_safe(&stmt).into_db_result(local_db)?;
+    }
+
+    if current_version < 9 && target_version >= 9 {
+        let stmt = "\
+ALTER TABLE ps_buckets ADD COLUMN count_at_last INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ps_buckets ADD COLUMN count_since_last INTEGER NOT NULL DEFAULT 0;
+INSERT INTO ps_migration(id, down_migrations) VALUES(9, json_array(
+json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN count_at_last'),
+json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN count_since_last'),
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 9')
+));
+";
+
+        local_db.exec_safe(stmt).into_db_result(local_db)?;
     }
 
     Ok(())

@@ -215,6 +215,8 @@ fn powersync_trigger_insert_sql_impl(
       SELECT CASE
       WHEN (NEW.id IS NULL)
       THEN RAISE (FAIL, 'id is required')
+      WHEN (typeof(NEW.id) != 'text')
+      THEN RAISE (FAIL, 'id should be text')
       END;
       INSERT INTO {internal_name}
       SELECT NEW.id, {json_fragment};
