@@ -50,7 +50,7 @@ impl TableInfo {
             flags = flags.set_flag(TableInfoFlags::INSERT_ONLY, insert_only);
             flags = flags.set_flag(TableInfoFlags::INCLUDE_METADATA, include_metadata);
             flags = flags.set_flag(
-                TableInfoFlags::INCLUDE_OLD_ONLY_IF_CHANGED,
+                TableInfoFlags::INCLUDE_OLD_ONLY_WHEN_CHANGED,
                 include_old_only_when_changed,
             );
 
@@ -104,7 +104,7 @@ impl TableInfoFlags {
     pub const LOCAL_ONLY: u32 = 1;
     pub const INSERT_ONLY: u32 = 2;
     pub const INCLUDE_METADATA: u32 = 4;
-    pub const INCLUDE_OLD_ONLY_IF_CHANGED: u32 = 8;
+    pub const INCLUDE_OLD_ONLY_WHEN_CHANGED: u32 = 8;
 
     pub const fn local_only(self) -> bool {
         self.0 & Self::LOCAL_ONLY != 0
@@ -118,8 +118,8 @@ impl TableInfoFlags {
         self.0 & Self::INCLUDE_METADATA != 0
     }
 
-    pub const fn include_old_only_if_changed(self) -> bool {
-        self.0 & Self::INCLUDE_OLD_ONLY_IF_CHANGED != 0
+    pub const fn include_old_only_when_changed(self) -> bool {
+        self.0 & Self::INCLUDE_OLD_ONLY_WHEN_CHANGED != 0
     }
 
     const fn with_flag(self, flag: u32) -> Self {

@@ -291,11 +291,30 @@ fn powersync_trigger_update_sql_impl(
         }
     };
 
-    if table_info.flags.include_old_only_if_changed() {
-        // We're setting ignore_removed_columns here because values that are present in the new
-        // values but not in the old values should not lead to a null entry.
-        old_values_fragment = old_values_fragment
-            .map(|f| format!("json(powersync_diff({json_fragment_new}, {f}, TRUE))"));
+    if table_info.flags.include_old_only_when_changed() {
+        old_values_fragment = match old_values_fragment {
+            None => None,
+            Some(f) => {
+                let filtered_new_fragment = match &table_info.diff_include_old {
+                    // When include_old_only_when_changed is combined with a column filter, make sure we
+                    // only include the powersync_diff of columns matched by the filter.
+                    Some(DiffIncludeOld::OnlyForColumns { columns }) => {
+                        let mut iterator = columns.iter();
+                        let mut columns =
+                            streaming_iterator::from_fn(|| -> Option<Result<&str, ResultCode>> {
+                                Some(Ok(iterator.next()?.as_str()))
+                            });
+
+                        Cow::Owned(json_object_fragment("NEW", &mut columns)?)
+                    }
+                    _ => Cow::Borrowed(json_fragment_new.as_str()),
+                };
+
+                Some(format!(
+                    "json(powersync_diff({filtered_new_fragment}, {f}))"
+                ))
+            }
+        }
     }
 
     let old_fragment: Cow<'static, str> = match old_values_fragment {
