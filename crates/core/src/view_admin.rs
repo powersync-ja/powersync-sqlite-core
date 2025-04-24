@@ -4,7 +4,6 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::ffi::c_int;
-use core::slice;
 
 use sqlite::{ResultCode, Value};
 use sqlite_nostd as sqlite;
@@ -75,7 +74,7 @@ fn powersync_internal_table_name_impl(
     }
 
     let name = stmt1.column_text(0)?;
-    let local_only = stmt1.column_int(1)? != 0;
+    let local_only = stmt1.column_int(1) != 0;
 
     if local_only {
         Ok(format!("ps_data_local__{:}", name))

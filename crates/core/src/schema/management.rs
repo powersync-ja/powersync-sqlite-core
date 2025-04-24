@@ -4,7 +4,6 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;
-use core::slice;
 
 use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
@@ -35,7 +34,7 @@ SELECT
         while statement.step().into_db_result(db)? == ResultCode::ROW {
             let name = statement.column_text(0)?;
             let internal_name = statement.column_text(1)?;
-            let local_only = statement.column_int(2)? != 0;
+            let local_only = statement.column_int(2) != 0;
 
             db.exec_safe(&format!(
                 "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
@@ -110,7 +109,7 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
         while statement.step()? == ResultCode::ROW {
             let name = statement.column_text(0)?;
             let internal_name = statement.column_text(1)?;
-            let local_only = statement.column_int(2)? != 0;
+            let local_only = statement.column_int(2) != 0;
 
             tables_to_drop.push(String::from(internal_name));
 
@@ -169,7 +168,7 @@ SELECT
             while stmt2.step()? == ResultCode::ROW {
                 let name = stmt2.column_text(0)?;
                 let type_name = stmt2.column_text(1)?;
-                let ascending = stmt2.column_int(2)? != 0;
+                let ascending = stmt2.column_int(2) != 0;
 
                 if ascending {
                     let value = format!(

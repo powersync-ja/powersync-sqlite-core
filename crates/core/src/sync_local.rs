@@ -107,7 +107,7 @@ impl<'a> SyncOperation<'a> {
         while statement.step().into_db_result(self.db)? == ResultCode::ROW {
             let type_name = statement.column_text(0)?;
             let id = statement.column_text(1)?;
-            let buckets = statement.column_int(3)?;
+            let buckets = statement.column_int(3);
             let data = statement.column_text(2);
 
             let table_name = internal_table_name(type_name);

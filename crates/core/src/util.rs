@@ -6,15 +6,13 @@ use alloc::string::String;
 use serde::Deserialize;
 use serde_json as json;
 
-use sqlite::{Connection, ResultCode};
-use sqlite_nostd as sqlite;
-use sqlite_nostd::ManagedStmt;
+#[cfg(not(feature = "getrandom"))]
+use crate::sqlite;
+
 use uuid::Uuid;
 
 #[cfg(not(feature = "getrandom"))]
 use uuid::Builder;
-
-use crate::error::SQLiteError;
 
 pub fn quote_string(s: &str) -> String {
     format!("'{:}'", s.replace("'", "''"))
@@ -42,27 +40,6 @@ pub fn internal_table_name(name: &str) -> String {
 
 pub fn quote_identifier_prefixed(prefix: &str, name: &str) -> String {
     return format!("\"{:}{:}\"", prefix, name.replace("\"", "\"\""));
-}
-
-pub fn extract_table_info(
-    db: *mut sqlite::sqlite3,
-    data: &str,
-) -> Result<ManagedStmt, SQLiteError> {
-    // language=SQLite
-    let statement = db.prepare_v2(
-        "SELECT
-        json_extract(?1, '$.name') as name,
-        ifnull(json_extract(?1, '$.view_name'), json_extract(?1, '$.name')) as view_name,
-        json_extract(?1, '$.local_only') as local_only,
-        json_extract(?1, '$.insert_only') as insert_only",
-    )?;
-    statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
-
-    let step_result = statement.step()?;
-    if step_result != ResultCode::ROW {
-        return Err(SQLiteError::from(ResultCode::SCHEMA));
-    }
-    Ok(statement)
 }
 
 pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
