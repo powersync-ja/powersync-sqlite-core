@@ -10,7 +10,7 @@ use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
 use crate::error::SQLiteError;
-use crate::migrations::powersync_migrate;
+use crate::migrations::{powersync_migrate, LATEST_VERSION};
 use crate::util::quote_identifier;
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
@@ -119,7 +119,7 @@ fn powersync_init_impl(
 
     setup_internal_views(local_db)?;
 
-    powersync_migrate(ctx, 7)?;
+    powersync_migrate(ctx, LATEST_VERSION)?;
 
     Ok(String::from(""))
 }
@@ -161,6 +161,7 @@ DELETE FROM ps_buckets;
 DELETE FROM ps_untyped;
 DELETE FROM ps_updated_rows;
 DELETE FROM ps_kv WHERE key != 'client_id';
+DELETE FROM ps_sync_state;
 ",
     )?;
 

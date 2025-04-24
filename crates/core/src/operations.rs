@@ -103,6 +103,7 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
     let mut last_op: Option<i64> = None;
     let mut add_checksum: i32 = 0;
     let mut op_checksum: i32 = 0;
+    let mut added_ops: i32 = 0;
 
     while iterate_statement.step()? == ResultCode::ROW {
         let op_id = iterate_statement.column_int64(0);
@@ -113,6 +114,7 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
         let op_data = iterate_statement.column_text(5);
 
         last_op = Some(op_id);
+        added_ops += 1;
 
         if op == "PUT" || op == "REMOVE" {
             let key: String;
@@ -236,13 +238,15 @@ WHERE bucket = ?1",
             "UPDATE ps_buckets
                 SET last_op = ?2,
                     add_checksum = (add_checksum + ?3) & 0xffffffff,
-                    op_checksum = (op_checksum + ?4) & 0xffffffff
+                    op_checksum = (op_checksum + ?4) & 0xffffffff,
+                    count_since_last = count_since_last + ?5
             WHERE id = ?1",
         )?;
         statement.bind_int64(1, bucket_id)?;
         statement.bind_int64(2, *last_op)?;
         statement.bind_int(3, add_checksum)?;
         statement.bind_int(4, op_checksum)?;
+        statement.bind_int(5, added_ops)?;
 
         statement.exec()?;
     }

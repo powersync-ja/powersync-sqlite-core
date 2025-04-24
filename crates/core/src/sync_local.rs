@@ -63,7 +63,7 @@ impl<'a> SyncOperation<'a> {
 
     fn can_apply_sync_changes(&self) -> Result<bool, SQLiteError> {
         // Don't publish downloaded data until the upload queue is empty (except for downloaded data
-        //in priority 0, which is published earlier).
+        // in priority 0, which is published earlier).
 
         let needs_check = match &self.partial {
             Some(p) => !p.priority.may_publish_with_outstanding_uploads(),
