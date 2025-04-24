@@ -339,6 +339,8 @@ fn powersync_trigger_update_sql_impl(
             ""
         };
 
+        let flags = table_info.flags.0;
+
         let trigger = format!("\
 CREATE TRIGGER {trigger_name}
 INSTEAD OF UPDATE ON {quoted_name}
@@ -351,7 +353,7 @@ BEGIN
   UPDATE {internal_name}
       SET data = {json_fragment_new}
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:})){:}{:}));
+  INSERT INTO powersync_crud_(data, options) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:})){:}{:}), {flags});
   INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
   INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
 END", type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment);

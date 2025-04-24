@@ -28,7 +28,8 @@ impl TableInfo {
         json_extract(?1, '$.insert_only'),
         json_extract(?1, '$.include_old'),
         json_extract(?1, '$.include_metadata'),
-        json_extract(?1, '$.include_old_only_when_changed')",
+        json_extract(?1, '$.include_old_only_when_changed'),
+        json_extract(?1, '$.ignore_empty_update')",
         )?;
         statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
 
@@ -44,6 +45,7 @@ impl TableInfo {
             let insert_only = statement.column_int(3) != 0;
             let include_metadata = statement.column_int(5) != 0;
             let include_old_only_when_changed = statement.column_int(6) != 0;
+            let ignore_empty_update = statement.column_int(7) != 0;
 
             let mut flags = TableInfoFlags::default();
             flags = flags.set_flag(TableInfoFlags::LOCAL_ONLY, local_only);
@@ -53,7 +55,7 @@ impl TableInfo {
                 TableInfoFlags::INCLUDE_OLD_ONLY_WHEN_CHANGED,
                 include_old_only_when_changed,
             );
-
+            flags = flags.set_flag(TableInfoFlags::IGNORE_EMPTY_UPDATE, ignore_empty_update);
             flags
         };
 
@@ -98,13 +100,14 @@ pub enum DiffIncludeOld {
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct TableInfoFlags(u32);
+pub struct TableInfoFlags(pub u32);
 
 impl TableInfoFlags {
     pub const LOCAL_ONLY: u32 = 1;
     pub const INSERT_ONLY: u32 = 2;
     pub const INCLUDE_METADATA: u32 = 4;
     pub const INCLUDE_OLD_ONLY_WHEN_CHANGED: u32 = 8;
+    pub const IGNORE_EMPTY_UPDATE: u32 = 16;
 
     pub const fn local_only(self) -> bool {
         self.0 & Self::LOCAL_ONLY != 0

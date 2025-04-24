@@ -20,6 +20,7 @@ num-derive = "0.3"
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] }
 streaming-iterator = { version = "0.1.9", default-features = false, features = ["alloc"] }
+const_format = "0.2.34"
 
 [dependencies.uuid]
 version = "1.4.1"
