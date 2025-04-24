@@ -385,6 +385,7 @@ impl StreamingSyncIteration {
             buckets: requests,
             include_checksum: true,
             raw_data: true,
+            binary_data: true,
             client_id: client_id(self.db)?,
             parameters: self.parameters.take(),
         };

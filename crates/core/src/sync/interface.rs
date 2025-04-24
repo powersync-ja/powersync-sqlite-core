@@ -60,6 +60,7 @@ pub struct StreamingSyncRequest {
     pub buckets: Vec<BucketRequest>,
     pub include_checksum: bool,
     pub raw_data: bool,
+    pub binary_data: bool,
     pub client_id: String,
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
 }
