@@ -77,7 +77,7 @@ impl SyncClient {
                     }
                     Ok(done) => {
                         if done {
-                            active.instructions.push(Instruction::CloseSyncStream);
+                            active.instructions.push(Instruction::CloseSyncStream {});
                             *state = ClientState::Idle;
                         }
                     }

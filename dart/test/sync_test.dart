@@ -410,7 +410,7 @@ void _syncTests<T>({
               'line': contains("Checksums didn't match, failed for: a")
             }
           },
-          'CloseSyncStream',
+          {'CloseSyncStream': {}},
         ],
       );
 

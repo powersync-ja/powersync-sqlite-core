@@ -44,8 +44,10 @@ pub enum Instruction {
     EstablishSyncStream {
         request: StreamingSyncRequest,
     },
-    FlushFileSystem,
-    CloseSyncStream,
+    // These two are defined like this because deserializers in Kotlin can't support either an
+    // object or a literal value
+    FlushFileSystem {},
+    CloseSyncStream {},
 }
 
 #[derive(Serialize)]
