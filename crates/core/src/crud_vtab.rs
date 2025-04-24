@@ -2,6 +2,7 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use const_format::formatcp;
 use core::ffi::{c_char, c_int, c_void};
 
 use sqlite::{Connection, ResultCode, Value};
@@ -11,10 +12,11 @@ use sqlite_nostd::ResultCode::NULL;
 
 use crate::error::SQLiteError;
 use crate::ext::SafeManagedStmt;
+use crate::schema::TableInfoFlags;
 use crate::vtab_util::*;
 
 // Structure:
-//   CREATE TABLE powersync_crud_(data TEXT);
+//   CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);
 //
 // This is a insert-only virtual table. It generates transaction ids in ps_tx, and inserts data in
 // ps_crud(tx_id, data).
@@ -39,7 +41,10 @@ extern "C" fn connect(
     vtab: *mut *mut sqlite::vtab,
     _err: *mut *mut c_char,
 ) -> c_int {
-    if let Err(rc) = sqlite::declare_vtab(db, "CREATE TABLE powersync_crud_(data TEXT);") {
+    if let Err(rc) = sqlite::declare_vtab(
+        db,
+        "CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);",
+    ) {
         return rc as c_int;
     }
 
@@ -70,7 +75,16 @@ extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
 fn begin_impl(tab: &mut VirtualTable) -> Result<(), SQLiteError> {
     let db = tab.db;
 
-    let insert_statement = db.prepare_v3("INSERT INTO ps_crud(tx_id, data) VALUES (?1, ?2)", 0)?;
+    const SQL: &str = formatcp!(
+        "\
+WITH insertion (tx_id, data) AS (VALUES (?1, ?2))
+INSERT INTO ps_crud(tx_id, data)
+SELECT * FROM insertion WHERE (NOT (?3 & {})) OR data->>'op' != 'PATCH' OR data->'data' != '{{}}';
+    ",
+        TableInfoFlags::IGNORE_EMPTY_UPDATE
+    );
+
+    let insert_statement = db.prepare_v3(SQL, 0)?;
     tab.insert_statement = Some(insert_statement);
 
     // language=SQLite
@@ -107,7 +121,11 @@ extern "C" fn rollback(vtab: *mut sqlite::vtab) -> c_int {
     ResultCode::OK as c_int
 }
 
-fn insert_operation(vtab: *mut sqlite::vtab, data: &str) -> Result<(), SQLiteError> {
+fn insert_operation(
+    vtab: *mut sqlite::vtab,
+    data: &str,
+    flags: TableInfoFlags,
+) -> Result<(), SQLiteError> {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
     if tab.current_tx.is_none() {
         return Err(SQLiteError(
@@ -123,6 +141,7 @@ fn insert_operation(vtab: *mut sqlite::vtab, data: &str) -> Result<(), SQLiteErr
         .ok_or(SQLiteError::from(NULL))?;
     statement.bind_int64(1, current_tx)?;
     statement.bind_text(2, data, sqlite::Destructor::STATIC)?;
+    statement.bind_int(3, flags.0 as i32)?;
     statement.exec()?;
 
     Ok(())
@@ -144,7 +163,11 @@ extern "C" fn update(
     } else if rowid.value_type() == sqlite::ColumnType::Null {
         // INSERT
         let data = args[2].text();
-        let result = insert_operation(vtab, data);
+        let flags = match args[3].value_type() {
+            sqlite_nostd::ColumnType::Null => TableInfoFlags::default(),
+            _ => TableInfoFlags(args[3].int() as u32),
+        };
+        let result = insert_operation(vtab, data, flags);
         vtab_result(vtab, result)
     } else {
         // UPDATE - not supported
