@@ -129,7 +129,7 @@ DELETE FROM {internal_name} WHERE id = OLD.id;
 INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', OLD.id{old_fragment}));
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, OLD.id);
 INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
-END;"
+END"
         );
 
         // The DELETE statement can't include metadata for the delete operation, so we create
@@ -146,7 +146,7 @@ DELETE FROM {internal_name} WHERE id = NEW.id;
 INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', NEW.id{old_fragment}, 'metadata', NEW._metadata));
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
 INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
-END;"
+END"
                     ).expect("writing to string should be infallible");
         }
 

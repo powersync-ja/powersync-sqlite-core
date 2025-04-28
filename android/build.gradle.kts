@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "co.powersync"
-version = "0.3.13"
+version = "0.3.14"
 description = "PowerSync Core SQLite Extension"
 
 repositories {
