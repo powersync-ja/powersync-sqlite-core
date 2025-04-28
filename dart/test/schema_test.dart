@@ -44,6 +44,82 @@ void main() {
       expect(versionAfter3['schema_version'],
           greaterThan(versionAfter2['schema_version'] as int));
     });
+
+    group('metadata', () {
+      // This is a special because we have two delete triggers when
+      // include_metadata is true (one for actual `DELETE` statements and one
+      // for `UPDATE ... SET _deleted = TRUE` that allows attaching metadata).
+      Object createSchema(bool withMetadata) {
+        return {
+          "tables": [
+            {
+              "name": "customers",
+              "view_name": null,
+              "local_only": false,
+              "insert_only": false,
+              "include_metadata": withMetadata,
+              "columns": [
+                {"name": "name", "type": "TEXT"},
+                {"name": "email", "type": "TEXT"}
+              ],
+              "indexes": []
+            },
+          ]
+        };
+      }
+
+      test('enabling', () {
+        db.execute('SELECT powersync_replace_schema(?)',
+            [json.encode(createSchema(false))]);
+        expect(
+          db.select("select * from sqlite_schema where type = 'trigger' "
+              "AND tbl_name = 'customers' "
+              "AND name GLOB 'ps_view_delete*'"),
+          hasLength(1),
+        );
+
+        db.execute('SELECT powersync_replace_schema(?)',
+            [json.encode(createSchema(true))]);
+        expect(
+          db.select("select * from sqlite_schema where type = 'trigger' "
+              "AND tbl_name = 'customers' "
+              "AND name GLOB 'ps_view_delete*'"),
+          hasLength(2),
+        );
+      });
+
+      test('unchanged', () {
+        final schema = createSchema(true);
+        db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+
+        final [versionBefore] = db.select('PRAGMA schema_version');
+        db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+        final [versionAfter] = db.select('PRAGMA schema_version');
+
+        expect(versionAfter['schema_version'],
+            equals(versionBefore['schema_version']));
+      });
+
+      test('disabling', () {
+        db.execute('SELECT powersync_replace_schema(?)',
+            [json.encode(createSchema(true))]);
+        expect(
+          db.select("select * from sqlite_schema where type = 'trigger' "
+              "AND tbl_name = 'customers' "
+              "AND name GLOB 'ps_view_delete*'"),
+          hasLength(2),
+        );
+
+        db.execute('SELECT powersync_replace_schema(?)',
+            [json.encode(createSchema(false))]);
+        expect(
+          db.select("select * from sqlite_schema where type = 'trigger' "
+              "AND tbl_name = 'customers' "
+              "AND name GLOB 'ps_view_delete*'"),
+          hasLength(1),
+        );
+      });
+    });
   });
 }
 
