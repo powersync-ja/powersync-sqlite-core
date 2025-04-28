@@ -137,6 +137,7 @@ END"
         if table_info.flags.include_metadata() {
             let trigger_name = quote_identifier_prefixed("ps_view_delete2_", view_name);
             write!(&mut trigger,  "\
+;
 CREATE TRIGGER {trigger_name}
 INSTEAD OF UPDATE ON {quoted_name}
 FOR EACH ROW
