@@ -208,10 +208,12 @@ impl StreamingSyncIteration {
     }
 
     async fn run(mut self) -> Result<(), SQLiteError> {
-        let mut validated = None::<OwnedCheckpoint>;
-        let mut applied = None::<OwnedCheckpoint>;
-
         let mut target = SyncTarget::BeforeCheckpoint(self.prepare_request().await?);
+
+        // A checkpoint that has been fully received and validated, but couldn't be applied due to
+        // pending local data. We will retry applying this checkpoint when the client SDK informs us
+        // that it has finished uploading changes.
+        let mut validated_but_not_applied = None::<OwnedCheckpoint>;
 
         loop {
             let event = Self::receive_event().await;
@@ -223,14 +225,44 @@ impl StreamingSyncIteration {
                 SyncEvent::TearDown => break,
                 SyncEvent::TextLine { data } => serde_json::from_str(data)?,
                 SyncEvent::BinaryLine { data } => bson::from_bytes(data)?,
+                SyncEvent::UploadFinished => {
+                    if let Some(checkpoint) = validated_but_not_applied.take() {
+                        let result = self.adapter.sync_local(&checkpoint, None)?;
+
+                        match result {
+                            SyncLocalResult::ChangesApplied => {
+                                event.instructions.push(Instruction::LogLine {
+                                    severity: LogSeverity::DEBUG,
+                                    line: "Applied pending checkpoint after completed upload"
+                                        .into(),
+                                });
+
+                                self.handle_checkpoint_applied(&checkpoint, event)?;
+                            }
+                            _ => {
+                                event.instructions.push(Instruction::LogLine {
+                                    severity: LogSeverity::WARNING,
+                                    line: "Could not apply pending checkpoint even after completed upload"
+                                        .into(),
+                                });
+                            }
+                        }
+                    }
+
+                    continue;
+                }
                 SyncEvent::DidRefreshToken => {
                     // Break so that the client SDK starts another iteration.
                     break;
                 }
             };
 
+            self.status
+                .update(|s| s.mark_connected(), &mut event.instructions);
+
             match line {
                 SyncLine::Checkpoint(checkpoint) => {
+                    validated_but_not_applied = None;
                     let to_delete = target.track_checkpoint(&checkpoint);
 
                     self.adapter
@@ -252,6 +284,7 @@ impl StreamingSyncIteration {
                     };
 
                     target.apply_diff(&diff);
+                    validated_but_not_applied = None;
                     self.adapter
                         .delete_buckets(diff.removed_buckets.iter().copied())?;
 
@@ -280,29 +313,25 @@ impl StreamingSyncIteration {
                             // await new Promise((resolve) => setTimeout(resolve, 50));
                             event.instructions.push(Instruction::LogLine {
                                 severity: LogSeverity::WARNING,
-                                line: format!("Could not apply checkpoint, {checkpoint_result}"),
+                                line: format!("Could not apply checkpoint, {checkpoint_result}")
+                                    .into(),
                             });
                             break;
                         }
                         SyncLocalResult::PendingLocalChanges => {
                             event.instructions.push(Instruction::LogLine {
-                                severity: LogSeverity::WARNING,
-                                line: format!("TODO: Await pending uploads and try again"),
-                            });
-                            break;
+                                    severity: LogSeverity::INFO,
+                                    line: "Could not apply checkpoint due to local data. Will retry at completed upload or next checkpoint.".into(),
+                                });
+
+                            validated_but_not_applied = Some(target.clone());
                         }
                         SyncLocalResult::ChangesApplied => {
                             event.instructions.push(Instruction::LogLine {
                                 severity: LogSeverity::DEBUG,
-                                line: format!("Validated and applied checkpoint"),
+                                line: "Validated and applied checkpoint".into(),
                             });
-                            event.instructions.push(Instruction::DidCompleteSync {});
-
-                            let now = self.adapter.now()?;
-                            self.status.update(
-                                |status| status.applied_checkpoint(target, now),
-                                &mut event.instructions,
-                            );
+                            self.handle_checkpoint_applied(target, event)?;
                         }
                     }
                 }
@@ -328,7 +357,8 @@ impl StreamingSyncIteration {
                                 severity: LogSeverity::WARNING,
                                 line: format!(
                                     "Could not apply partial checkpoint, {checkpoint_result}"
-                                ),
+                                )
+                                .into(),
                             });
                             break;
                         }
@@ -407,6 +437,22 @@ impl StreamingSyncIteration {
             .push(Instruction::EstablishSyncStream { request });
         Ok(local_bucket_names)
     }
+
+    fn handle_checkpoint_applied(
+        &mut self,
+        target: &OwnedCheckpoint,
+        event: &mut ActiveEvent,
+    ) -> Result<(), ResultCode> {
+        event.instructions.push(Instruction::DidCompleteSync {});
+
+        let now = self.adapter.now()?;
+        self.status.update(
+            |status| status.applied_checkpoint(target, now),
+            &mut event.instructions,
+        );
+
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -451,7 +497,7 @@ impl SyncTarget {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OwnedCheckpoint {
     pub last_op_id: i64,
     pub write_checkpoint: Option<i64>,
@@ -485,7 +531,7 @@ impl OwnedCheckpoint {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OwnedBucketChecksum {
     pub bucket: String,
     pub checksum: i32,

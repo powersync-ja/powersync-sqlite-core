@@ -1,6 +1,7 @@
 use core::cell::RefCell;
 use core::ffi::{c_int, c_void};
 
+use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::string::ToString;
@@ -28,6 +29,7 @@ pub enum SyncEvent<'a> {
     Initialize,
     TearDown,
     DidRefreshToken,
+    UploadFinished,
     TextLine { data: &'a str },
     BinaryLine { data: &'a [u8] },
 }
@@ -37,7 +39,7 @@ pub enum SyncEvent<'a> {
 pub enum Instruction {
     LogLine {
         severity: LogSeverity,
-        line: String,
+        line: Cow<'static, str>,
     },
     UpdateSyncStatus {
         status: Rc<RefCell<DownloadSyncStatus>>,
@@ -135,6 +137,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
                     },
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
+                "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
                 _ => {
                     return Err(SQLiteError(
                         ResultCode::MISUSE,
