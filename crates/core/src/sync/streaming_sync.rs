@@ -77,7 +77,6 @@ impl SyncClient {
                     }
                     Ok(done) => {
                         if done {
-                            active.instructions.push(Instruction::CloseSyncStream {});
                             *state = ClientState::Idle;
                         }
                     }
@@ -85,10 +84,7 @@ impl SyncClient {
 
                 Ok(active.instructions)
             }
-            SyncControlRequest::StopSyncStream => {
-                state.tear_down()?;
-                Ok(Vec::new())
-            }
+            SyncControlRequest::StopSyncStream => state.tear_down(),
         }
     }
 }
@@ -99,13 +95,15 @@ enum ClientState {
 }
 
 impl ClientState {
-    fn tear_down(&mut self) -> Result<(), SQLiteError> {
+    fn tear_down(&mut self) -> Result<Vec<Instruction>, SQLiteError> {
+        let mut event = ActiveEvent::new(SyncEvent::TearDown);
+
         if let ClientState::IterationActive(old) = self {
-            old.tear_down()?;
+            old.run(&mut event)?;
         };
 
         *self = ClientState::Idle;
-        Ok(())
+        Ok(event.instructions)
     }
 }
 
@@ -137,11 +135,6 @@ impl SyncIterationHandle {
         Ok(event.instructions)
     }
 
-    fn tear_down(&mut self) -> Result<(), SQLiteError> {
-        self.run(&mut ActiveEvent::new(SyncEvent::TearDown))?;
-        Ok(())
-    }
-
     fn run(&mut self, active: &mut ActiveEvent) -> Result<bool, SQLiteError> {
         // Using a noop waker because the only event thing StreamingSyncIteration::run polls on is
         // the next incoming sync event.
@@ -156,6 +149,8 @@ impl SyncIterationHandle {
         Ok(
             if let Poll::Ready(result) = self.future.poll(&mut context) {
                 result?;
+
+                active.instructions.push(Instruction::CloseSyncStream {});
                 true
             } else {
                 false
