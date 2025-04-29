@@ -1,10 +1,15 @@
-use alloc::borrow::Cow;
-use alloc::string::ToString;
-use alloc::vec::Vec;
-use serde::de::DeserializeSeed;
-use serde::{de::Visitor, Deserialize};
+use core::assert_matches::debug_assert_matches;
 
-use crate::bson::{self, BsonWriter};
+use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use serde::{
+    de::{DeserializeSeed, Error, Visitor},
+    Deserialize,
+};
+use serde_json::value::RawValue;
+
+use crate::json_writer::JsonWriter;
 use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64};
 
 use super::bucket_priority::BucketPriority;
@@ -107,7 +112,7 @@ pub struct OplogEntry<'a> {
 #[derive(Debug)]
 pub enum OplogData<'a> {
     JsonString { data: Cow<'a, str> },
-    BsonDocument { data: Cow<'a, [u8]> },
+    //    BsonDocument { data: Cow<'a, [u8]> },
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,14 +142,9 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
     where
         D: serde::Deserializer<'de>,
     {
-        // Data can come in the following formats:
-        //
-        //  1. A `Map<String, PrimitiveValue>`
-        //  2. A string encoding a `Map<String, PrimitiveValue>` as JSON.
-        //  2. A `Map<String, PrimitiveValue>`, encoded as JSON.
-        struct ReadDataVisitor;
+        struct ReadFromBsonVisitor;
 
-        impl<'de> Visitor<'de> for ReadDataVisitor {
+        impl<'de> Visitor<'de> for ReadFromBsonVisitor {
             type Value = OplogData<'de>;
 
             fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
@@ -172,27 +172,20 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
                 })
             }
 
-            fn visit_borrowed_bytes<E>(self, v: &'de [u8]) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(OplogData::BsonDocument {
-                    data: Cow::Borrowed(v),
-                })
-            }
-
             fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
             where
                 A: serde::de::MapAccess<'de>,
             {
                 // Ok, we have a sub-document / JSON object. We can't save that as-is, we need to
-                // serialize it. serde_json's Serializer is std-only, so we use a small serializer
-                // to BSON that supports only the values we care about.
-                let mut writer = BsonWriter::new();
+                // serialize it. serde_json's Serializer is std-only because they don't want to
+                // expose their custom no_std Write trait. So we have to use our own writer impl
+                // here.
+
+                let mut writer = JsonWriter::new();
 
                 struct PendingKey<'a, 'de> {
                     key: &'de str,
-                    writer: &'a mut BsonWriter,
+                    writer: &'a mut JsonWriter,
                 }
 
                 impl<'a, 'de> Visitor<'de> for PendingKey<'a, 'de> {
@@ -206,7 +199,7 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
                     where
                         E: serde::de::Error,
                     {
-                        self.writer.put_str(self.key, v);
+                        self.writer.write_str(self.key, v);
                         Ok(())
                     }
 
@@ -214,7 +207,7 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
                     where
                         E: serde::de::Error,
                     {
-                        self.writer.put_float(self.key, v);
+                        self.writer.write_f64(self.key, v);
                         Ok(())
                     }
 
@@ -222,7 +215,7 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
                     where
                         E: serde::de::Error,
                     {
-                        self.writer.put_int(self.key, v as i64);
+                        self.writer.write_i64(self.key, v as i64);
                         Ok(())
                     }
 
@@ -230,7 +223,7 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
                     where
                         E: serde::de::Error,
                     {
-                        self.writer.put_int(self.key, v);
+                        self.writer.write_i64(self.key, v);
                         Ok(())
                     }
                 }
@@ -254,24 +247,41 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
                     map.next_value_seed(pending)?;
                 }
 
-                Ok(OplogData::BsonDocument {
+                Ok(OplogData::JsonString {
                     data: Cow::Owned(writer.finish()),
                 })
             }
         }
 
+        // Regardless of whether we're deserializing JSON or BSON, oplog data is represented either
+        // as a string (representing a JSON-encoded object) or an object (representing the values
+        // directly).
+
         let is_from_bson = !deserializer.is_human_readable();
         if is_from_bson {
-            // If possible, try to read the data document as a BSON blob instead parsing individual
-            // fields from it. We don't actually care about contents here (we'll just store them in
-            // the database), so we just need the unparsed document.
-            deserializer.deserialize_enum(
-                bson::Deserializer::SPECIAL_CASE_EMBEDDED_DOCUMENT,
-                &[],
-                ReadDataVisitor,
-            )
+            deserializer.deserialize_any(ReadFromBsonVisitor)
         } else {
-            deserializer.deserialize_any(ReadDataVisitor)
+            // We're already coming from JSON, so we either have a JSON string or a JSON object.
+            // Let's take a look at the serialized JSON string.
+            let data: &'de RawValue = Deserialize::deserialize(deserializer)?;
+            let str = data.get();
+
+            if matches!(str.chars().nth(0), Some('"')) {
+                // We have a JSON object serialized into a string. We'll have to deserialize once
+                // so that we have the JSON form of the object itself to forward to the database.
+                // This turns `"{\"foo\"": 1}"` into `{"foo": 1}`
+                let content: String = serde_json::from_str(str)
+                    .map_err(|_| D::Error::custom("could not deserialize json string"))?;
+                Ok(OplogData::JsonString {
+                    data: content.into(),
+                })
+            } else {
+                debug_assert_matches!(str.chars().nth(0), Some('{'));
+
+                // It's an embedded object that we now have as a string. How convenient, we'll save
+                // that into the database without further modifications.
+                Ok(OplogData::JsonString { data: str.into() })
+            }
         }
     }
 }

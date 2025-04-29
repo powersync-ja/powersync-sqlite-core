@@ -137,10 +137,10 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
                     Some(OplogData::JsonString { ref data }) => {
                         insert_statement.bind_text(6, data.as_ref(), sqlite::Destructor::STATIC)?
                     }
-                    Some(OplogData::BsonDocument { ref data }) => {
-                        let data = data.as_ref();
-                        insert_statement.bind_blob(6, data, sqlite::Destructor::STATIC)?
-                    }
+                    // Some(OplogData::BsonDocument { ref data }) => {
+                    //   let data = data.as_ref();
+                    //   insert_statement.bind_blob(6, data, sqlite::Destructor::STATIC)?
+                    // }
                     None => insert_statement.bind_null(6)?,
                 };
 

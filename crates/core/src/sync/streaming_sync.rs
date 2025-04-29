@@ -27,7 +27,7 @@ use super::{
     interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},
     line::{BucketChecksum, Checkpoint, CheckpointDiff, SyncLine},
     operations::insert_bucket_operations,
-    storage_adapter::{BucketDescription, StorageAdapter, SyncLocalResult},
+    storage_adapter::{StorageAdapter, SyncLocalResult},
     sync_status::{SyncDownloadProgress, SyncStatusContainer},
 };
 
@@ -294,7 +294,7 @@ impl StreamingSyncIteration {
                         &mut event.instructions,
                     );
                 }
-                SyncLine::CheckpointComplete(checkpoint_complete) => {
+                SyncLine::CheckpointComplete(_) => {
                     let Some(target) = target.target_checkpoint_mut() else {
                         return Err(SQLiteError(
                             ResultCode::ABORT,

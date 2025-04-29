@@ -12,7 +12,7 @@ use crate::error::{PSResult, SQLiteError};
 use crate::fix035::apply_v035_fix;
 use crate::sync::bucket_priority::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 10;
+pub const LATEST_VERSION: i32 = 9;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -364,23 +364,6 @@ INSERT INTO ps_migration(id, down_migrations) VALUES(9, json_array(
 json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN count_at_last'),
 json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN count_since_last'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 9')
-));
-";
-
-        local_db.exec_safe(stmt).into_db_result(local_db)?;
-    }
-
-    if current_version < 10 && target_version >= 10 {
-        let stmt = "\
-PRAGMA writable_schema = ON;
-UPDATE sqlite_schema SET sql = replace(sql, 'data TEXT', 'data ANY') WHERE name = 'ps_oplog';
-PRAGMA writable_schema = RESET;
-
-INSERT INTO ps_migration(id, down_migrations) VALUES(10, json_array(
-json_object('sql', 'PRAGMA writable_schema = ON'),
-json_object('sql', 'UPDATE sqlite_schema SET sql = replace(sql, ''data ANY'', ''data TEXT'') WHERE name = ''ps_oplog'''),
-json_object('sql', 'PRAGMA writable_schema = RESET'),
-json_object('sql', 'DELETE FROM ps_migration WHERE id >= 10')
 ));
 ";
 
