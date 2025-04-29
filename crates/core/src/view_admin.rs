@@ -213,7 +213,7 @@ fn setup_internal_views(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     AS SELECT
         view.name name,
         view.sql sql,
-        ifnull(trigger1.sql, '') delete_trigger_sql,
+        ifnull(group_concat(trigger1.sql, ';\n' ORDER BY trigger1.name DESC), '') delete_trigger_sql,
         ifnull(trigger2.sql, '') insert_trigger_sql,
         ifnull(trigger3.sql, '') update_trigger_sql
         FROM sqlite_master view
@@ -223,7 +223,8 @@ fn setup_internal_views(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
             ON trigger2.tbl_name = view.name AND trigger2.type = 'trigger' AND trigger2.name GLOB 'ps_view_insert*'
         LEFT JOIN sqlite_master trigger3
             ON trigger3.tbl_name = view.name AND trigger3.type = 'trigger' AND trigger3.name GLOB 'ps_view_update*'
-        WHERE view.type = 'view' AND view.sql GLOB  '*-- powersync-auto-generated';
+        WHERE view.type = 'view' AND view.sql GLOB  '*-- powersync-auto-generated'
+        GROUP BY view.name;
 
     CREATE TRIGGER IF NOT EXISTS powersync_views_insert
     INSTEAD OF INSERT ON powersync_views
