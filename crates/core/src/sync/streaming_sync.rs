@@ -223,6 +223,10 @@ impl StreamingSyncIteration {
                 SyncEvent::TearDown => break,
                 SyncEvent::TextLine { data } => serde_json::from_str(data)?,
                 SyncEvent::BinaryLine { data } => bson::from_bytes(data)?,
+                SyncEvent::DidRefreshToken => {
+                    // Break so that the client SDK starts another iteration.
+                    break;
+                }
             };
 
             match line {
@@ -290,8 +294,9 @@ impl StreamingSyncIteration {
                         SyncLocalResult::ChangesApplied => {
                             event.instructions.push(Instruction::LogLine {
                                 severity: LogSeverity::DEBUG,
-                                line: format!("Validated checkpoint"),
+                                line: format!("Validated and applied checkpoint"),
                             });
+                            event.instructions.push(Instruction::DidCompleteSync {});
 
                             let now = self.adapter.now()?;
                             self.status.update(
@@ -347,7 +352,19 @@ impl StreamingSyncIteration {
                         .update(|s| s.track_line(&data_line), &mut event.instructions);
                     insert_bucket_operations(&self.adapter, &data_line)?;
                 }
-                SyncLine::KeepAlive(token_expires_in) => todo!(),
+                SyncLine::KeepAlive(token) => {
+                    if token.is_expired() {
+                        // Token expired already - stop the connection immediately.
+                        event
+                            .instructions
+                            .push(Instruction::FetchCredentials { did_expire: true });
+                        break;
+                    } else if token.should_prefetch() {
+                        event
+                            .instructions
+                            .push(Instruction::FetchCredentials { did_expire: false });
+                    }
+                }
             }
         }
 

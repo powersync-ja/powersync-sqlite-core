@@ -73,15 +73,8 @@ impl DownloadSyncStatus {
         self.downloading = None;
         self.priority_status.clear();
 
-        let lowest_priority = applied
-            .buckets
-            .values()
-            .map(|bkt| bkt.priority)
-            .max()
-            .unwrap_or(BucketPriority::SENTINEL);
-
         self.priority_status.push(SyncPriorityStatus {
-            priority: lowest_priority,
+            priority: BucketPriority::SENTINEL,
             last_synced_at: Some(now),
             has_synced: Some(true),
         });

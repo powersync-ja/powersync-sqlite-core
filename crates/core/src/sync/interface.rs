@@ -27,6 +27,7 @@ pub enum SyncControlRequest<'a> {
 pub enum SyncEvent<'a> {
     Initialize,
     TearDown,
+    DidRefreshToken,
     TextLine { data: &'a str },
     BinaryLine { data: &'a [u8] },
 }
@@ -44,10 +45,14 @@ pub enum Instruction {
     EstablishSyncStream {
         request: StreamingSyncRequest,
     },
-    // These two are defined like this because deserializers in Kotlin can't support either an
+    FetchCredentials {
+        did_expire: bool,
+    },
+    // These are defined like this because deserializers in Kotlin can't support either an
     // object or a literal value
-    FlushFileSystem {},
     CloseSyncStream {},
+    FlushFileSystem {},
+    DidCompleteSync {},
 }
 
 #[derive(Serialize)]
@@ -129,6 +134,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
                         ));
                     },
                 }),
+                "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
                 _ => {
                     return Err(SQLiteError(
                         ResultCode::MISUSE,

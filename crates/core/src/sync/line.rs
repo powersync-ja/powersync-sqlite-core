@@ -118,8 +118,19 @@ pub enum OpType {
     REMOVE,
 }
 
-#[derive(Deserialize, Debug)]
+#[repr(transparent)]
+#[derive(Deserialize, Debug, Clone, Copy)]
 pub struct TokenExpiresIn(pub i32);
+
+impl TokenExpiresIn {
+    pub fn is_expired(self) -> bool {
+        self.0 <= 0
+    }
+
+    pub fn should_prefetch(self) -> bool {
+        !self.is_expired() && self.0 <= 30
+    }
+}
 
 impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
