@@ -237,7 +237,7 @@ impl StreamingSyncIteration {
                                         .into(),
                                 });
 
-                                self.handle_checkpoint_applied(&checkpoint, event)?;
+                                self.handle_checkpoint_applied(event)?;
                             }
                             _ => {
                                 event.instructions.push(Instruction::LogLine {
@@ -331,7 +331,7 @@ impl StreamingSyncIteration {
                                 severity: LogSeverity::DEBUG,
                                 line: "Validated and applied checkpoint".into(),
                             });
-                            self.handle_checkpoint_applied(target, event)?;
+                            self.handle_checkpoint_applied(event)?;
                         }
                     }
                 }
@@ -438,16 +438,12 @@ impl StreamingSyncIteration {
         Ok(local_bucket_names)
     }
 
-    fn handle_checkpoint_applied(
-        &mut self,
-        target: &OwnedCheckpoint,
-        event: &mut ActiveEvent,
-    ) -> Result<(), ResultCode> {
+    fn handle_checkpoint_applied(&mut self, event: &mut ActiveEvent) -> Result<(), ResultCode> {
         event.instructions.push(Instruction::DidCompleteSync {});
 
         let now = self.adapter.now()?;
         self.status.update(
-            |status| status.applied_checkpoint(target, now),
+            |status| status.applied_checkpoint(now),
             &mut event.instructions,
         );
 

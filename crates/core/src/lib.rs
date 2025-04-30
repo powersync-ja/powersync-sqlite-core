@@ -11,6 +11,7 @@ use core::ffi::{c_char, c_int};
 
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
+use util::SQLITE3_API;
 
 mod bson;
 mod checkpoint;
@@ -43,6 +44,7 @@ pub extern "C" fn sqlite3_powersync_init(
     api: *mut sqlite::api_routines,
 ) -> c_int {
     sqlite::EXTENSION_INIT2(api);
+    unsafe { SQLITE3_API = api };
 
     let result = init_extension(db);
 

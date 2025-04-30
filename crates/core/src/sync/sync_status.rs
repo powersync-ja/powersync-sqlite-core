@@ -69,7 +69,7 @@ impl DownloadSyncStatus {
         self.debug_assert_priority_status_is_sorted();
     }
 
-    pub fn applied_checkpoint(&mut self, applied: &OwnedCheckpoint, now: Timestamp) {
+    pub fn applied_checkpoint(&mut self, now: Timestamp) {
         self.downloading = None;
         self.priority_status.clear();
 

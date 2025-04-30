@@ -1,6 +1,6 @@
 extern crate alloc;
 
-use core::ptr::null_mut;
+use core::ptr::{self, null_mut};
 
 use alloc::format;
 use alloc::string::String;
@@ -8,13 +8,9 @@ use alloc::string::String;
 use lock_api::{GuardSend, Mutex as MutexApi, RawMutex};
 use serde::de::Visitor;
 use sqlite_nostd::bindings::SQLITE_MUTEX_FAST;
-use sqlite_nostd::{
-    sqlite3_mutex_alloc, sqlite3_mutex_enter, sqlite3_mutex_free, sqlite3_mutex_leave,
-    sqlite3_mutex_try, Connection, Context,
-};
+use sqlite_nostd::{api_routines, Connection, Context};
 
 use crate::error::SQLiteError;
-#[cfg(feature = "getrandom")]
 use crate::sqlite;
 use crate::sqlite::bindings::sqlite3_mutex;
 
@@ -118,10 +114,21 @@ pub struct SqliteMutex {
     ptr: *mut sqlite3_mutex,
 }
 
+// We always invoke mutex APIs through the api routines, even when we link the rest of SQLite
+// statically.
+// The reason is that it's possible to omit the mutex code (in which case we don't want to link
+// undefined symbols).
+pub(crate) static mut SQLITE3_API: *mut api_routines = ptr::null_mut();
+
 impl SqliteMutex {
     pub fn new() -> Self {
+        let native_alloc = unsafe { (*SQLITE3_API).mutex_alloc };
+
         Self {
-            ptr: sqlite3_mutex_alloc(SQLITE_MUTEX_FAST as i32),
+            ptr: match native_alloc {
+                None => null_mut(),
+                Some(mutex_alloc) => unsafe { mutex_alloc(SQLITE_MUTEX_FAST as i32) },
+            },
         }
     }
 }
@@ -132,21 +139,37 @@ unsafe impl RawMutex for SqliteMutex {
     type GuardMarker = GuardSend;
 
     fn lock(&self) {
-        sqlite3_mutex_enter(self.ptr);
+        if self.ptr.is_null() {
+            // Disable mutex code
+        } else {
+            unsafe { (*SQLITE3_API).mutex_enter.unwrap_unchecked()(self.ptr) }
+        }
     }
 
     fn try_lock(&self) -> bool {
-        sqlite3_mutex_try(self.ptr) == 0
+        if self.ptr.is_null() {
+            // Disable mutex code
+            true
+        } else {
+            let res = unsafe { (*SQLITE3_API).mutex_try.unwrap_unchecked()(self.ptr) };
+            res == 0
+        }
     }
 
     unsafe fn unlock(&self) {
-        sqlite3_mutex_leave(self.ptr);
+        if self.ptr.is_null() {
+            // Disable mutex code
+        } else {
+            unsafe { (*SQLITE3_API).mutex_leave.unwrap_unchecked()(self.ptr) }
+        }
     }
 }
 
 impl Drop for SqliteMutex {
     fn drop(&mut self) {
-        sqlite3_mutex_free(self.ptr);
+        if !self.ptr.is_null() {
+            unsafe { (*SQLITE3_API).mutex_free.unwrap_unchecked()(self.ptr) };
+        }
     }
 }
 
