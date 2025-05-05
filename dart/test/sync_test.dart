@@ -440,8 +440,22 @@ void _syncTests<T>({
       expect(progress, isNull);
 
       // Emit new data, progress should be 0/2 instead of 10/12
-      applyInstructions(pushCheckpoint(
-          lastOpId: 12, buckets: [bucketDescription('a', count: 12)]));
+      applyInstructions(syncLine({
+        'checkpoint_diff': {
+          'last_op_id': '12',
+          'updated_buckets': [
+            {
+              'bucket': 'a',
+              'priority': 3,
+              'checksum': 0,
+              'count': 12,
+              'last_op_id': null
+            },
+          ],
+          'removed_buckets': [],
+          'write_checkpoint': null,
+        }
+      }));
       expect(totalProgress(), (0, 2));
 
       pushSyncData('a', 2);
