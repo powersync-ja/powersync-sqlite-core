@@ -91,7 +91,7 @@ impl StorageAdapter {
             if stmt.step()? == ResultCode::ROW {
                 let bucket = stmt.column_text(0)?;
                 let count_at_last = stmt.column_int64(1);
-                let count_since_last = stmt.column_int64(1);
+                let count_since_last = stmt.column_int64(2);
 
                 return Ok(Some(PersistedBucketProgress {
                     bucket,

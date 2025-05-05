@@ -27,6 +27,12 @@ impl DownloadSyncStatus {
             .is_sorted_by(|a, b| a.priority >= b.priority))
     }
 
+    pub fn disconnect(&mut self) {
+        self.connected = false;
+        self.connecting = false;
+        self.downloading = None;
+    }
+
     pub fn start_connecting(&mut self) {
         self.connected = false;
         self.downloading = None;
@@ -112,11 +118,20 @@ impl SyncStatusContainer {
         apply: F,
         instructions: &mut Vec<Instruction>,
     ) {
+        self.update_only(apply);
+        self.emit_changes(instructions);
+    }
+
+    /// Invokes a function to update the sync status without emitting a status event.
+    pub fn update_only<F: FnOnce(&mut DownloadSyncStatus) -> ()>(&self, apply: F) {
         let mut status = self.status.borrow_mut();
         apply(&mut *status);
+    }
 
-        // If apply() actually changed something (we compare hash codes to avoid copying), emit an
-        // instructions for clients to update the public sync status.
+    /// If the status has been changed since the last time an [Instruction::UpdateSyncStatus] event
+    /// was emitted, emit such an event now.
+    pub fn emit_changes(&mut self, instructions: &mut Vec<Instruction>) {
+        let status = self.status.borrow();
         let hash = FxBuildHasher.hash_one(&*status);
         if hash != self.last_published_hash {
             self.last_published_hash = hash;

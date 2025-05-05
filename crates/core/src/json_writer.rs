@@ -22,7 +22,7 @@ impl JsonWriter {
         }
         self.buffer.push('"');
         format_escaped_str_contents(&mut self.buffer, key);
-        self.buffer.push('"');
+        self.buffer.push_str("\": ");
     }
 
     pub fn write_str(&mut self, key: &str, value: &str) {

@@ -222,7 +222,11 @@ impl StreamingSyncIteration {
                 SyncEvent::Initialize { .. } => {
                     panic!("Initialize should only be emited once")
                 }
-                SyncEvent::TearDown => break,
+                SyncEvent::TearDown => {
+                    self.status
+                        .update(|s| s.disconnect(), &mut event.instructions);
+                    break;
+                }
                 SyncEvent::TextLine { data } => serde_json::from_str(data)?,
                 SyncEvent::BinaryLine { data } => bson::from_bytes(data)?,
                 SyncEvent::UploadFinished => {
@@ -257,8 +261,7 @@ impl StreamingSyncIteration {
                 }
             };
 
-            self.status
-                .update(|s| s.mark_connected(), &mut event.instructions);
+            self.status.update_only(|s| s.mark_connected());
 
             match line {
                 SyncLine::Checkpoint(checkpoint) => {
@@ -396,6 +399,8 @@ impl StreamingSyncIteration {
                     }
                 }
             }
+
+            self.status.emit_changes(&mut event.instructions);
         }
 
         Ok(())

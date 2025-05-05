@@ -120,8 +120,11 @@
       {
         "LogLine": {
           "severity": "DEBUG",
-          "line": "Validated checkpoint"
+          "line": "Validated and applied checkpoint"
         }
+      },
+      {
+        "DidCompleteSync": {}
       },
       {
         "UpdateSyncStatus": {
@@ -130,7 +133,7 @@
             "connecting": false,
             "priority_status": [
               {
-                "priority": 3,
+                "priority": 2147483647,
                 "last_synced_at": 1740819600,
                 "has_synced": true
               }

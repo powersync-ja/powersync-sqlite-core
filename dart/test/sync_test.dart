@@ -355,6 +355,188 @@ void _syncTests<T>({
     ]);
   });
 
+  group('progress', () {
+    Map<String, BucketProgress>? progress = null;
+    var lastOpId = 0;
+
+    setUp(() {
+      lastOpId = 0;
+      return progress = null;
+    });
+
+    (int, int) totalProgress() {
+      return progress!.values.downloadAndTargetCount();
+    }
+
+    (int, int) priorityProgress(int priority) {
+      return progress!.values
+          .where((e) => e.priority <= priority)
+          .downloadAndTargetCount();
+    }
+
+    void applyInstructions(List<Object?> instructions) {
+      for (final instruction in instructions.cast<Map>()) {
+        if (instruction['UpdateSyncStatus'] case final updateStatus?) {
+          final downloading = updateStatus['status']['downloading'];
+          if (downloading == null) {
+            progress = null;
+          } else {
+            progress = {
+              for (final MapEntry(:key, :value)
+                  in downloading['buckets'].entries)
+                key: (
+                  atLast: value['at_last'] as int,
+                  sinceLast: value['since_last'] as int,
+                  targetCount: value['target_count'] as int,
+                  priority: value['priority'] as int,
+                ),
+            };
+          }
+        }
+      }
+    }
+
+    void pushSyncData(String bucket, int amount) {
+      final instructions = syncLine({
+        'data': {
+          'bucket': bucket,
+          'has_more': false,
+          'after': null,
+          'next_after': null,
+          'data': [
+            for (var i = 0; i < amount; i++)
+              {
+                'op_id': (++lastOpId).toString(),
+                'op': 'PUT',
+                'object_type': 'items',
+                'object_id': '$lastOpId',
+                'checksum': 0,
+                'data': '{}',
+              }
+          ],
+        },
+      });
+
+      applyInstructions(instructions);
+    }
+
+    void addCheckpointComplete({int? priority}) {
+      applyInstructions(
+          pushCheckpointComplete(priority: priority, lastOpId: '$lastOpId'));
+    }
+
+    test('without priorities', () {
+      applyInstructions(invokeControl('start', null));
+      expect(progress, isNull);
+
+      applyInstructions(pushCheckpoint(
+          buckets: [bucketDescription('a', count: 10)], lastOpId: 10));
+      expect(totalProgress(), (0, 10));
+
+      pushSyncData('a', 10);
+      expect(totalProgress(), (10, 10));
+
+      addCheckpointComplete();
+      expect(progress, isNull);
+
+      // Emit new data, progress should be 0/2 instead of 10/12
+      applyInstructions(pushCheckpoint(
+          lastOpId: 12, buckets: [bucketDescription('a', count: 12)]));
+      expect(totalProgress(), (0, 2));
+
+      pushSyncData('a', 2);
+      expect(totalProgress(), (2, 2));
+
+      addCheckpointComplete();
+      expect(progress, isNull);
+    });
+
+    test('interrupted sync', () {
+      applyInstructions(invokeControl('start', null));
+      applyInstructions(pushCheckpoint(
+          buckets: [bucketDescription('a', count: 10)], lastOpId: 10));
+      expect(totalProgress(), (0, 10));
+
+      pushSyncData('a', 5);
+      expect(totalProgress(), (5, 10));
+
+      // Emulate stream closing
+      applyInstructions(invokeControl('stop', null));
+      expect(progress, isNull);
+
+      applyInstructions(invokeControl('start', null));
+      applyInstructions(pushCheckpoint(
+          buckets: [bucketDescription('a', count: 10)], lastOpId: 10));
+      expect(totalProgress(), (5, 10));
+
+      pushSyncData('a', 5);
+      expect(totalProgress(), (10, 10));
+      addCheckpointComplete();
+      expect(progress, isNull);
+    });
+
+    test('interrupted sync with new checkpoint', () {
+      applyInstructions(invokeControl('start', null));
+      applyInstructions(pushCheckpoint(
+          buckets: [bucketDescription('a', count: 10)], lastOpId: 10));
+      expect(totalProgress(), (0, 10));
+
+      pushSyncData('a', 5);
+      expect(totalProgress(), (5, 10));
+
+      // Emulate stream closing
+      applyInstructions(invokeControl('stop', null));
+      expect(progress, isNull);
+
+      applyInstructions(invokeControl('start', null));
+      applyInstructions(pushCheckpoint(
+          buckets: [bucketDescription('a', count: 12)], lastOpId: 12));
+      expect(totalProgress(), (5, 12));
+
+      pushSyncData('a', 7);
+      expect(totalProgress(), (12, 12));
+      addCheckpointComplete();
+      expect(progress, isNull);
+    });
+
+    test('different priorities', () {
+      void expectProgress((int, int) prio0, (int, int) prio2) {
+        expect(priorityProgress(0), prio0);
+        expect(priorityProgress(1), prio0);
+        expect(priorityProgress(2), prio2);
+        expect(totalProgress(), prio2);
+      }
+
+      applyInstructions(invokeControl('start', null));
+      applyInstructions(pushCheckpoint(buckets: [
+        bucketDescription('a', count: 5, priority: 0),
+        bucketDescription('b', count: 5, priority: 2),
+      ], lastOpId: 10));
+      expectProgress((0, 5), (0, 10));
+
+      pushSyncData('a', 5);
+      expectProgress((5, 5), (5, 10));
+
+      pushSyncData('b', 2);
+      expectProgress((5, 5), (7, 10));
+
+      // Before syncing b fully, send a new checkpoint
+      applyInstructions(pushCheckpoint(buckets: [
+        bucketDescription('a', count: 8, priority: 0),
+        bucketDescription('b', count: 6, priority: 2),
+      ], lastOpId: 14));
+      expectProgress((5, 8), (7, 14));
+
+      pushSyncData('a', 3);
+      expectProgress((8, 8), (10, 14));
+      pushSyncData('b', 4);
+      expectProgress((8, 8), (14, 14));
+
+      addCheckpointComplete();
+      expect(progress, isNull);
+    });
+  });
+
   group('errors', () {
     syncTest('diff without prior checkpoint', (_) {
       invokeControl('start', null);
@@ -444,6 +626,26 @@ Object bucketDescription(String name,
 final priorityBuckets = [
   for (var i = 0; i < 4; i++) bucketDescription('prio$i', priority: i)
 ];
+
+typedef BucketProgress = ({
+  int priority,
+  int atLast,
+  int sinceLast,
+  int targetCount
+});
+
+extension on Iterable<BucketProgress> {
+  (int, int) downloadAndTargetCount() {
+    return fold((0, 0), (counters, entry) {
+      final (downloaded, total) = counters;
+
+      return (
+        downloaded + entry.sinceLast,
+        total + entry.targetCount - entry.atLast
+      );
+    });
+  }
+}
 
 extension on Uint8List {
   // ignore: unused_element
