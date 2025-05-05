@@ -196,8 +196,29 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         }
     }
 
+    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        // Since the sync service is written in JavaScript, we'll get numbers as doubles...
+        let element_type = self.prepare_to_read_value()?;
+        match element_type {
+            ElementType::Int32 => visitor.visit_i32(self.parser.read_int32()?),
+            ElementType::Double => {
+                let value = self.parser.read_double()?;
+                let converted: i32 = num_traits::cast(value).ok_or_else(|| {
+                    self.parser
+                        .error(ErrorKind::IllegalFloatToIntConversion(value))
+                })?;
+
+                visitor.visit_i32(converted)
+            }
+            _ => self.deserialize_any(visitor),
+        }
+    }
+
     forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bool i8 i16 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
         bytes byte_buf unit unit_struct newtype_struct seq tuple
         tuple_struct map struct ignored_any identifier
     }

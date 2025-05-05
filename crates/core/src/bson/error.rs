@@ -36,6 +36,7 @@ pub enum ErrorKind {
     InvalidStateExpectedValue,
     ExpectedEnum { actual: ElementType },
     ExpectedString,
+    IllegalFloatToIntConversion(f64),
     UnexpectedEndOfDocumentForEnumVariant,
 }
 
