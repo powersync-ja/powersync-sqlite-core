@@ -355,6 +355,32 @@ void _syncTests<T>({
     ]);
   });
 
+  if (isBson) {
+    test('can parse checksums from JS numbers', () {
+      invokeControl('start', null);
+      pushCheckpoint(buckets: [bucketDescription('global[]')]);
+
+      syncLine({
+        'data': {
+          'bucket': 'a',
+          'has_more': false,
+          'after': null,
+          'next_after': null,
+          'data': [
+            {
+              'op_id': '1',
+              'op': 'PUT',
+              'object_type': 'items',
+              'object_id': 'id',
+              'checksum': 3573495687.0,
+              'data': '{}',
+            }
+          ],
+        },
+      });
+    });
+  }
+
   group('progress', () {
     Map<String, BucketProgress>? progress = null;
     var lastOpId = 0;

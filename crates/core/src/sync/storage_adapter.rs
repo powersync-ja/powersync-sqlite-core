@@ -12,6 +12,7 @@ use crate::{
     error::SQLiteError,
     ext::SafeManagedStmt,
     operations::delete_bucket,
+    sync::Checksum,
     sync_local::{PartialSyncOperation, SyncOperation},
 };
 
@@ -164,7 +165,7 @@ GROUP BY bucket_list.bucket",
         #[derive(Serialize)]
         struct BucketInfo<'a> {
             bucket: &'a str,
-            checksum: i32,
+            checksum: Checksum,
         }
 
         let mut buckets = Vec::<BucketInfo>::new();

@@ -15,12 +15,9 @@ pub fn from_bytes<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, BsonE
 
 #[cfg(test)]
 mod test {
-    use core::assert_matches::assert_matches;
-
-    use crate::sync::line::{Checkpoint, SyncLine};
+    use crate::sync::line::SyncLine;
 
     use super::*;
-    use serde::de::DeserializeOwned;
 
     #[test]
     fn test_hello_world() {

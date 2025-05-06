@@ -1,4 +1,5 @@
 use alloc::{borrow::Cow, format};
+use num_traits::Zero;
 use sqlite_nostd::Connection;
 use sqlite_nostd::{self as sqlite, ResultCode};
 
@@ -8,6 +9,7 @@ use crate::{
 };
 
 use super::line::OplogData;
+use super::Checksum;
 use super::{
     line::{DataLine, OpType},
     storage_adapter::{BucketInfo, StorageAdapter},
@@ -51,8 +53,8 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
     )?;
 
     let mut last_op: Option<i64> = None;
-    let mut add_checksum: i32 = 0;
-    let mut op_checksum: i32 = 0;
+    let mut add_checksum = Checksum::zero();
+    let mut op_checksum = Checksum::zero();
     let mut added_ops: i32 = 0;
 
     for data in &line.data {
@@ -77,9 +79,9 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
 
                 while supersede_statement.step()? == ResultCode::ROW {
                     // Superseded (deleted) a previous operation, add the checksum
-                    let supersede_checksum = supersede_statement.column_int(1);
-                    add_checksum = add_checksum.wrapping_add(supersede_checksum);
-                    op_checksum = op_checksum.wrapping_sub(supersede_checksum);
+                    let supersede_checksum = Checksum::from_i32(supersede_statement.column_int(1));
+                    add_checksum += supersede_checksum;
+                    op_checksum += supersede_checksum;
 
                     // Superseded an operation, only skip if the bucket was empty
                     // Previously this checked "superseded_op <= last_applied_op".
@@ -95,7 +97,7 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
                 if data.op == OpType::REMOVE {
                     let should_skip_remove = !superseded;
 
-                    add_checksum = add_checksum.wrapping_add(checksum);
+                    add_checksum += checksum;
 
                     if !should_skip_remove {
                         if let (Some(object_type), Some(object_id)) =
@@ -144,13 +146,13 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
                     None => insert_statement.bind_null(6)?,
                 };
 
-                insert_statement.bind_int(7, checksum)?;
+                insert_statement.bind_int(7, checksum.bitcast_i32())?;
                 insert_statement.exec()?;
 
-                op_checksum = op_checksum.wrapping_add(checksum);
+                op_checksum += checksum;
             }
             OpType::MOVE => {
-                add_checksum = add_checksum.wrapping_add(checksum);
+                add_checksum += checksum;
             }
             OpType::CLEAR => {
                 // Any remaining PUT operations should get an implicit REMOVE
@@ -179,12 +181,12 @@ WHERE bucket = ?1",
                     "UPDATE ps_buckets SET last_applied_op = 0, add_checksum = ?1, op_checksum = 0 WHERE id = ?2",
                 )?;
                 clear_statement2.bind_int64(2, bucket_id)?;
-                clear_statement2.bind_int(1, checksum)?;
+                clear_statement2.bind_int(1, checksum.bitcast_i32())?;
                 clear_statement2.exec()?;
 
-                add_checksum = 0;
+                add_checksum = Checksum::zero();
                 is_empty = true;
-                op_checksum = 0;
+                op_checksum = Checksum::zero();
             }
         }
     }
@@ -201,8 +203,8 @@ WHERE bucket = ?1",
         )?;
         statement.bind_int64(1, bucket_id)?;
         statement.bind_int64(2, last_op)?;
-        statement.bind_int(3, add_checksum)?;
-        statement.bind_int(4, op_checksum)?;
+        statement.bind_int(3, add_checksum.bitcast_i32())?;
+        statement.bind_int(4, op_checksum.bitcast_i32())?;
         statement.bind_int(5, added_ops)?;
 
         statement.exec()?;

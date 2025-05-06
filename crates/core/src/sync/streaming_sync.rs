@@ -29,6 +29,7 @@ use super::{
     operations::insert_bucket_operations,
     storage_adapter::{StorageAdapter, SyncLocalResult},
     sync_status::{SyncDownloadProgress, SyncStatusContainer},
+    Checksum,
 };
 
 pub struct SyncClient {
@@ -535,7 +536,7 @@ impl OwnedCheckpoint {
 #[derive(Debug, Clone)]
 pub struct OwnedBucketChecksum {
     pub bucket: String,
-    pub checksum: i32,
+    pub checksum: Checksum,
     pub priority: BucketPriority,
     pub count: Option<i64>,
     pub last_op_id: Option<i64>,

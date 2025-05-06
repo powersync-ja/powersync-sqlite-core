@@ -13,6 +13,7 @@ use crate::json_writer::JsonWriter;
 use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64};
 
 use super::bucket_priority::BucketPriority;
+use super::Checksum;
 
 #[derive(Deserialize, Debug)]
 
@@ -73,7 +74,7 @@ pub struct CheckpointPartiallyComplete {
 #[derive(Deserialize, Debug)]
 pub struct BucketChecksum<'a> {
     pub bucket: &'a str,
-    pub checksum: i32,
+    pub checksum: Checksum,
     pub priority: Option<BucketPriority>,
     pub count: Option<i64>,
     #[serde(default)]
@@ -95,7 +96,7 @@ pub struct DataLine<'a> {
 
 #[derive(Deserialize, Debug)]
 pub struct OplogEntry<'a> {
-    pub checksum: i32,
+    pub checksum: Checksum,
     #[serde(deserialize_with = "deserialize_string_to_i64")]
     pub op_id: i64,
     pub op: OpType,
@@ -324,7 +325,7 @@ mod tests {
         assert_eq!(checkpoint.buckets.len(), 1);
         let bucket = &checkpoint.buckets[0];
         assert_eq!(bucket.bucket, "a");
-        assert_eq!(bucket.checksum, 10);
+        assert_eq!(bucket.checksum, 10u32.into());
         assert_eq!(bucket.priority, None);
 
         let SyncLine::Checkpoint(checkpoint) = deserialize(
@@ -336,7 +337,7 @@ mod tests {
         assert_eq!(checkpoint.buckets.len(), 1);
         let bucket = &checkpoint.buckets[0];
         assert_eq!(bucket.bucket, "a");
-        assert_eq!(bucket.checksum, 10);
+        assert_eq!(bucket.checksum, 10u32.into());
         assert_eq!(bucket.priority, Some(BucketPriority { number: 1 }));
 
         assert_matches!(
@@ -400,10 +401,12 @@ mod tests {
         assert_eq!(data.next_after, None);
 
         assert_eq!(data.data.len(), 1);
+        let entry = &data.data[0];
+        assert_eq!(entry.checksum, 10u32.into());
         assert_matches!(
             &data.data[0],
             OplogEntry {
-                checksum: 10,
+                checksum: _,
                 op_id: 1,
                 object_id: Some(_),
                 object_type: Some(_),
