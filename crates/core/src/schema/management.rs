@@ -37,7 +37,7 @@ SELECT
             let local_only = statement.column_int(2) != 0;
 
             db.exec_safe(&format!(
-                "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data ANY) STRICT",
+                "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT) STRICT",
                 quote_identifier(internal_name)
             ))
             .into_db_result(db)?;
