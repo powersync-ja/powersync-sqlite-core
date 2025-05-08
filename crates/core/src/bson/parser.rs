@@ -41,8 +41,12 @@ impl<'de> Parser<'de> {
     }
 
     fn advance_byte(&mut self) -> Result<u8, BsonError> {
-        let slice = self.advance_checked(1)?;
-        Ok(slice[0])
+        let value = *self
+            .remaining_input
+            .split_off_first()
+            .ok_or_else(|| self.error(ErrorKind::UnexpectedEoF))?;
+
+        Ok(value)
     }
 
     pub fn read_cstr(&mut self) -> Result<&'de str, BsonError> {
