@@ -23,7 +23,8 @@ void syncTest(String description, void Function(FakeAsync controller) body) {
 }
 
 void main() {
-  final vfs = TestSqliteFileSystem(fs: const LocalFileSystem());
+  final vfs =
+      TestSqliteFileSystem(fs: const LocalFileSystem(), name: 'vfs-sync-test');
 
   setUpAll(() {
     loadExtension();
@@ -728,8 +729,14 @@ final class SyncLinesGoldenTest {
     return expectedLines[actualLines.length];
   }
 
-  Never _mismatch() {
-    throw 'Golden test for sync lines failed, set UPDATE_GOLDENS=1 to update';
+  void _checkMismatch(void Function() compare) {
+    try {
+      compare();
+    } catch (e) {
+      print(
+          'Golden test for sync lines failed, set UPDATE_GOLDENS=1 to update');
+      rethrow;
+    }
   }
 
   void load(String name) {
@@ -762,16 +769,16 @@ final class SyncLinesGoldenTest {
       if (!isBson) {
         // We only want to compare the JSON inputs. We compare outputs
         // regardless of the encoding mode.
-        if (expected.operation != operation ||
-            json.encode(expected.data) != json.encode(matchData)) {
-          _mismatch();
-        }
+        _checkMismatch(() {
+          expect(operation, expected.operation);
+          expect(matchData, expected.data);
+        });
       }
 
       final result = _invokeControl(operation, data);
-      if (json.encode(result) != json.encode(expected.output)) {
-        _mismatch();
-      }
+      _checkMismatch(() {
+        expect(result, expected.output);
+      });
 
       actualLines.add(ExpectedSyncLine(operation, matchData, result));
       return result;
@@ -784,8 +791,9 @@ final class SyncLinesGoldenTest {
         File(path).writeAsStringSync(
             JsonEncoder.withIndent('  ').convert(actualLines));
       }
-    } else if (expectedLines.length != actualLines.length) {
-      _mismatch();
+    } else {
+      _checkMismatch(
+          () => expect(actualLines, hasLength(expectedLines.length)));
     }
   }
 }

@@ -50,7 +50,7 @@ impl<'de> Parser<'de> {
             .map_err(|_| self.error(ErrorKind::UnterminatedCString))?;
         let str = raw
             .to_str()
-            .map_err(|_| self.error(ErrorKind::InvalidCString))?;
+            .map_err(|e| self.error(ErrorKind::InvalidCString(e)))?;
 
         self.advance(str.len() + 1);
         Ok(str)
@@ -95,7 +95,7 @@ impl<'de> Parser<'de> {
         let bytes = self.advance_checked(length_including_null)?;
 
         str::from_utf8(&bytes[..length_including_null - 1])
-            .map_err(|_| self.error(ErrorKind::InvalidCString))
+            .map_err(|e| self.error(ErrorKind::InvalidCString(e)))
     }
 
     pub fn read_binary(&mut self) -> Result<(BinarySubtype, &'de [u8]), BsonError> {
@@ -190,7 +190,7 @@ impl<'de> Parser<'de> {
 #[repr(transparent)]
 pub struct BinarySubtype(pub u8);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum ElementType {
     Double = 1,
     String = 2,

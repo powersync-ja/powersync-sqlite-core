@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+emcc --version
 
 # Normal build
 # target/wasm32-unknown-emscripten/wasm/powersync.wasm

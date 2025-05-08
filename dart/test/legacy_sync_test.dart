@@ -12,7 +12,8 @@ import 'utils/native_test_utils.dart';
 /// Tests that the older sync interfaces requiring clients to decode and handle
 /// sync lines still work.
 void main() {
-  final vfs = TestSqliteFileSystem(fs: const LocalFileSystem());
+  final vfs = TestSqliteFileSystem(
+      fs: const LocalFileSystem(), name: 'legacy-sync-test');
 
   setUpAll(() {
     loadExtension();

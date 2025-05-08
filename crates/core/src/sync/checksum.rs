@@ -126,7 +126,7 @@ impl<'de> Deserialize<'de> for Checksum {
             where
                 E: serde::de::Error,
             {
-                if !v.is_finite() || v.trunc() != v {
+                if !v.is_finite() || f64::trunc(v) != v {
                     return Err(E::invalid_value(
                         serde::de::Unexpected::Float(v),
                         &"a whole number",

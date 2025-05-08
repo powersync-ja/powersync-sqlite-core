@@ -356,8 +356,3 @@ pub struct PersistedBucketProgress<'a> {
     pub count_at_last: i64,
     pub count_since_last: i64,
 }
-
-pub struct BucketDescription {
-    pub priority: BucketPriority,
-    pub name: String,
-}

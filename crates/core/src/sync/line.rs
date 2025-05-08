@@ -60,14 +60,14 @@ pub struct CheckpointDiff<'a> {
 
 #[derive(Deserialize, Debug)]
 pub struct CheckpointComplete {
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
-    pub last_op_id: i64,
+    //    #[serde(deserialize_with = "deserialize_string_to_i64")]
+    //    pub last_op_id: i64,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct CheckpointPartiallyComplete {
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
-    pub last_op_id: i64,
+    //    #[serde(deserialize_with = "deserialize_string_to_i64")]
+    //    pub last_op_id: i64,
     pub priority: BucketPriority,
 }
 
@@ -77,21 +77,21 @@ pub struct BucketChecksum<'a> {
     pub checksum: Checksum,
     pub priority: Option<BucketPriority>,
     pub count: Option<i64>,
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
-    pub last_op_id: Option<i64>,
+//    #[serde(default)]
+//    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
+//    pub last_op_id: Option<i64>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct DataLine<'a> {
     pub bucket: &'a str,
     pub data: Vec<OplogEntry<'a>>,
-    #[serde(default)]
-    pub has_more: bool,
-    #[serde(default, borrow)]
-    pub after: Option<&'a str>,
-    #[serde(default, borrow)]
-    pub next_after: Option<&'a str>,
+    //    #[serde(default)]
+    //    pub has_more: bool,
+    //    #[serde(default, borrow)]
+    //    pub after: Option<&'a str>,
+    //    #[serde(default, borrow)]
+    //    pub next_after: Option<&'a str>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -368,8 +368,11 @@ mod tests {
     fn parse_checkpoint_complete() {
         assert_matches!(
             deserialize(r#"{"checkpoint_complete": {"last_op_id": "10"}}"#),
-            SyncLine::CheckpointComplete(CheckpointComplete { last_op_id: 10 })
+            SyncLine::CheckpointComplete(CheckpointComplete { 
+                //last_op_id: 10 
+                })
         );
+
     }
 
     #[test]
@@ -377,7 +380,7 @@ mod tests {
         assert_matches!(
             deserialize(r#"{"partial_checkpoint_complete": {"last_op_id": "10", "priority": 1}}"#),
             SyncLine::CheckpointPartiallyComplete(CheckpointPartiallyComplete {
-                last_op_id: 10,
+                //last_op_id: 10,
                 priority: BucketPriority { number: 1 }
             })
         );
@@ -397,8 +400,6 @@ mod tests {
         };
 
         assert_eq!(data.bucket, "bkt");
-        assert_eq!(data.after, None);
-        assert_eq!(data.next_after, None);
 
         assert_eq!(data.data.len(), 1);
         let entry = &data.data[0];

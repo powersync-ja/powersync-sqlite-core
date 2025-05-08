@@ -335,6 +335,7 @@ impl StreamingSyncIteration {
                                 severity: LogSeverity::DEBUG,
                                 line: "Validated and applied checkpoint".into(),
                             });
+                            event.instructions.push(Instruction::FlushFileSystem {});
                             self.handle_checkpoint_applied(event)?;
                         }
                     }
@@ -372,6 +373,7 @@ impl StreamingSyncIteration {
                         }
                         SyncLocalResult::ChangesApplied => {
                             let now = self.adapter.now()?;
+                            event.instructions.push(Instruction::FlushFileSystem {});
                             self.status.update(
                                 |status| {
                                     status.partial_checkpoint_complete(priority, now);
@@ -539,7 +541,6 @@ pub struct OwnedBucketChecksum {
     pub checksum: Checksum,
     pub priority: BucketPriority,
     pub count: Option<i64>,
-    pub last_op_id: Option<i64>,
 }
 
 impl OwnedBucketChecksum {
@@ -558,7 +559,6 @@ impl From<&'_ BucketChecksum<'_>> for OwnedBucketChecksum {
             checksum: value.checksum,
             priority: value.priority.unwrap_or(BucketPriority::FALLBACK),
             count: value.count,
-            last_op_id: value.last_op_id,
         }
     }
 }
