@@ -2,6 +2,8 @@ use crate::error::SQLiteError;
 use crate::sync::line::DataLine;
 use crate::sync::operations::insert_bucket_operations;
 use crate::sync::storage_adapter::StorageAdapter;
+use alloc::vec::Vec;
+use serde::Deserialize;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, ResultCode};
 
@@ -9,9 +11,18 @@ use crate::ext::SafeManagedStmt;
 
 // Run inside a transaction
 pub fn insert_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), SQLiteError> {
-    let line = serde_json::from_str::<DataLine>(data)?;
+    #[derive(Deserialize)]
+    struct DataBatch<'a> {
+        #[serde(borrow)]
+        buckets: Vec<DataLine<'a>>,
+    }
+
+    let batch = serde_json::from_str::<DataBatch>(data)?;
     let adapter = StorageAdapter::new(db)?;
-    insert_bucket_operations(&adapter, &line)?;
+
+    for bucket in &batch.buckets {
+        insert_bucket_operations(&adapter, &bucket)?;
+    }
 
     Ok(())
 }
