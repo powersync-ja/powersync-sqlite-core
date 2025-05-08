@@ -18,7 +18,7 @@ import 'utils/native_test_utils.dart';
 void syncTest(String description, void Function(FakeAsync controller) body) {
   return test(description, () {
     // Give each test the same starting time to make goldens easier to compare.
-    fakeAsync(body, initialTime: DateTime(2025, 3, 1, 10));
+    fakeAsync(body, initialTime: DateTime.utc(2025, 3, 1, 10));
   });
 }
 
@@ -254,7 +254,7 @@ void _syncTests<T>({
         // Make sure there's only a single row in last_synced_at
         expect(
           db.select(
-              "SELECT datetime(last_synced_at, 'localtime') AS last_synced_at FROM ps_sync_state WHERE priority = ?",
+              "SELECT datetime(last_synced_at) AS last_synced_at FROM ps_sync_state WHERE priority = ?",
               [prio ?? 2147483647]),
           [
             {'last_synced_at': '2025-03-01 ${10 + i}:00:00'}
@@ -264,7 +264,7 @@ void _syncTests<T>({
         if (prio == null) {
           expect(
             db.select(
-                "SELECT datetime(powersync_last_synced_at(), 'localtime') AS last_synced_at"),
+                "SELECT datetime(powersync_last_synced_at()) AS last_synced_at"),
             [
               {'last_synced_at': '2025-03-01 ${10 + i}:00:00'}
             ],
