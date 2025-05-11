@@ -16,8 +16,4 @@ PowerSync extension for SQLite.
   s.ios.deployment_target = '11.0'
   s.osx.deployment_target = '10.13'
   s.watchos.deployment_target = '7.0'
-
-  # Ensure no asset catalogs are included for watchOS
-  s.watchos.resource_bundles = {}
-  s.watchos.resources = []
 end
