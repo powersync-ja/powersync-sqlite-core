@@ -114,28 +114,22 @@ EOF
   echo "===================== create watchos device framework ====================="
   mkdir -p "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/Versions/A/Resources"
   echo "${watchos_plist}" >"${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
-  cp -f "./target/aarch64-apple-watchos/release_apple/libpowersync.dylib" "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
-  install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync-sqlite-core" "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
+  cp -f "./target/aarch64-apple-watchos/release_apple/libpowersync.a" "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
   ln -sf A "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/Versions/Current"
   ln -sf Versions/Current/powersync-sqlite-core "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/powersync-sqlite-core"
   ln -sf Versions/Current/Resources "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/Resources"
-  # Generate dSYM for watchOS device
-  dsymutil "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core" -o "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework.dSYM"
 
   echo "===================== create watchos simulator framework ====================="
   mkdir -p "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/Versions/A/Resources"
   echo "${watchos_plist}" >"${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
-  cp -f "./target/aarch64-apple-watchos-sim/release_apple/libpowersync.dylib" "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
-  install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync-sqlite-core" "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
+  lipo ./target/aarch64-apple-watchos-sim/release_apple/libpowersync.a ./target/x86_64-apple-watchos-sim/release_apple/libpowersync.a -create -output "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
   ln -sf A "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/Versions/Current"
   ln -sf Versions/Current/powersync-sqlite-core "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/powersync-sqlite-core"
   ln -sf Versions/Current/Resources "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/Resources"
-  # Generate dSYM for watchOS simulator
-  dsymutil "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core" -o "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework.dSYM"
 
   echo "===================== create xcframework ====================="
   rm -rf "${BUILD_DIR}/powersync-sqlite-core.xcframework"
-  # Create iOS/macOS XCFramework
+
   xcodebuild -create-xcframework \
     -framework "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework" \
     -debug-symbols "$(pwd -P)/${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework.dSYM" \
@@ -145,17 +139,9 @@ EOF
     -debug-symbols "$(pwd -P)/${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework.dSYM" \
     -output "${BUILD_DIR}/powersync-sqlite-core.xcframework"
 
-  # Create watchOS XCFramework
-  xcodebuild -create-xcframework \
-    -framework "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework" \
-    -framework "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework" \
-    -output "${BUILD_DIR}/powersync-sqlite-core-watchos.xcframework"
+  # how to create a watchOS XCFramework with static libraries, possible?
 
-  # Copy the iOS/macOS XCFramework to the final location
-  cp -Rf "${BUILD_DIR}/powersync-sqlite-core.xcframework" "powersync-sqlite-core.xcframework"
-
-  # Create a zip file with both XCFrameworks
-  zip -r --symlinks powersync-sqlite-core.xcframework.zip powersync-sqlite-core.xcframework powersync-sqlite-core-watchos.xcframework LICENSE README.md
+  zip -r --symlinks powersync-sqlite-core.xcframework.zip powersync-sqlite-core.xcframework "${BUILD_DIR}/watchos-arm64/powersync-sqlite-core.framework/libpowersync.a" "${BUILD_DIR}/watchos-arm64-simulator/powersync-sqlite-core.framework/libpowersync.a" LICENSE README.md
   rm -rf ${BUILD_DIR}
 }
 
@@ -173,15 +159,8 @@ cargo build -p powersync_loadable --profile release_apple --target x86_64-apple-
 cargo build -p powersync_loadable --profile release_apple --target aarch64-apple-darwin -Zbuild-std
 cargo build -p powersync_loadable --profile release_apple --target x86_64-apple-darwin -Zbuild-std
 # watchOS
-export SDKROOT=$(xcrun --sdk watchos --show-sdk-path)
-export CARGO_TARGET_AARCH64_APPLE_WATCHOS_LINKER=$(xcrun --sdk watchos --find clang)
-export CARGO_TARGET_AARCH64_APPLE_WATCHOS_AR=$(xcrun --sdk watchos --find ar)
-export CARGO_TARGET_AARCH64_APPLE_WATCHOS_RANLIB=$(xcrun --sdk watchos --find ranlib)
 cargo build -p powersync_loadable --profile release_apple -Zbuild-std=std,panic_abort --target aarch64-apple-watchos
-export SDKROOT=$(xcrun --sdk watchsimulator --show-sdk-path)
-export CARGO_TARGET_AARCH64_APPLE_WATCHOS_SIM_LINKER=$(xcrun --sdk watchsimulator --find clang)
-export CARGO_TARGET_AARCH64_APPLE_WATCHOS_SIM_AR=$(xcrun --sdk watchsimulator --find ar)
-export CARGO_TARGET_AARCH64_APPLE_WATCHOS_SIM_RANLIB=$(xcrun --sdk watchsimulator --find ranlib)
 cargo build -p powersync_loadable --profile release_apple -Zbuild-std=std,panic_abort --target aarch64-apple-watchos-sim
+cargo build -p powersync_loadable --profile release_apple -Zbuild-std=std,panic_abort --target x86_64-apple-watchos-sim
 
 createXcframework

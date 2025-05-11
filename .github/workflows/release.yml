@@ -94,7 +94,7 @@ jobs:
             x86_64-apple-ios \
             aarch64-apple-watchos \
             aarch64-apple-watchos-sim \
-            x86_64-apple-watchos
+            x86_64-apple-watchos-sim
       - name: setup-cocoapods
         uses: maxim-lobanov/setup-cocoapods@v1
         with:
