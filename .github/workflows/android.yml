@@ -8,38 +8,5 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: "temurin"
-          java-version: "17"
-
-      - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v4
-
-      - name: Setup
-        run: |
-          rustup toolchain install nightly-2025-04-15-x86_64-unknown-linux-gnu
-          rustup component add rust-src --toolchain nightly-2025-04-15-x86_64-unknown-linux-gnu
-          rustup target add \
-            aarch64-linux-android \
-            armv7-linux-androideabi \
-            x86_64-linux-android \
-            i686-linux-android
-          cargo install cargo-ndk
-
-      - name: Build for Android
-        run: |
-          cd android
-          ./gradlew build
-          ls -lh build/outputs/aar
-
-      - name: Upload Android library
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-library
-          path: |
-            android/build/outputs/aar/
+      - name: Build Android
+        uses: ./.github/actions/android
