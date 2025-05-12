@@ -170,14 +170,18 @@ publishing {
 }
 
 signing {
-    val privateKey = System.getenv("GPG_PRIVATE_KEY")
+    val sign = providers.gradleProperty("signPublication").getOrElse("1")
 
-    if (privateKey == null || privateKey == "null") {
-        // Don't sign the publication.
-    } else {
-        var signingKey = String(Base64.getDecoder().decode(System.getenv("GPG_PRIVATE_KEY"))).trim()
-        var signingPassword = System.getenv("GPG_PASSWORD")
-        useInMemoryPgpKeys(signingKey, signingPassword)
+    if (sign != "0") {
+        val key = providers.gradleProperty("gpgKey")
+        val password = providers.gradleProperty("gpgPassword")
+
+        if (key.isPresent()) {
+            val signingKey = String(Base64.getDecoder().decode(key.get())).trim()
+            useInMemoryPgpKeys(signingKey, password.get())
+        } else {
+            useGpgCmd()
+        }
 
         sign(publishing.publications)
     }
