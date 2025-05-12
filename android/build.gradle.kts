@@ -5,7 +5,7 @@ plugins {
     id("signing")
 }
 
-group = "co.powersync"
+group = "com.powersync"
 version = "0.3.14"
 description = "PowerSync Core SQLite Extension"
 
