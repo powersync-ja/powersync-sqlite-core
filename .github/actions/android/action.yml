@@ -4,6 +4,12 @@ inputs:
   sign-publication:
     description: "Whether to sign the built library"
     default: '1'
+  gpg-key:
+    required: false
+    description: "The GPG key to use when signing the publication"
+  gpg-password:
+    required: false
+    description: "Password for the GPG key."
 
 runs:
   using: "composite"
@@ -33,7 +39,7 @@ runs:
       if: ${{ inputs.sign-publication == '1' }}
       run: |
         cd android
-        ./gradlew build publishAllPublicationsToHereRepository -PgpgKey=${{ secrets.GPG_PRIVATE_KEY }} -PgpgPassword=${{ secrets.GPG_PASSWORD }}
+        ./gradlew build publishAllPublicationsToHereRepository -PgpgKey=${{ inputs.gpg-key }} -PgpgPassword=${{ inputs.gpg-password }}
         ls -lh build/outputs/aar
         find build/repository
 
