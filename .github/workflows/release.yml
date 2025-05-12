@@ -42,6 +42,9 @@ jobs:
           submodules: true
       - name: Build Android
         uses: ./.github/actions/android
+        with:
+          gpg-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-password: ${{ secrets.GPG_PASSWORD }}
 
   publish_android:
     permissions:
