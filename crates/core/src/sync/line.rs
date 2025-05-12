@@ -54,6 +54,7 @@ pub struct CheckpointDiff<'a> {
     pub updated_buckets: Vec<BucketChecksum<'a>>,
     #[serde(borrow)]
     pub removed_buckets: Vec<&'a str>,
+    #[serde(default)]
     #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     pub write_checkpoint: Option<i64>,
 }
@@ -75,11 +76,13 @@ pub struct CheckpointPartiallyComplete {
 pub struct BucketChecksum<'a> {
     pub bucket: &'a str,
     pub checksum: Checksum,
+    #[serde(default)]
     pub priority: Option<BucketPriority>,
+    #[serde(default)]
     pub count: Option<i64>,
-//    #[serde(default)]
-//    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
-//    pub last_op_id: Option<i64>,
+    //    #[serde(default)]
+    //    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
+    //    pub last_op_id: Option<i64>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -365,14 +368,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_checkpoint_diff_no_write_checkpoint() {
+        let SyncLine::CheckpointDiff(diff) = deserialize(
+            r#"{"checkpoint_diff":{"last_op_id":"12","updated_buckets":[{"bucket":"a","count":12,"checksum":0,"priority":3}],"removed_buckets":[]}}"#,
+        ) else {
+            panic!("Expected checkpoint diff")
+        };
+    }
+
+    #[test]
     fn parse_checkpoint_complete() {
         assert_matches!(
             deserialize(r#"{"checkpoint_complete": {"last_op_id": "10"}}"#),
-            SyncLine::CheckpointComplete(CheckpointComplete { 
-                //last_op_id: 10 
-                })
+            SyncLine::CheckpointComplete(CheckpointComplete {
+                // last_op_id: 10
+            })
         );
-
     }
 
     #[test]
