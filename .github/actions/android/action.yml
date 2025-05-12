@@ -39,7 +39,7 @@ runs:
       if: ${{ inputs.sign-publication == '1' }}
       run: |
         cd android
-        ./gradlew build publishAllPublicationsToHereRepository -PgpgKey=${{ inputs.gpg-key }} -PgpgPassword=${{ inputs.gpg-password }}
+        ./gradlew build zipPublication -PgpgKey=${{ inputs.gpg-key }} -PgpgPassword=${{ inputs.gpg-password }}
         ls -lh build/outputs/aar
         find build/repository
 
@@ -48,7 +48,7 @@ runs:
       if: ${{ inputs.sign-publication == '0' }}
       run: |
         cd android
-        ./gradlew build publishAllPublicationsToHereRepository -PsignPublication=0
+        ./gradlew build zipPublication -PsignPublication=0
         ls -lh build/outputs/aar
         find build/repository
 
