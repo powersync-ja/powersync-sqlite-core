@@ -170,7 +170,9 @@ publishing {
 }
 
 signing {
-    if (System.getenv("GPG_PRIVATE_KEY") == null) {
+    val privateKey = System.getenv("GPG_PRIVATE_KEY")
+
+    if (privateKey == null || privateKey == "null") {
         // Don't sign the publication.
     } else {
         var signingKey = String(Base64.getDecoder().decode(System.getenv("GPG_PRIVATE_KEY"))).trim()
