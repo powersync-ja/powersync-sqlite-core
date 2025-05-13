@@ -23,7 +23,7 @@ pub fn insert_bucket_operations(
     let BucketInfo {
         id: bucket_id,
         last_applied_op,
-    } = adapter.lookup_bucket(line.bucket)?;
+    } = adapter.lookup_bucket(&*line.bucket)?;
 
     // This is an optimization for initial sync - we can avoid persisting individual REMOVE
     // operations when last_applied_op = 0.
@@ -65,10 +65,10 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
         match data.op {
             OpType::PUT | OpType::REMOVE => {
                 let key: Cow<'static, str> = if let (Some(object_type), Some(object_id)) =
-                    (data.object_type, data.object_id)
+                    (&data.object_type, &data.object_id)
                 {
-                    let subkey = data.subkey.unwrap_or("null");
-                    Cow::Owned(format!("{}/{}/{}", &object_type, &object_id, subkey))
+                    let subkey = data.subkey.as_ref().map(|i| &**i).unwrap_or("null");
+                    Cow::Owned(format!("{}/{}/{}", &*object_type, &*object_id, subkey))
                 } else {
                     Cow::Borrowed("")
                 };
@@ -101,16 +101,16 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
 
                     if !should_skip_remove {
                         if let (Some(object_type), Some(object_id)) =
-                            (data.object_type, data.object_id)
+                            (&data.object_type, &data.object_id)
                         {
                             updated_row_statement.bind_text(
                                 1,
-                                object_type,
+                                &*object_type,
                                 sqlite::Destructor::STATIC,
                             )?;
                             updated_row_statement.bind_text(
                                 2,
-                                object_id,
+                                &*object_id,
                                 sqlite::Destructor::STATIC,
                             )?;
                             updated_row_statement.exec()?;
@@ -127,9 +127,9 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
                     insert_statement.bind_null(3)?;
                 }
 
-                if let (Some(object_type), Some(object_id)) = (data.object_type, data.object_id) {
-                    insert_statement.bind_text(4, object_type, sqlite::Destructor::STATIC)?;
-                    insert_statement.bind_text(5, object_id, sqlite::Destructor::STATIC)?;
+                if let (Some(object_type), Some(object_id)) = (&data.object_type, &data.object_id) {
+                    insert_statement.bind_text(4, &*object_type, sqlite::Destructor::STATIC)?;
+                    insert_statement.bind_text(5, &*object_id, sqlite::Destructor::STATIC)?;
                 } else {
                     insert_statement.bind_null(4)?;
                     insert_statement.bind_null(5)?;

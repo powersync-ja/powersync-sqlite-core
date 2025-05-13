@@ -290,7 +290,7 @@ impl StreamingSyncIteration {
                     target.apply_diff(&diff);
                     validated_but_not_applied = None;
                     self.adapter
-                        .delete_buckets(diff.removed_buckets.iter().copied())?;
+                        .delete_buckets(diff.removed_buckets.iter().map(|i| &**i))?;
 
                     let progress = self.load_progress(target)?;
                     self.status.update(
@@ -493,7 +493,7 @@ impl SyncTarget {
         let mut buckets = BTreeMap::<String, OwnedBucketChecksum>::new();
         for bucket in &checkpoint.buckets {
             buckets.insert(bucket.bucket.to_string(), OwnedBucketChecksum::from(bucket));
-            to_delete.remove(bucket.bucket);
+            to_delete.remove(&*bucket.bucket);
         }
 
         *self = SyncTarget::Tracking(OwnedCheckpoint::from_checkpoint(checkpoint, buckets));
@@ -522,7 +522,7 @@ impl OwnedCheckpoint {
 
     fn apply_diff<'a>(&mut self, diff: &CheckpointDiff<'a>) {
         for removed in &diff.removed_buckets {
-            self.buckets.remove(*removed);
+            self.buckets.remove(&**removed);
         }
 
         for updated in &diff.updated_buckets {

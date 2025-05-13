@@ -15,6 +15,12 @@ use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64}
 use super::bucket_priority::BucketPriority;
 use super::Checksum;
 
+/// While we would like to always borrow strings for efficiency, that's not consistently possible.
+/// With the JSON decoder, borrowing from input data is only possible when the string contains no
+/// escape sequences (otherwise, the string is not a direct view of input data and we need an
+/// internal copy).
+type SyncLineStr<'a> = Cow<'a, str>;
+
 #[derive(Deserialize, Debug)]
 
 pub enum SyncLine<'a> {
@@ -53,7 +59,7 @@ pub struct CheckpointDiff<'a> {
     #[serde(borrow)]
     pub updated_buckets: Vec<BucketChecksum<'a>>,
     #[serde(borrow)]
-    pub removed_buckets: Vec<&'a str>,
+    pub removed_buckets: Vec<SyncLineStr<'a>>,
     #[serde(default)]
     #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     pub write_checkpoint: Option<i64>,
@@ -74,7 +80,8 @@ pub struct CheckpointPartiallyComplete {
 
 #[derive(Deserialize, Debug)]
 pub struct BucketChecksum<'a> {
-    pub bucket: &'a str,
+    #[serde(borrow)]
+    pub bucket: SyncLineStr<'a>,
     pub checksum: Checksum,
     #[serde(default)]
     pub priority: Option<BucketPriority>,
@@ -87,14 +94,15 @@ pub struct BucketChecksum<'a> {
 
 #[derive(Deserialize, Debug)]
 pub struct DataLine<'a> {
-    pub bucket: &'a str,
+    #[serde(borrow)]
+    pub bucket: SyncLineStr<'a>,
     pub data: Vec<OplogEntry<'a>>,
     //    #[serde(default)]
     //    pub has_more: bool,
     //    #[serde(default, borrow)]
-    //    pub after: Option<&'a str>,
+    //    pub after: Option<SyncLineStr<'a>>,
     //    #[serde(default, borrow)]
-    //    pub next_after: Option<&'a str>,
+    //    pub next_after: Option<SyncLineStr<'a>>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -104,11 +112,11 @@ pub struct OplogEntry<'a> {
     pub op_id: i64,
     pub op: OpType,
     #[serde(default, borrow)]
-    pub object_id: Option<&'a str>,
+    pub object_id: Option<SyncLineStr<'a>>,
     #[serde(default, borrow)]
-    pub object_type: Option<&'a str>,
+    pub object_type: Option<SyncLineStr<'a>>,
     #[serde(default, borrow)]
-    pub subkey: Option<&'a str>,
+    pub subkey: Option<SyncLineStr<'a>>,
     #[serde(default, borrow)]
     pub data: Option<OplogData<'a>>,
 }
@@ -365,6 +373,17 @@ mod tests {
 
         assert_eq!(diff.updated_buckets.len(), 0);
         assert_eq!(diff.removed_buckets.len(), 0);
+    }
+
+    #[test]
+    fn parse_checkpoint_diff_escape() {
+        let SyncLine::CheckpointDiff(diff) = deserialize(
+            r#"{"checkpoint_diff": {"last_op_id": "10", "buckets": [], "updated_buckets": [], "removed_buckets": ["foo\""], "write_checkpoint": null}}"#,
+        ) else {
+            panic!("Expected checkpoint diff")
+        };
+
+        assert_eq!(diff.removed_buckets[0], "foo\"");
     }
 
     #[test]
