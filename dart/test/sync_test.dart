@@ -162,11 +162,14 @@ void _syncTests<T>({
           ],
         },
       });
+      syncLine({'token_expires_in': 60});
       pushSyncData('a', '1', '1', 'PUT', {'col': 'hi'});
 
       syncLine({
         'checkpoint_complete': {'last_op_id': '1'},
       });
+
+      syncLine({'token_expires_in': 10});
     });
   });
 

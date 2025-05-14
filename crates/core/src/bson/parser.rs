@@ -1,6 +1,7 @@
 use core::ffi::CStr;
 
 use super::{error::ErrorKind, BsonError};
+use num_traits::{FromBytes, Num};
 
 pub struct Parser<'de> {
     offset: usize,
@@ -49,6 +50,11 @@ impl<'de> Parser<'de> {
         Ok(value)
     }
 
+    fn advance_bytes<const N: usize>(&mut self) -> Result<&'de [u8; N], BsonError> {
+        let bytes = self.advance_checked(N)?;
+        Ok(bytes.try_into().expect("should have correct length"))
+    }
+
     pub fn read_cstr(&mut self) -> Result<&'de str, BsonError> {
         let raw = CStr::from_bytes_until_nul(self.remaining_input)
             .map_err(|_| self.error(ErrorKind::UnterminatedCString))?;
@@ -60,11 +66,15 @@ impl<'de> Parser<'de> {
         Ok(str)
     }
 
+    fn read_number<const N: usize, T: Num + FromBytes<Bytes = [u8; N]>>(
+        &mut self,
+    ) -> Result<T, BsonError> {
+        let bytes = self.advance_bytes::<N>()?;
+        Ok(T::from_le_bytes(&bytes))
+    }
+
     pub fn read_int32(&mut self) -> Result<i32, BsonError> {
-        let slice = self.advance_checked(4)?;
-        Ok(i32::from_le_bytes(
-            slice.try_into().expect("should have correct length"),
-        ))
+        self.read_number()
     }
 
     fn read_length(&mut self) -> Result<usize, BsonError> {
@@ -75,22 +85,24 @@ impl<'de> Parser<'de> {
     }
 
     pub fn read_int64(&mut self) -> Result<i64, BsonError> {
-        let slice = self.advance_checked(8)?;
-        Ok(i64::from_le_bytes(
-            slice.try_into().expect("should have correct length"),
-        ))
+        self.read_number()
+    }
+
+    pub fn read_uint64(&mut self) -> Result<u64, BsonError> {
+        self.read_number()
     }
 
     pub fn read_double(&mut self) -> Result<f64, BsonError> {
-        let slice = self.advance_checked(8)?;
-        Ok(f64::from_le_bytes(
-            slice.try_into().expect("should have correct length"),
-        ))
+        self.read_number()
     }
 
     pub fn read_bool(&mut self) -> Result<bool, BsonError> {
         let byte = self.advance_byte()?;
         Ok(byte != 0)
+    }
+
+    pub fn read_object_id(&mut self) -> Result<&'de [u8], BsonError> {
+        self.advance_checked(12)
     }
 
     /// Reads a BSON string, `string ::= int32 (byte*) unsigned_byte(0)`
@@ -170,7 +182,7 @@ impl<'de> Parser<'de> {
         Ok(self.subreader(parsed_size)?.remaining())
     }
 
-    /// If only a single byte is left in the current scope, assert that it is a zero byte.
+    /// If only a single byte is left in the current scope, validate that it is a zero byte.
     ///
     /// Otherwise returns false as we haven't reached the end of a document.
     pub fn end_document(&mut self) -> Result<bool, BsonError> {

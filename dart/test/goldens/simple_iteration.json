@@ -68,6 +68,13 @@
   {
     "operation": "line_text",
     "data": {
+      "token_expires_in": 60
+    },
+    "output": []
+  },
+  {
+    "operation": "line_text",
+    "data": {
       "data": {
         "bucket": "a",
         "has_more": false,
@@ -143,6 +150,19 @@
             ],
             "downloading": null
           }
+        }
+      }
+    ]
+  },
+  {
+    "operation": "line_text",
+    "data": {
+      "token_expires_in": 10
+    },
+    "output": [
+      {
+        "FetchCredentials": {
+          "did_expire": false
         }
       }
     ]

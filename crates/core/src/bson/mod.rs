@@ -15,7 +15,9 @@ pub fn from_bytes<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, BsonE
 
 #[cfg(test)]
 mod test {
-    use crate::sync::line::SyncLine;
+    use core::assert_matches::assert_matches;
+
+    use crate::sync::line::{SyncLine, TokenExpiresIn};
 
     use super::*;
 
@@ -43,5 +45,13 @@ mod test {
         };
 
         assert_eq!(checkpoint.buckets.len(), 1);
+    }
+
+    #[test]
+    fn test_newtype_tuple() {
+        let bson = b"\x1b\x00\x00\x00\x10token_expires_in\x00<\x00\x00\x00\x00";
+
+        let expected: SyncLine = from_bytes(bson.as_slice()).expect("should deserialize");
+        assert_matches!(expected, SyncLine::KeepAlive(TokenExpiresIn(60)));
     }
 }

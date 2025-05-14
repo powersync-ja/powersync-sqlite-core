@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn parse_checkpoint_diff_no_write_checkpoint() {
-        let SyncLine::CheckpointDiff(diff) = deserialize(
+        let SyncLine::CheckpointDiff(_diff) = deserialize(
             r#"{"checkpoint_diff":{"last_op_id":"12","updated_buckets":[{"bucket":"a","count":12,"checksum":0,"priority":3}],"removed_buckets":[]}}"#,
         ) else {
             panic!("Expected checkpoint diff")

@@ -140,13 +140,14 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
                 let (_, bytes) = self.parser.read_binary()?;
                 visitor.visit_borrowed_bytes(bytes)
             }
-            ElementType::ObjectId => todo!(),
+            ElementType::ObjectId => visitor.visit_borrowed_bytes(self.parser.read_object_id()?),
             ElementType::Boolean => visitor.visit_bool(self.parser.read_bool()?),
-            ElementType::DatetimeUtc => todo!(),
+            ElementType::DatetimeUtc | ElementType::Timestamp => {
+                visitor.visit_u64(self.parser.read_uint64()?)
+            }
             ElementType::Null | ElementType::Undefined => visitor.visit_unit(),
             ElementType::Int32 => visitor.visit_i32(self.parser.read_int32()?),
             ElementType::Int64 => visitor.visit_i64(self.parser.read_int64()?),
-            ElementType::Timestamp => todo!(),
         }
     }
 
@@ -196,9 +197,21 @@ impl<'de, 'a> de::Deserializer<'de> for &'a mut Deserializer<'de> {
         }
     }
 
+    fn deserialize_newtype_struct<V>(
+        self,
+        name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        self.prepare_to_read_value()?;
+        visitor.visit_newtype_struct(self)
+    }
+
     forward_to_deserialize_any! {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf unit unit_struct newtype_struct seq tuple
+        bytes byte_buf unit unit_struct  seq tuple
         tuple_struct map struct ignored_any identifier
     }
 }
