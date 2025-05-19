@@ -10,7 +10,7 @@ use sqlite_nostd::{Connection, Context};
 
 use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
-use crate::fix035::apply_v035_fix;
+use crate::fix_data::apply_v035_fix;
 
 pub const LATEST_VERSION: i32 = 9;
 
