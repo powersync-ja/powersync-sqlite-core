@@ -11,18 +11,7 @@ macro_rules! create_sqlite_text_fn {
             let result = $fn_impl_name(ctx, args);
 
             if let Err(err) = result {
-                let SQLiteError(code, message) = SQLiteError::from(err);
-                if message.is_some() {
-                    ctx.result_error(&format!("{:} {:}", $description, message.unwrap()));
-                } else {
-                    let error = ctx.db_handle().errmsg().unwrap();
-                    if error == "not an error" {
-                        ctx.result_error(&format!("{:}", $description));
-                    } else {
-                        ctx.result_error(&format!("{:} {:}", $description, error));
-                    }
-                }
-                ctx.result_error_code(code);
+                SQLiteError::from(err).apply_to_ctx($description, ctx);
             } else if let Ok(r) = result {
                 ctx.result_text_transient(&r);
             }
@@ -43,18 +32,7 @@ macro_rules! create_sqlite_optional_text_fn {
             let result = $fn_impl_name(ctx, args);
 
             if let Err(err) = result {
-                let SQLiteError(code, message) = SQLiteError::from(err);
-                if message.is_some() {
-                    ctx.result_error(&format!("{:} {:}", $description, message.unwrap()));
-                } else {
-                    let error = ctx.db_handle().errmsg().unwrap();
-                    if error == "not an error" {
-                        ctx.result_error(&format!("{:}", $description));
-                    } else {
-                        ctx.result_error(&format!("{:} {:}", $description, error));
-                    }
-                }
-                ctx.result_error_code(code);
+                SQLiteError::from(err).apply_to_ctx($description, ctx);
             } else if let Ok(r) = result {
                 if let Some(s) = r {
                     ctx.result_text_transient(&s);

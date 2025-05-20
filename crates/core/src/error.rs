@@ -1,6 +1,9 @@
-use alloc::string::{String, ToString};
+use alloc::{
+    format,
+    string::{String, ToString},
+};
 use core::error::Error;
-use sqlite_nostd::{sqlite3, Connection, ResultCode};
+use sqlite_nostd::{context, sqlite3, Connection, Context, ResultCode};
 
 #[derive(Debug)]
 pub struct SQLiteError(pub ResultCode, pub Option<String>);
@@ -8,6 +11,24 @@ pub struct SQLiteError(pub ResultCode, pub Option<String>);
 impl core::fmt::Display for SQLiteError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+impl SQLiteError {
+    pub fn apply_to_ctx(self, description: &str, ctx: *mut context) {
+        let SQLiteError(code, message) = self;
+
+        if message.is_some() {
+            ctx.result_error(&format!("{:} {:}", description, message.unwrap()));
+        } else {
+            let error = ctx.db_handle().errmsg().unwrap();
+            if error == "not an error" {
+                ctx.result_error(&format!("{:}", description));
+            } else {
+                ctx.result_error(&format!("{:} {:}", description, error));
+            }
+        }
+        ctx.result_error_code(code);
     }
 }
 
