@@ -58,7 +58,7 @@ void main() {
 
     // Apply migration
     db.execute(
-        'UPDATE ps_oplog SET key = powersync_remote_duplicate_key_encoding(key);');
+        'UPDATE ps_oplog SET key = powersync_remove_duplicate_key_encoding(key);');
 
     [row] = db.select('select * from ps_oplog');
     expect(row['key'], 'items/1/subkey');
