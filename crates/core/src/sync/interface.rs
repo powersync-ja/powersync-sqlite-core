@@ -12,7 +12,6 @@ use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
 
 use crate::error::SQLiteError;
-use crate::util::context_set_error;
 
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
@@ -154,7 +153,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         })();
 
         if let Err(e) = result {
-            context_set_error(ctx, e, "powersync_control");
+            e.apply_to_ctx("powersync_control", ctx);
         }
     }
 

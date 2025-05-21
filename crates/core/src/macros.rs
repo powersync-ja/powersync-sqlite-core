@@ -11,7 +11,7 @@ macro_rules! create_sqlite_text_fn {
             let result = $fn_impl_name(ctx, args);
 
             if let Err(err) = result {
-                crate::util::context_set_error(ctx, SQLiteError::from(err), $description);
+                SQLiteError::from(err).apply_to_ctx($description, ctx);
             } else if let Ok(r) = result {
                 ctx.result_text_transient(&r);
             }
@@ -32,7 +32,7 @@ macro_rules! create_sqlite_optional_text_fn {
             let result = $fn_impl_name(ctx, args);
 
             if let Err(err) = result {
-                crate::util::context_set_error(ctx, SQLiteError::from(err), $description);
+                SQLiteError::from(err).apply_to_ctx($description, ctx);
             } else if let Ok(r) = result {
                 if let Some(s) = r {
                     ctx.result_text_transient(&s);

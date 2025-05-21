@@ -47,22 +47,6 @@ pub fn quote_identifier_prefixed(prefix: &str, name: &str) -> String {
     return format!("\"{:}{:}\"", prefix, name.replace("\"", "\"\""));
 }
 
-pub fn context_set_error(ctx: *mut sqlite::context, error: SQLiteError, description: &'static str) {
-    let SQLiteError(code, message) = error;
-
-    if message.is_some() {
-        ctx.result_error(&format!("{:} {:}", description, message.unwrap()));
-    } else {
-        let error = ctx.db_handle().errmsg().unwrap();
-        if error == "not an error" {
-            ctx.result_error(&format!("{:}", description));
-        } else {
-            ctx.result_error(&format!("{:} {:}", description, error));
-        }
-    }
-    ctx.result_error_code(code);
-}
-
 pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
 where
     D: serde::Deserializer<'de>,

@@ -19,7 +19,7 @@ mod crud_vtab;
 mod diff;
 mod error;
 mod ext;
-mod fix035;
+mod fix_data;
 mod json_merge;
 mod json_writer;
 mod kv;
@@ -60,6 +60,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::views::register(db)?;
     crate::uuid::register(db)?;
     crate::diff::register(db)?;
+    crate::fix_data::register(db)?;
     crate::json_merge::register(db)?;
     crate::view_admin::register(db)?;
     crate::checkpoint::register(db)?;
