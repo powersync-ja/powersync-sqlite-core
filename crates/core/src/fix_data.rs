@@ -130,18 +130,18 @@ fn powersync_remove_duplicate_key_encoding_impl(
 }
 
 create_sqlite_optional_text_fn!(
-    powersync_remote_duplicate_key_encoding,
+    powersync_remove_duplicate_key_encoding,
     powersync_remove_duplicate_key_encoding_impl,
-    "powersync_remote_duplicate_key_encoding"
+    "powersync_remove_duplicate_key_encoding"
 );
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     db.create_function_v2(
-        "powersync_remote_duplicate_key_encoding",
+        "powersync_remove_duplicate_key_encoding",
         1,
         sqlite::UTF8 | sqlite::DETERMINISTIC,
         None,
-        Some(powersync_remote_duplicate_key_encoding),
+        Some(powersync_remove_duplicate_key_encoding),
         None,
         None,
         None,
