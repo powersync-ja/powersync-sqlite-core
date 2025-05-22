@@ -4,8 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
+use crate::sync::bucket_priority::BucketPriority;
 use sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
 use sqlite_nostd::{ColumnType, Connection, ResultCode};
 
@@ -13,30 +13,29 @@ use crate::ext::SafeManagedStmt;
 use crate::util::{internal_table_name, quote_internal_name};
 
 pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, SQLiteError> {
-    let mut operation = SyncOperation::new(db, data)?;
+    let mut operation = SyncOperation::from_args(db, data)?;
     operation.apply()
 }
 
-struct PartialSyncOperation<'a> {
+pub struct PartialSyncOperation<'a> {
     /// The lowest priority part of the partial sync operation.
-    priority: BucketPriority,
+    pub priority: BucketPriority,
     /// The JSON-encoded arguments passed by the client SDK. This includes the priority and a list
     /// of bucket names in that (and higher) priorities.
-    args: &'a str,
+    pub args: &'a str,
 }
 
-struct SyncOperation<'a> {
+pub struct SyncOperation<'a> {
     db: *mut sqlite::sqlite3,
     data_tables: BTreeSet<String>,
     partial: Option<PartialSyncOperation<'a>>,
 }
 
 impl<'a> SyncOperation<'a> {
-    fn new<V: Value>(db: *mut sqlite::sqlite3, data: &'a V) -> Result<Self, SQLiteError> {
-        return Ok(Self {
-            db: db,
-            data_tables: BTreeSet::new(),
-            partial: match data.value_type() {
+    fn from_args<V: Value>(db: *mut sqlite::sqlite3, data: &'a V) -> Result<Self, SQLiteError> {
+        Ok(Self::new(
+            db,
+            match data.value_type() {
                 ColumnType::Text => {
                     let text = data.text();
                     if text.len() > 0 {
@@ -58,7 +57,15 @@ impl<'a> SyncOperation<'a> {
                 }
                 _ => None,
             },
-        });
+        ))
+    }
+
+    pub fn new(db: *mut sqlite::sqlite3, partial: Option<PartialSyncOperation<'a>>) -> Self {
+        Self {
+            db,
+            data_tables: BTreeSet::new(),
+            partial,
+        }
     }
 
     fn can_apply_sync_changes(&self) -> Result<bool, SQLiteError> {
@@ -96,7 +103,7 @@ impl<'a> SyncOperation<'a> {
         Ok(true)
     }
 
-    fn apply(&mut self) -> Result<i64, SQLiteError> {
+    pub fn apply(&mut self) -> Result<i64, SQLiteError> {
         if !self.can_apply_sync_changes()? {
             return Ok(0);
         }
@@ -108,7 +115,7 @@ impl<'a> SyncOperation<'a> {
             let type_name = statement.column_text(0)?;
             let id = statement.column_text(1)?;
             let buckets = statement.column_int(3);
-            let data = statement.column_text(2);
+            let data = statement.column_value(2)?;
 
             let table_name = internal_table_name(type_name);
 
@@ -130,7 +137,7 @@ impl<'a> SyncOperation<'a> {
                         .prepare_v2(&format!("REPLACE INTO {}(id, data) VALUES(?, ?)", quoted))
                         .into_db_result(self.db)?;
                     insert_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
-                    insert_statement.bind_text(2, data?, sqlite::Destructor::STATIC)?;
+                    insert_statement.bind_value(2, data)?;
                     insert_statement.exec()?;
                 }
             } else {
@@ -153,7 +160,7 @@ impl<'a> SyncOperation<'a> {
                         .into_db_result(self.db)?;
                     insert_statement.bind_text(1, type_name, sqlite::Destructor::STATIC)?;
                     insert_statement.bind_text(2, id, sqlite::Destructor::STATIC)?;
-                    insert_statement.bind_text(3, data?, sqlite::Destructor::STATIC)?;
+                    insert_statement.bind_value(3, data)?;
                     insert_statement.exec()?;
                 }
             }

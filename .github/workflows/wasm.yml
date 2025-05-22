@@ -8,20 +8,20 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
 
       - name: Install Rust Nightly
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly-2024-05-18
+          toolchain: nightly-2025-04-15
           components: rust-src
 
       - name: Setup emsdk
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.68
+          version: 4.0.7
 
       - name: Build WASM
         run: ./tool/build_wasm.sh

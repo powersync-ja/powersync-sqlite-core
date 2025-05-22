@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+emcc --version
 
 # Normal build
 # target/wasm32-unknown-emscripten/wasm/powersync.wasm
@@ -31,13 +32,13 @@ cp "target/wasm32-unknown-emscripten/wasm_asyncify/powersync.wasm" "libpowersync
 # Static lib.
 # Works for both sync and asyncify builds.
 # Works for both emscripten and wasi.
-# target/wasm32-wasi/wasm/libpowersync.a
+# target/wasm32-wasip1/wasm/libpowersync.a
 cargo build \
   -p powersync_loadable \
   --profile wasm \
   --no-default-features \
   --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension" \
   -Z build-std=panic_abort,core,alloc \
-  --target wasm32-wasi
+  --target wasm32-wasip1
 
-cp "target/wasm32-wasi/wasm/libpowersync.a" "libpowersync-wasm.a"
+cp "target/wasm32-wasip1/wasm/libpowersync.a" "libpowersync-wasm.a"

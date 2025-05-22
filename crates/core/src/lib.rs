@@ -2,8 +2,8 @@
 #![feature(vec_into_raw_parts)]
 #![allow(internal_features)]
 #![feature(core_intrinsics)]
-#![feature(error_in_core)]
 #![feature(assert_matches)]
+#![feature(strict_overflow_ops)]
 
 extern crate alloc;
 
@@ -12,7 +12,7 @@ use core::ffi::{c_char, c_int};
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 
-mod bucket_priority;
+mod bson;
 mod checkpoint;
 mod crud_vtab;
 mod diff;
@@ -26,8 +26,8 @@ mod migrations;
 mod operations;
 mod operations_vtab;
 mod schema;
+mod sync;
 mod sync_local;
-mod sync_types;
 mod util;
 mod uuid;
 mod version;
@@ -42,7 +42,6 @@ pub extern "C" fn sqlite3_powersync_init(
     api: *mut sqlite::api_routines,
 ) -> c_int {
     sqlite::EXTENSION_INIT2(api);
-
     let result = init_extension(db);
 
     return if let Err(code) = result {
@@ -62,6 +61,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::view_admin::register(db)?;
     crate::checkpoint::register(db)?;
     crate::kv::register(db)?;
+    sync::register(db)?;
 
     crate::schema::register(db)?;
     crate::operations_vtab::register(db)?;

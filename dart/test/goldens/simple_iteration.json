@@ -1,0 +1,168 @@
+[
+  {
+    "operation": "start",
+    "data": null,
+    "output": [
+      {
+        "UpdateSyncStatus": {
+          "status": {
+            "connected": false,
+            "connecting": true,
+            "priority_status": [],
+            "downloading": null
+          }
+        }
+      },
+      {
+        "EstablishSyncStream": {
+          "request": {
+            "buckets": [],
+            "include_checksum": true,
+            "raw_data": true,
+            "binary_data": true,
+            "client_id": "test-test-test-test",
+            "parameters": null
+          }
+        }
+      }
+    ]
+  },
+  {
+    "operation": "line_text",
+    "data": {
+      "checkpoint": {
+        "last_op_id": "1",
+        "write_checkpoint": null,
+        "buckets": [
+          {
+            "bucket": "a",
+            "checksum": 0,
+            "priority": 3,
+            "count": 1
+          }
+        ]
+      }
+    },
+    "output": [
+      {
+        "UpdateSyncStatus": {
+          "status": {
+            "connected": true,
+            "connecting": false,
+            "priority_status": [],
+            "downloading": {
+              "buckets": {
+                "a": {
+                  "priority": 3,
+                  "at_last": 0,
+                  "since_last": 0,
+                  "target_count": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "operation": "line_text",
+    "data": {
+      "token_expires_in": 60
+    },
+    "output": []
+  },
+  {
+    "operation": "line_text",
+    "data": {
+      "data": {
+        "bucket": "a",
+        "has_more": false,
+        "after": null,
+        "next_after": null,
+        "data": [
+          {
+            "op_id": "1",
+            "op": "PUT",
+            "object_type": "items",
+            "object_id": "1",
+            "checksum": 0,
+            "data": "{\"col\":\"hi\"}"
+          }
+        ]
+      }
+    },
+    "output": [
+      {
+        "UpdateSyncStatus": {
+          "status": {
+            "connected": true,
+            "connecting": false,
+            "priority_status": [],
+            "downloading": {
+              "buckets": {
+                "a": {
+                  "priority": 3,
+                  "at_last": 0,
+                  "since_last": 1,
+                  "target_count": 1
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "operation": "line_text",
+    "data": {
+      "checkpoint_complete": {
+        "last_op_id": "1"
+      }
+    },
+    "output": [
+      {
+        "LogLine": {
+          "severity": "DEBUG",
+          "line": "Validated and applied checkpoint"
+        }
+      },
+      {
+        "FlushFileSystem": {}
+      },
+      {
+        "DidCompleteSync": {}
+      },
+      {
+        "UpdateSyncStatus": {
+          "status": {
+            "connected": true,
+            "connecting": false,
+            "priority_status": [
+              {
+                "priority": 2147483647,
+                "last_synced_at": 1740823200,
+                "has_synced": true
+              }
+            ],
+            "downloading": null
+          }
+        }
+      }
+    ]
+  },
+  {
+    "operation": "line_text",
+    "data": {
+      "token_expires_in": 10
+    },
+    "output": [
+      {
+        "FetchCredentials": {
+          "did_expire": false
+        }
+      }
+    ]
+  }
+]
