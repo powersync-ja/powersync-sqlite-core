@@ -136,7 +136,7 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
                 }
 
                 match data.data {
-                    Some(OplogData::JsonString { ref data }) => {
+                    Some(OplogData::Json { ref data }) => {
                         insert_statement.bind_text(6, data.as_ref(), sqlite::Destructor::STATIC)?
                     }
                     // Some(OplogData::BsonDocument { ref data }) => {

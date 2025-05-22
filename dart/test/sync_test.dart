@@ -106,7 +106,7 @@ void _syncTests<T>({
             'object_type': 'items',
             'object_id': rowId,
             'checksum': checksum,
-            'data': data,
+            'data': json.encode(data),
           }
         ],
       },

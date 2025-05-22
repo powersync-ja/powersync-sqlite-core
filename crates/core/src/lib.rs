@@ -21,7 +21,6 @@ mod error;
 mod ext;
 mod fix_data;
 mod json_merge;
-mod json_writer;
 mod kv;
 mod macros;
 mod migrations;

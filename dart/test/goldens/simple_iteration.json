@@ -87,9 +87,7 @@
             "object_type": "items",
             "object_id": "1",
             "checksum": 0,
-            "data": {
-              "col": "hi"
-            }
+            "data": "{\"col\":\"hi\"}"
           }
         ]
       }
