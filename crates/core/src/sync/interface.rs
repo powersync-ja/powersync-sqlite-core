@@ -120,7 +120,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         argv: *mut *mut sqlite::value,
     ) -> () {
         let result = (|| -> Result<(), SQLiteError> {
-            let controller = unsafe { ctx.user_data().cast::<SqlController>().as_ref() }
+            let controller = unsafe { ctx.user_data().cast::<SqlController>().as_mut() }
                 .ok_or_else(|| SQLiteError::from(ResultCode::INTERNAL))?;
 
             let args = sqlite::args!(argc, argv);

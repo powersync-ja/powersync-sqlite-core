@@ -14,12 +14,7 @@ use alloc::{
 };
 use futures_lite::FutureExt;
 
-use crate::{
-    bson,
-    error::SQLiteError,
-    kv::client_id,
-    util::{sqlite3_mutex, Mutex},
-};
+use crate::{bson, error::SQLiteError, kv::client_id};
 use sqlite_nostd::{self as sqlite, ResultCode};
 
 use super::{
@@ -40,42 +35,35 @@ use super::{
 pub struct SyncClient {
     db: *mut sqlite::sqlite3,
     /// The current [ClientState] (essentially an optional [StreamingSyncIteration]).
-    ///
-    /// This is guarded behind a mutex so that we can mutate the state without forcing callers to
-    /// obtain a mutable reference to the [SyncClient] itself. It doesn't mean much in practice
-    /// because it's impossible to run two `powersync_control` calls on the same database connection
-    /// concurrently.
-    state: Mutex<ClientState>,
+    state: ClientState,
 }
 
 impl SyncClient {
     pub fn new(db: *mut sqlite::sqlite3) -> Self {
         Self {
             db,
-            state: sqlite3_mutex(ClientState::Idle),
+            state: ClientState::Idle,
         }
     }
 
     pub fn push_event<'a>(
-        &self,
+        &mut self,
         event: SyncControlRequest<'a>,
     ) -> Result<Vec<Instruction>, SQLiteError> {
-        let mut state = self.state.lock();
-
         match event {
             SyncControlRequest::StartSyncStream { parameters } => {
-                state.tear_down()?;
+                self.state.tear_down()?;
 
                 let mut handle = SyncIterationHandle::new(self.db, parameters)?;
                 let instructions = handle.initialize()?;
-                *state = ClientState::IterationActive(handle);
+                self.state = ClientState::IterationActive(handle);
 
                 Ok(instructions)
             }
             SyncControlRequest::SyncEvent(sync_event) => {
                 let mut active = ActiveEvent::new(sync_event);
 
-                let ClientState::IterationActive(handle) = &mut *state else {
+                let ClientState::IterationActive(handle) = &mut self.state else {
                     return Err(SQLiteError(
                         ResultCode::MISUSE,
                         Some("No iteration is active".to_string()),
@@ -84,19 +72,19 @@ impl SyncClient {
 
                 match handle.run(&mut active) {
                     Err(e) => {
-                        *state = ClientState::Idle;
+                        self.state = ClientState::Idle;
                         return Err(e);
                     }
                     Ok(done) => {
                         if done {
-                            *state = ClientState::Idle;
+                            self.state = ClientState::Idle;
                         }
                     }
                 };
 
                 Ok(active.instructions)
             }
-            SyncControlRequest::StopSyncStream => state.tear_down(),
+            SyncControlRequest::StopSyncStream => self.state.tear_down(),
         }
     }
 }

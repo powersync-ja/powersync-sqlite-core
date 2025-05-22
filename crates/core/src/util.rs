@@ -5,14 +5,9 @@ use core::ptr::{self, null_mut};
 use alloc::format;
 use alloc::string::String;
 
-use lock_api::{GuardSend, Mutex as MutexApi, RawMutex};
-use serde::de::Visitor;
-use sqlite_nostd::bindings::SQLITE_MUTEX_FAST;
-use sqlite_nostd::{api_routines, Connection, Context};
-
-use crate::error::SQLiteError;
+#[cfg(not(feature = "getrandom"))]
 use crate::sqlite;
-use crate::sqlite::bindings::sqlite3_mutex;
+use serde::de::Visitor;
 
 use uuid::Uuid;
 
@@ -92,103 +87,6 @@ where
 
     // Using a custom visitor here to avoid an intermediate string allocation
     deserializer.deserialize_option(ValueVisitor)
-}
-
-pub struct SqliteMutex {
-    ptr: *mut sqlite3_mutex,
-}
-
-// We always invoke mutex APIs through the api routines, even when we link the rest of SQLite
-// statically.
-// The reason is that it's possible to omit the mutex code (in which case we don't want to link
-// undefined symbols).
-pub(crate) static mut SQLITE3_API: *mut api_routines = ptr::null_mut();
-
-impl SqliteMutex {
-    pub fn new() -> Self {
-        let native_alloc = unsafe {
-            // SAFETY: SQLITE3_API is only set once when the library is loaded by SQLite.
-            (*SQLITE3_API).mutex_alloc
-        };
-
-        Self {
-            ptr: match native_alloc {
-                None => null_mut(),
-                Some(mutex_alloc) => unsafe {
-                    // SAFETY: We're allowed to call sqlite3_mutex_alloc with this bitmask:
-                    // https://sqlite.org/c3ref/mutex_alloc.html
-                    mutex_alloc(SQLITE_MUTEX_FAST as i32)
-                },
-            },
-        }
-    }
-}
-
-unsafe impl RawMutex for SqliteMutex {
-    const INIT: Self = SqliteMutex { ptr: null_mut() };
-
-    type GuardMarker = GuardSend;
-
-    fn lock(&self) {
-        if self.ptr.is_null() {
-            // Disable mutex code
-        } else {
-            unsafe {
-                // SAFETY: When we get here, we were able to allocate a mutex (so mutex methods
-                // must be present).
-                (*SQLITE3_API).mutex_enter.unwrap_unchecked()(self.ptr)
-            }
-        }
-    }
-
-    fn try_lock(&self) -> bool {
-        if self.ptr.is_null() {
-            // Disable mutex code
-            true
-        } else {
-            let res = unsafe {
-                // SAFETY: When we get here, we were able to allocate a mutex (so mutex methods
-                // must be present).
-                (*SQLITE3_API).mutex_try.unwrap_unchecked()(self.ptr)
-            };
-            res == 0
-        }
-    }
-
-    unsafe fn unlock(&self) {
-        if self.ptr.is_null() {
-            // Disable mutex code
-        } else {
-            unsafe {
-                // SAFETY: When we get here, we were able to allocate a mutex (so mutex methods
-                // must be present). Also, this method is only allowed to be called after a caller
-                // has locked the mutex before.
-                (*SQLITE3_API).mutex_leave.unwrap_unchecked()(self.ptr)
-            }
-        }
-    }
-}
-
-impl Drop for SqliteMutex {
-    fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe {
-                // SAFETY: The pointer points to a valid mutex we own. This means that we have been
-                // able to allocate a mutex, so mutex methods must be present.
-                (*SQLITE3_API).mutex_free.unwrap_unchecked()(self.ptr)
-            };
-        }
-    }
-}
-
-pub type Mutex<T> = MutexApi<SqliteMutex, T>;
-
-/// Creates a [Mutex] implementation using `sqlite3_mutex_enter` and `sqlite3_mutex_free`.
-///
-/// When SQLite has been compiled without mutexes, the returned mutex doesn't do anything.
-pub fn sqlite3_mutex<T>(value: T) -> Mutex<T> {
-    let raw = SqliteMutex::new();
-    MutexApi::from_raw(raw, value)
 }
 
 // Use getrandom crate to generate UUID.
