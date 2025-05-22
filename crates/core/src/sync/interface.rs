@@ -16,20 +16,39 @@ use crate::error::SQLiteError;
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
 
+/// A request sent from a client SDK to the [SyncClient] with a `powersync_control` invocation.
 pub enum SyncControlRequest<'a> {
+    /// The client requests to start a sync iteration.
+    ///
+    /// Earlier iterations are implicitly dropped when receiving this request.
     StartSyncStream {
+        /// Bucket parameters to include in the request when opening a sync stream.
         parameters: Option<serde_json::Map<String, serde_json::Value>>,
     },
+    /// The client requests to stop the current sync iteration.
     StopSyncStream,
+    /// The client is forwading a sync event to the core extension.
     SyncEvent(SyncEvent<'a>),
 }
 
 pub enum SyncEvent<'a> {
+    /// A synthetic event forwarded to the [SyncClient] after being started.
     Initialize,
+    /// An event requesting the sync client to shut down.
     TearDown,
+    /// Notifies the sync client that a token has been refreshed.
+    ///
+    /// In response, we'll stop the current iteration to begin another one with the new token.
     DidRefreshToken,
+    /// Notifies the sync client that the current CRUD upload (for which the client SDK is
+    /// responsible) has finished.
+    ///
+    /// If pending CRUD entries have previously prevented a sync from completing, this even can be
+    /// used to try again.
     UploadFinished,
+    /// Forward a text line (JSON) received from the sync service.
     TextLine { data: &'a str },
+    /// Forward a binary line (BSON) received from the sync service.
     BinaryLine { data: &'a [u8] },
 }
 
@@ -40,19 +59,26 @@ pub enum Instruction {
         severity: LogSeverity,
         line: Cow<'static, str>,
     },
+    /// Update the download status for the ongoing sync iteration.
     UpdateSyncStatus {
         status: Rc<RefCell<DownloadSyncStatus>>,
     },
-    EstablishSyncStream {
-        request: StreamingSyncRequest,
-    },
+    /// Connect to the sync service using the [StreamingSyncRequest] created by the core extension,
+    /// and then forward received lines via [SyncEvent::TextLine] and [SyncEvent::BinaryLine].
+    EstablishSyncStream { request: StreamingSyncRequest },
     FetchCredentials {
+        /// Whether the credentials currently used have expired.
+        ///
+        /// If false, this is a pre-fetch.
         did_expire: bool,
     },
     // These are defined like this because deserializers in Kotlin can't support either an
     // object or a literal value
+    /// Close the websocket / HTTP stream to the sync service.
     CloseSyncStream {},
+    /// Flush the file-system if it's non-durable (only applicable to the Dart SDK).
     FlushFileSystem {},
+    /// Notify that a sync has been completed, prompting client SDKs to clear earlier errors.
     DidCompleteSync {},
 }
 
@@ -79,6 +105,10 @@ pub struct BucketRequest {
     pub after: String,
 }
 
+/// Wrapper around a [SyncClient].
+///
+/// We allocate one instance of this per database (in [register]) - the [SyncClient] has an initial
+/// empty state that doesn't consume any resources.
 struct SqlController {
     client: SyncClient,
 }

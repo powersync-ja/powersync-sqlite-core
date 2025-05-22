@@ -32,8 +32,19 @@ use super::{
     Checksum,
 };
 
+/// The sync client implementation, responsible for parsing lines received by the sync service and
+/// persisting them to the database.
+///
+/// The client consumes no resources and prepares no statements until a sync iteration is
+/// initialized.
 pub struct SyncClient {
     db: *mut sqlite::sqlite3,
+    /// The current [ClientState] (essentially an optional [StreamingSyncIteration]).
+    ///
+    /// This is guarded behind a mutex so that we can mutate the state without forcing callers to
+    /// obtain a mutable reference to the [SyncClient] itself. It doesn't mean much in practice
+    /// because it's impossible to run two `powersync_control` calls on the same database connection
+    /// concurrently.
     state: Mutex<ClientState>,
 }
 
@@ -91,7 +102,9 @@ impl SyncClient {
 }
 
 enum ClientState {
+    /// No sync iteration is currently active.
     Idle,
+    /// A sync iteration has begun on the database.
     IterationActive(SyncIterationHandle),
 }
 
@@ -108,11 +121,19 @@ impl ClientState {
     }
 }
 
+/// A handle that allows progressing a [StreamingSyncIteration].
+///
+/// The sync itertion itself is implemented as an `async` function, as this allows us to treat it
+/// as a coroutine that preserves internal state between multiple `powersync_control` invocations.
+/// At each invocation, the future is polled once (and gets access to context that allows it to
+/// render [Instruction]s to return from the function).
 struct SyncIterationHandle {
     future: Pin<Box<dyn Future<Output = Result<(), SQLiteError>>>>,
 }
 
 impl SyncIterationHandle {
+    /// Creates a new sync iteration in a pending state by preparing statements for
+    /// [StorageAdapter] and setting up the initial downloading state for [StorageAdapter] .
     fn new(
         db: *mut sqlite::sqlite3,
         parameters: Option<serde_json::Map<String, serde_json::Value>>,
@@ -128,6 +149,8 @@ impl SyncIterationHandle {
         Ok(Self { future })
     }
 
+    /// Forwards a [SyncEvent::Initialize] to the current sync iteration, returning the initial
+    /// instructions generated.
     fn initialize(&mut self) -> Result<Vec<Instruction>, SQLiteError> {
         let mut event = ActiveEvent::new(SyncEvent::Initialize);
         let result = self.run(&mut event)?;
@@ -160,9 +183,12 @@ impl SyncIterationHandle {
     }
 }
 
+/// A [SyncEvent] currently being handled by a [StreamingSyncIteration].
 struct ActiveEvent<'a> {
     handled: bool,
+    /// The event to handle
     event: SyncEvent<'a>,
+    /// Instructions to forward to the client when the `powersync_control` invocation completes.
     instructions: Vec<Instruction>,
 }
 
@@ -420,6 +446,10 @@ impl StreamingSyncIteration {
         )?)
     }
 
+    /// Prepares a sync iteration by handling the initial [SyncEvent::Initialize].
+    ///
+    /// This prepares a [StreamingSyncRequest] by fetching local sync state and the requested bucket
+    /// parameters.
     async fn prepare_request(&mut self) -> Result<Vec<String>, SQLiteError> {
         let event = Self::receive_event().await;
         let SyncEvent::Initialize = event.event else {
@@ -484,6 +514,10 @@ impl SyncTarget {
         }
     }
 
+    /// Starts tracking the received `Checkpoint`.
+    ///
+    /// This updates the internal state and returns a set of buckets to delete because they've been
+    /// tracked locally but not in the new checkpoint.
     fn track_checkpoint<'a>(&mut self, checkpoint: &Checkpoint<'a>) -> BTreeSet<String> {
         let mut to_delete: BTreeSet<String> = match &self {
             SyncTarget::Tracking(checkpoint) => checkpoint.buckets.keys().cloned().collect(),

@@ -24,7 +24,8 @@ use super::{
 /// An adapter for storing sync state.
 ///
 /// This is used to encapsulate some SQL queries used for the sync implementation, making the code
-/// in `streaming_sync.rs` easier to read.
+/// in `streaming_sync.rs` easier to read. It also allows caching some prepared statements that are
+/// used frequently as an optimization, but we're not taking advantage of that yet.
 pub struct StorageAdapter {
     pub db: *mut sqlite::sqlite3,
     progress_stmt: ManagedStmt,

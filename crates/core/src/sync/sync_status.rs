@@ -10,13 +10,25 @@ use super::{
     storage_adapter::PersistedBucketProgress, streaming_sync::OwnedCheckpoint,
 };
 
+/// Information about a progressing download.
 #[derive(Serialize, Hash)]
 pub struct DownloadSyncStatus {
+    /// Whether the socket to the sync service is currently open and connected.
+    ///
+    /// This starts being true once we receive the first line, and is set to false as the iteration
+    /// ends.
     pub connected: bool,
+    /// Whether we've requested the client SDK to connect to the socket while not receiving sync
+    /// lines yet.
     pub connecting: bool,
+    /// Provides stats over which bucket priorities have already been synced (or when they've last
+    /// been changed).
+    ///
     /// Always sorted by descending [BucketPriority] in [SyncPriorityStatus] (or, in other words,
     /// increasing priority numbers).
     pub priority_status: Vec<SyncPriorityStatus>,
+    /// When a download is active (that is, a `checkpoint` or `checkpoint_diff` line has been
+    /// received), information about how far the download has progressed.
     pub downloading: Option<SyncDownloadProgress>,
 }
 

@@ -44,7 +44,10 @@ pub extern "C" fn sqlite3_powersync_init(
     api: *mut sqlite::api_routines,
 ) -> c_int {
     sqlite::EXTENSION_INIT2(api);
-    unsafe { SQLITE3_API = api };
+    unsafe {
+        // SAFETY: This field is only assigned once, when the library is loaded.
+        SQLITE3_API = api
+    };
 
     let result = init_extension(db);
 

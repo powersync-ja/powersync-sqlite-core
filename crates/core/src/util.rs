@@ -106,12 +106,19 @@ pub(crate) static mut SQLITE3_API: *mut api_routines = ptr::null_mut();
 
 impl SqliteMutex {
     pub fn new() -> Self {
-        let native_alloc = unsafe { (*SQLITE3_API).mutex_alloc };
+        let native_alloc = unsafe {
+            // SAFETY: SQLITE3_API is only set once when the library is loaded by SQLite.
+            (*SQLITE3_API).mutex_alloc
+        };
 
         Self {
             ptr: match native_alloc {
                 None => null_mut(),
-                Some(mutex_alloc) => unsafe { mutex_alloc(SQLITE_MUTEX_FAST as i32) },
+                Some(mutex_alloc) => unsafe {
+                    // SAFETY: We're allowed to call sqlite3_mutex_alloc with this bitmask:
+                    // https://sqlite.org/c3ref/mutex_alloc.html
+                    mutex_alloc(SQLITE_MUTEX_FAST as i32)
+                },
             },
         }
     }
@@ -126,7 +133,11 @@ unsafe impl RawMutex for SqliteMutex {
         if self.ptr.is_null() {
             // Disable mutex code
         } else {
-            unsafe { (*SQLITE3_API).mutex_enter.unwrap_unchecked()(self.ptr) }
+            unsafe {
+                // SAFETY: When we get here, we were able to allocate a mutex (so mutex methods
+                // must be present).
+                (*SQLITE3_API).mutex_enter.unwrap_unchecked()(self.ptr)
+            }
         }
     }
 
@@ -135,7 +146,11 @@ unsafe impl RawMutex for SqliteMutex {
             // Disable mutex code
             true
         } else {
-            let res = unsafe { (*SQLITE3_API).mutex_try.unwrap_unchecked()(self.ptr) };
+            let res = unsafe {
+                // SAFETY: When we get here, we were able to allocate a mutex (so mutex methods
+                // must be present).
+                (*SQLITE3_API).mutex_try.unwrap_unchecked()(self.ptr)
+            };
             res == 0
         }
     }
@@ -144,7 +159,12 @@ unsafe impl RawMutex for SqliteMutex {
         if self.ptr.is_null() {
             // Disable mutex code
         } else {
-            unsafe { (*SQLITE3_API).mutex_leave.unwrap_unchecked()(self.ptr) }
+            unsafe {
+                // SAFETY: When we get here, we were able to allocate a mutex (so mutex methods
+                // must be present). Also, this method is only allowed to be called after a caller
+                // has locked the mutex before.
+                (*SQLITE3_API).mutex_leave.unwrap_unchecked()(self.ptr)
+            }
         }
     }
 }
@@ -152,13 +172,20 @@ unsafe impl RawMutex for SqliteMutex {
 impl Drop for SqliteMutex {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
-            unsafe { (*SQLITE3_API).mutex_free.unwrap_unchecked()(self.ptr) };
+            unsafe {
+                // SAFETY: The pointer points to a valid mutex we own. This means that we have been
+                // able to allocate a mutex, so mutex methods must be present.
+                (*SQLITE3_API).mutex_free.unwrap_unchecked()(self.ptr)
+            };
         }
     }
 }
 
 pub type Mutex<T> = MutexApi<SqliteMutex, T>;
 
+/// Creates a [Mutex] implementation using `sqlite3_mutex_enter` and `sqlite3_mutex_free`.
+///
+/// When SQLite has been compiled without mutexes, the returned mutex doesn't do anything.
 pub fn sqlite3_mutex<T>(value: T) -> Mutex<T> {
     let raw = SqliteMutex::new();
     MutexApi::from_raw(raw, value)
