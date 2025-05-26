@@ -1,4 +1,5 @@
 use core::{
+    fmt::Display,
     num::Wrapping,
     ops::{Add, AddAssign},
 };
@@ -62,6 +63,12 @@ impl AddAssign for Checksum {
 impl From<u32> for Checksum {
     fn from(value: u32) -> Self {
         Self::from_value(value)
+    }
+}
+
+impl Display for Checksum {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:#010x}", self.value())
     }
 }
 

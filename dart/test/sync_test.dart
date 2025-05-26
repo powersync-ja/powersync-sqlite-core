@@ -633,7 +633,8 @@ void _syncTests<T>({
           {
             'LogLine': {
               'severity': 'WARNING',
-              'line': contains("Checksums didn't match, failed for: a")
+              'line': contains(
+                  "Checksums didn't match, failed for: a (expected 0x000004d2, got 0x000010e1 = 0x000010e1 (op) + 0x00000000 (add))")
             }
           },
           {'CloseSyncStream': {}},

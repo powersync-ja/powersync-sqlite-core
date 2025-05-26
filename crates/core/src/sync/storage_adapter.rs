@@ -4,6 +4,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use num_traits::Zero;
 use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 use streaming_iterator::StreamingIterator;
@@ -145,56 +146,39 @@ impl StorageAdapter {
     ) -> Result<CheckpointResult, SQLiteError> {
         // language=SQLite
         let statement = self.db.prepare_v2(
-            "WITH
-bucket_list(bucket, checksum) AS (
+            "
 SELECT
-    json_extract(json_each.value, '$.bucket') as bucket,
-    json_extract(json_each.value, '$.checksum') as checksum
-FROM json_each(?1)
-)
-SELECT
-bucket_list.bucket as bucket,
-IFNULL(buckets.add_checksum, 0) as add_checksum,
-IFNULL(buckets.op_checksum, 0) as oplog_checksum,
-bucket_list.checksum as expected_checksum
-FROM bucket_list
-LEFT OUTER JOIN ps_buckets AS buckets ON
- buckets.name = bucket_list.bucket
-GROUP BY bucket_list.bucket",
+    ps_buckets.add_checksum as add_checksum,
+    ps_buckets.op_checksum as oplog_checksum
+FROM ps_buckets WHERE name = ?;",
         )?;
 
-        #[derive(Serialize)]
-        struct BucketInfo<'a> {
-            bucket: &'a str,
-            checksum: Checksum,
-        }
-
-        let mut buckets = Vec::<BucketInfo>::new();
+        let mut failures: Vec<ChecksumMismatch> = Vec::new();
         for bucket in checkpoint.buckets.values() {
             if bucket.is_in_priority(priority) {
-                buckets.push(BucketInfo {
-                    bucket: &bucket.bucket,
-                    checksum: bucket.checksum,
-                });
-            }
-        }
+                statement.bind_text(1, &bucket.bucket, sqlite_nostd::Destructor::STATIC)?;
 
-        let bucket_desc = serde_json::to_string(&buckets)?;
-        statement.bind_text(1, &bucket_desc, sqlite::Destructor::STATIC)?;
+                let (add_checksum, oplog_checksum) = match statement.step()? {
+                    ResultCode::ROW => {
+                        let add_checksum = Checksum::from_i32(statement.column_int(0));
+                        let oplog_checksum = Checksum::from_i32(statement.column_int(1));
+                        (add_checksum, oplog_checksum)
+                    }
+                    _ => (Checksum::zero(), Checksum::zero()),
+                };
 
-        let mut failures: Vec<String> = Vec::new();
-        while statement.step()? == ResultCode::ROW {
-            let name = statement.column_text(0)?;
-            // checksums with column_int are wrapped to i32 by SQLite
-            let add_checksum = statement.column_int(1);
-            let oplog_checksum = statement.column_int(2);
-            let expected_checksum = statement.column_int(3);
+                let actual = add_checksum + oplog_checksum;
 
-            // wrapping add is like +, but safely overflows
-            let checksum = oplog_checksum.wrapping_add(add_checksum);
+                if actual != bucket.checksum {
+                    failures.push(ChecksumMismatch {
+                        bucket_name: bucket.bucket.clone(),
+                        expected_checksum: bucket.checksum,
+                        actual_add_checksum: add_checksum,
+                        actual_op_checksum: oplog_checksum,
+                    });
+                }
 
-            if checksum != expected_checksum {
-                failures.push(String::from(name));
+                statement.reset()?;
             }
         }
 
@@ -211,7 +195,12 @@ GROUP BY bucket_list.bucket",
         let checksums = self.validate_checkpoint(checkpoint, priority)?;
 
         if !checksums.is_valid() {
-            self.delete_buckets(checksums.failed_buckets.iter().map(|i| i.as_str()))?;
+            self.delete_buckets(
+                checksums
+                    .failed_buckets
+                    .iter()
+                    .map(|i| i.bucket_name.as_str()),
+            )?;
             return Ok(SyncLocalResult::ChecksumFailure(checksums));
         }
 
@@ -312,7 +301,14 @@ pub struct BucketInfo {
 }
 
 pub struct CheckpointResult {
-    failed_buckets: Vec<String>,
+    failed_buckets: Vec<ChecksumMismatch>,
+}
+
+pub struct ChecksumMismatch {
+    bucket_name: String,
+    expected_checksum: Checksum,
+    actual_op_checksum: Checksum,
+    actual_add_checksum: Checksum,
 }
 
 impl CheckpointResult {
@@ -337,6 +333,21 @@ impl Display for CheckpointResult {
 
             Ok(())
         }
+    }
+}
+
+impl Display for ChecksumMismatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let actual = self.actual_add_checksum + self.actual_op_checksum;
+        write!(
+            f,
+            "{} (expected {}, got {} = {} (op) + {} (add))",
+            self.bucket_name,
+            self.expected_checksum,
+            actual,
+            self.actual_op_checksum,
+            self.actual_add_checksum
+        )
     }
 }
 
