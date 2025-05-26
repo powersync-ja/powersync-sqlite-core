@@ -19,7 +19,7 @@ void main() {
   tearDownAll(() => sqlite3.unregisterVirtualFileSystem(vfs));
 
   setUp(() async {
-    db = openTestDatabase(vfs)
+    db = openTestDatabase(vfs: vfs)
       ..select('select powersync_init();')
       ..select('select powersync_replace_schema(?)', [json.encode(_schema)]);
   });

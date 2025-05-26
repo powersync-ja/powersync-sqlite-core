@@ -5,7 +5,7 @@ description: Tests for powersync-sqlite-core
 environment:
   sdk: ^3.4.0
 dependencies:
-  sqlite3: ^2.4.5
+  sqlite3: ^2.7.6
 dev_dependencies:
   test: ^1.25.0
   file: ^7.0.1

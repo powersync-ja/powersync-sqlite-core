@@ -22,7 +22,7 @@ void main() {
     late CommonDatabase db;
 
     setUp(() async {
-      db = openTestDatabase(vfs)
+      db = openTestDatabase(vfs: vfs)
         ..select('select powersync_init();')
         ..select('select powersync_replace_schema(?)', [json.encode(_schema)]);
     });
