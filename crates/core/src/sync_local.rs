@@ -114,7 +114,8 @@ impl<'a> SyncOperation<'a> {
             if self.data_tables.contains(&table_name) {
                 let quoted = quote_internal_name(type_name, false);
 
-                if !data.is_ok() {
+                // is_err() is essentially a NULL check here
+                if data.is_err() {
                     // DELETE
                     let delete_statement = self
                         .db
@@ -133,7 +134,7 @@ impl<'a> SyncOperation<'a> {
                     insert_statement.exec()?;
                 }
             } else {
-                if !data.is_ok() {
+                if data.is_err() {
                     // DELETE
                     // language=SQLite
                     let delete_statement = self
