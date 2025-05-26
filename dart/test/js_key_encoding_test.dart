@@ -9,7 +9,9 @@ import 'package:test/test.dart';
 import 'utils/native_test_utils.dart';
 
 void main() {
-  final vfs = TestSqliteFileSystem(fs: const LocalFileSystem());
+  // Needs an unique name per test file to avoid concurrency issues
+  final vfs = TestSqliteFileSystem(
+      fs: const LocalFileSystem(), name: 'js-key-encoding-test-vfs');
   late CommonDatabase db;
 
   setUpAll(() {
