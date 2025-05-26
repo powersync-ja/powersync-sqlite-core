@@ -114,7 +114,8 @@ impl<'a> SyncOperation<'a> {
             if self.data_tables.contains(&table_name) {
                 let quoted = quote_internal_name(type_name, false);
 
-                // is_err() is essentially a NULL check here
+                // is_err() is essentially a NULL check here.
+                // NULL data means no PUT operations found, so we delete the row.
                 if data.is_err() {
                     // DELETE
                     let delete_statement = self
@@ -190,6 +191,7 @@ impl<'a> SyncOperation<'a> {
                         "\
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
 --    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
+--    We filter out duplicates using the GROUP BY below.
 WITH updated_rows AS (
     SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
         CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
@@ -224,6 +226,7 @@ SELECT
                         "\
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
 --    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
+--    We filter out duplicates using the GROUP BY below.
 WITH 
   involved_buckets (id) AS MATERIALIZED (
     SELECT id FROM ps_buckets WHERE ?1 IS NULL
