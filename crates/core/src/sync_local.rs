@@ -103,7 +103,17 @@ impl<'a> SyncOperation<'a> {
 
         self.collect_tables()?;
         let statement = self.collect_full_operations()?;
-        // TODO: cache statements
+
+        // We cache the last insert and delete statements for each row
+        let mut last_insert_table: Option<String> = None;
+        let mut last_insert_statement: Option<ManagedStmt> = None;
+
+        let mut last_delete_table: Option<String> = None;
+        let mut last_delete_statement: Option<ManagedStmt> = None;
+
+        let mut untyped_delete_statement: Option<ManagedStmt> = None;
+        let mut untyped_insert_statement: Option<ManagedStmt> = None;
+
         while statement.step().into_db_result(self.db)? == ResultCode::ROW {
             let type_name = statement.column_text(0)?;
             let id = statement.column_text(1)?;
@@ -118,18 +128,36 @@ impl<'a> SyncOperation<'a> {
                 // NULL data means no PUT operations found, so we delete the row.
                 if data.is_err() {
                     // DELETE
-                    let delete_statement = self
-                        .db
-                        .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
-                        .into_db_result(self.db)?;
+                    if last_delete_table.as_deref() != Some(&quoted) {
+                        // Prepare statement when the table changed
+                        last_delete_statement = Some(
+                            self.db
+                                .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
+                                .into_db_result(self.db)?,
+                        );
+                        last_delete_table = Some(quoted.clone());
+                    }
+                    let delete_statement = last_delete_statement.as_mut().unwrap();
+
+                    delete_statement.reset()?;
                     delete_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
                     delete_statement.exec()?;
                 } else {
                     // INSERT/UPDATE
-                    let insert_statement = self
-                        .db
-                        .prepare_v2(&format!("REPLACE INTO {}(id, data) VALUES(?, ?)", quoted))
-                        .into_db_result(self.db)?;
+                    if last_insert_table.as_deref() != Some(&quoted) {
+                        // Prepare statement when the table changed
+                        last_insert_statement = Some(
+                            self.db
+                                .prepare_v2(&format!(
+                                    "REPLACE INTO {}(id, data) VALUES(?, ?)",
+                                    quoted
+                                ))
+                                .into_db_result(self.db)?,
+                        );
+                        last_insert_table = Some(quoted.clone());
+                    }
+                    let insert_statement = last_insert_statement.as_mut().unwrap();
+                    insert_statement.reset()?;
                     insert_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
                     insert_statement.bind_text(2, data?, sqlite::Destructor::STATIC)?;
                     insert_statement.exec()?;
@@ -137,21 +165,33 @@ impl<'a> SyncOperation<'a> {
             } else {
                 if data.is_err() {
                     // DELETE
-                    // language=SQLite
-                    let delete_statement = self
-                        .db
-                        .prepare_v2("DELETE FROM ps_untyped WHERE type = ? AND id = ?")
-                        .into_db_result(self.db)?;
+                    if untyped_delete_statement.is_none() {
+                        // Prepare statement on first use
+                        untyped_delete_statement = Some(
+                            self.db
+                                .prepare_v2("DELETE FROM ps_untyped WHERE type = ? AND id = ?")
+                                .into_db_result(self.db)?,
+                        );
+                    }
+                    let delete_statement = untyped_delete_statement.as_mut().unwrap();
+                    delete_statement.reset()?;
                     delete_statement.bind_text(1, type_name, sqlite::Destructor::STATIC)?;
                     delete_statement.bind_text(2, id, sqlite::Destructor::STATIC)?;
                     delete_statement.exec()?;
                 } else {
                     // INSERT/UPDATE
-                    // language=SQLite
-                    let insert_statement = self
-                        .db
-                        .prepare_v2("REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)")
-                        .into_db_result(self.db)?;
+                    if untyped_insert_statement.is_none() {
+                        // Prepare statement on first use
+                        untyped_insert_statement = Some(
+                            self.db
+                                .prepare_v2(
+                                    "REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)",
+                                )
+                                .into_db_result(self.db)?,
+                        );
+                    }
+                    let insert_statement = untyped_insert_statement.as_mut().unwrap();
+                    insert_statement.reset()?;
                     insert_statement.bind_text(1, type_name, sqlite::Destructor::STATIC)?;
                     insert_statement.bind_text(2, id, sqlite::Destructor::STATIC)?;
                     insert_statement.bind_text(3, data?, sqlite::Destructor::STATIC)?;
