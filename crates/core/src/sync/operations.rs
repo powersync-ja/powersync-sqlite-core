@@ -81,7 +81,7 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
                     // Superseded (deleted) a previous operation, add the checksum
                     let supersede_checksum = Checksum::from_i32(supersede_statement.column_int(1));
                     add_checksum += supersede_checksum;
-                    op_checksum += supersede_checksum;
+                    op_checksum -= supersede_checksum;
 
                     // Superseded an operation, only skip if the bucket was empty
                     // Previously this checked "superseded_op <= last_applied_op".

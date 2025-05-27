@@ -1,7 +1,7 @@
 use core::{
     fmt::Display,
     num::Wrapping,
-    ops::{Add, AddAssign},
+    ops::{Add, AddAssign, Sub, SubAssign},
 };
 
 use num_traits::float::FloatCore;
@@ -57,6 +57,20 @@ impl AddAssign for Checksum {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
         self.0 += rhs.0
+    }
+}
+
+impl Sub for Checksum {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl SubAssign for Checksum {
+    fn sub_assign(&mut self, rhs: Self) {
+        self.0 -= rhs.0;
     }
 }
 
