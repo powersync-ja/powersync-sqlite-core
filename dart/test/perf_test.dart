@@ -18,9 +18,11 @@ void testFilesystemOperations(
     {bool unique = true,
     int count = 200000,
     int alreadyApplied = 10000,
-    int buckets = 10}) {
+    int buckets = 10,
+    bool rawQueries = false}) {
   late TrackingFileSystem vfs;
   late CommonDatabase db;
+  final skip = rawQueries == false ? 'For manual query testing only' : null;
 
   setUpAll(() {
     loadExtension();
@@ -40,6 +42,8 @@ void testFilesystemOperations(
   });
 
   setUp(() {
+    // Optional: set a custom cache size - it affects the number of filesystem operations.
+    // db.execute('PRAGMA cache_size=-50000');
     db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
     // Generate dummy data
     // We can replace this with actual similated download operations later
@@ -78,7 +82,8 @@ FROM generate_bucket_rows;
 
 COMMIT;
 ''');
-    print('init stats: ${vfs.stats()}');
+    // Enable this to see stats for initial data generation
+    // print('init stats: ${vfs.stats()}');
 
     vfs.clearStats();
   });
@@ -109,26 +114,200 @@ COMMIT;
     expect(timer.elapsed,
         lessThan(Duration(milliseconds: 100 + (count / 50).round())));
   });
+
+  // The tests below are for comparing different queries, not run as part of the
+  // standard test suite.
+
+  test('sync_local new query', () {
+    // This query only uses a single TEMP B-TREE for the GROUP BY operation,
+    // leading to fairly efficient execution.
+
+    // QUERY PLAN
+    // |--CO-ROUTINE updated_rows
+    // |  `--COMPOUND QUERY
+    // |     |--LEFT-MOST SUBQUERY
+    // |     |  |--SCAN buckets
+    // |     |  `--SEARCH b USING INDEX ps_oplog_opid (bucket=? AND op_id>?)
+    // |     `--UNION ALL
+    // |        `--SCAN ps_updated_rows
+    // |--SCAN b
+    // |--USE TEMP B-TREE FOR GROUP BY
+    // `--CORRELATED SCALAR SUBQUERY 3
+    //    `--SEARCH r USING INDEX ps_oplog_row (row_type=? AND row_id=?)
+
+    var timer = Stopwatch()..start();
+    final q = '''
+WITH updated_rows AS (
+    SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
+        CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
+        AND (b.op_id > buckets.last_applied_op)
+    UNION ALL SELECT row_type, row_id FROM ps_updated_rows
+)
+
+SELECT
+    b.row_type,
+    b.row_id,
+    (
+        SELECT iif(max(r.op_id), r.data, null)
+                 FROM ps_oplog r
+                WHERE r.row_type = b.row_type
+                  AND r.row_id = b.row_id
+
+    ) as data
+    FROM updated_rows b
+    GROUP BY b.row_type, b.row_id;
+''';
+    db.select(q);
+    print('${timer.elapsed.inMilliseconds}ms ${vfs.stats()}');
+  }, skip: skip);
+
+  test('old query', () {
+    // This query used a TEMP B-TREE for the first part of finding unique updated rows,
+    // then another TEMP B-TREE for the second GROUP BY. This redundant B-TREE causes
+    // a lot of temporary storage overhead.
+
+    // QUERY PLAN
+    // |--CO-ROUTINE updated_rows
+    // |  `--COMPOUND QUERY
+    // |     |--LEFT-MOST SUBQUERY
+    // |     |  |--SCAN buckets
+    // |     |  `--SEARCH b USING INDEX ps_oplog_opid (bucket=? AND op_id>?)
+    // |     `--UNION USING TEMP B-TREE
+    // |        `--SCAN ps_updated_rows
+    // |--SCAN b
+    // |--SEARCH r USING INDEX ps_oplog_row (row_type=? AND row_id=?) LEFT-JOIN
+    // `--USE TEMP B-TREE FOR GROUP BY
+
+    var timer = Stopwatch()..start();
+    final q = '''
+WITH updated_rows AS (
+  SELECT DISTINCT b.row_type, b.row_id FROM ps_buckets AS buckets
+    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
+  AND (b.op_id > buckets.last_applied_op)
+  UNION SELECT row_type, row_id FROM ps_updated_rows
+)
+SELECT b.row_type as type,
+    b.row_id as id,
+    r.data as data,
+    count(r.bucket) as buckets,
+    max(r.op_id) as op_id
+FROM updated_rows b
+    LEFT OUTER JOIN ps_oplog AS r
+                ON r.row_type = b.row_type
+                    AND r.row_id = b.row_id
+GROUP BY b.row_type, b.row_id;
+''';
+    db.select(q);
+    print('${timer.elapsed.inMilliseconds}ms ${vfs.stats()}');
+  }, skip: skip);
+
+  test('group_by query', () {
+    // This is similar to the new query, but uses a GROUP BY .. LIMIT 1 clause instead of the max(op_id) hack.
+    // It is similar in the number of filesystem operations, but slightly slower in real time.
+
+    // QUERY PLAN
+    // |--CO-ROUTINE updated_rows
+    // |  `--COMPOUND QUERY
+    // |     |--LEFT-MOST SUBQUERY
+    // |     |  |--SCAN buckets
+    // |     |  `--SEARCH b USING INDEX ps_oplog_opid (bucket=? AND op_id>?)
+    // |     `--UNION ALL
+    // |        `--SCAN ps_updated_rows
+    // |--SCAN b
+    // |--USE TEMP B-TREE FOR GROUP BY
+    // `--CORRELATED SCALAR SUBQUERY 3
+    //    |--SEARCH r USING INDEX ps_oplog_row (row_type=? AND row_id=?)
+    //    `--USE TEMP B-TREE FOR ORDER BY
+
+    var timer = Stopwatch()..start();
+    final q = '''
+WITH updated_rows AS (
+    SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
+        CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
+        AND (b.op_id > buckets.last_applied_op)
+    UNION ALL SELECT row_type, row_id FROM ps_updated_rows
+)
+
+SELECT
+    b.row_type,
+    b.row_id,
+    (
+        SELECT r.data FROM ps_oplog r
+                WHERE r.row_type = b.row_type
+                  AND r.row_id = b.row_id
+                  ORDER BY r.op_id DESC
+                  LIMIT 1
+
+    ) as data
+    FROM updated_rows b
+    GROUP BY b.row_type, b.row_id;
+''';
+    db.select(q);
+    print('${timer.elapsed.inMilliseconds}ms ${vfs.stats()}');
+  }, skip: skip);
+
+  test('full scan query', () {
+    // This is a nice alternative for initial sync or resyncing large amounts of data.
+    // This is very efficient for reading all data, but not for incremental updates.
+
+    // QUERY PLAN
+    // |--SCAN r USING INDEX ps_oplog_row
+    // |--CORRELATED SCALAR SUBQUERY 1
+    // |  `--SEARCH ps_buckets USING INTEGER PRIMARY KEY (rowid=?)
+    // `--CORRELATED SCALAR SUBQUERY 1
+    //    `--SEARCH ps_buckets USING INTEGER PRIMARY KEY (rowid=?)
+
+    var timer = Stopwatch()..start();
+    final q = '''
+SELECT r.row_type as type,
+    r.row_id as id,
+    r.data as data,
+    max(r.op_id) as op_id,
+    sum((select 1 from ps_buckets where ps_buckets.id = r.bucket and r.op_id > ps_buckets.last_applied_op)) as buckets
+    
+FROM ps_oplog r
+GROUP BY r.row_type, r.row_id
+HAVING buckets > 0;
+''';
+    db.select(q);
+    print('${timer.elapsed.inMilliseconds}ms ${vfs.stats()}');
+  }, skip: skip);
 }
 
 main() {
   group('test filesystem operations with unique ids', () {
     testFilesystemOperations(
-        unique: true, count: 500000, alreadyApplied: 10000, buckets: 10);
+        unique: true,
+        count: 500000,
+        alreadyApplied: 10000,
+        buckets: 10,
+        rawQueries: false);
   });
   group('test filesytem operations with duplicate ids', () {
     // If this takes more than a couple of milliseconds to complete, there is a performance bug
     testFilesystemOperations(
-        unique: false, count: 5000, alreadyApplied: 1000, buckets: 10);
+        unique: false,
+        count: 500000,
+        alreadyApplied: 1000,
+        buckets: 10,
+        rawQueries: false);
   });
 
   group('test filesystem operations with a small number of changes', () {
     testFilesystemOperations(
-        unique: true, count: 100000, alreadyApplied: 95000, buckets: 10);
+        unique: true,
+        count: 100000,
+        alreadyApplied: 95000,
+        buckets: 10,
+        rawQueries: false);
   });
 
   group('test filesystem operations with a large number of buckets', () {
     testFilesystemOperations(
-        unique: true, count: 100000, alreadyApplied: 10000, buckets: 1000);
+        unique: true,
+        count: 100000,
+        alreadyApplied: 10000,
+        buckets: 1000,
+        rawQueries: false);
   });
 }
