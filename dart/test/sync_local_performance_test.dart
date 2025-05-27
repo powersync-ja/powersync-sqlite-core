@@ -119,6 +119,7 @@ COMMIT;
   // standard test suite.
 
   test('sync_local new query', () {
+    // This is the query we're using now.
     // This query only uses a single TEMP B-TREE for the GROUP BY operation,
     // leading to fairly efficient execution.
 
@@ -134,9 +135,17 @@ COMMIT;
     // |--USE TEMP B-TREE FOR GROUP BY
     // `--CORRELATED SCALAR SUBQUERY 3
     //    `--SEARCH r USING INDEX ps_oplog_row (row_type=? AND row_id=?)
+    //
+    // For details on the max(r.op_id) clause, see:
+    // https://sqlite.org/lang_select.html#bare_columns_in_an_aggregate_query
+    // > If there is exactly one min() or max() aggregate in the query, then all bare columns in the result
+    // > set take values from an input row which also contains the minimum or maximum.
 
     var timer = Stopwatch()..start();
     final q = '''
+-- 1. Filter oplog by the ops added but not applied yet (oplog b).
+--    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
+--    We filter out duplicates using the GROUP BY below.
 WITH updated_rows AS (
     SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
         CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
@@ -144,10 +153,14 @@ WITH updated_rows AS (
     UNION ALL SELECT row_type, row_id FROM ps_updated_rows
 )
 
+-- 2. Find *all* current ops over different buckets for those objects (oplog r).
 SELECT
     b.row_type,
     b.row_id,
     (
+        -- 3. For each unique row, select the data from the latest oplog entry.
+        -- The max(r.op_id) clause is used to select the latest oplog entry.
+        -- The iif is to avoid the max(r.op_id) column ending up in the results.
         SELECT iif(max(r.op_id), r.data, null)
                  FROM ps_oplog r
                 WHERE r.row_type = b.row_type
@@ -155,6 +168,7 @@ SELECT
 
     ) as data
     FROM updated_rows b
+    -- Group for (2)
     GROUP BY b.row_type, b.row_id;
 ''';
     db.select(q);

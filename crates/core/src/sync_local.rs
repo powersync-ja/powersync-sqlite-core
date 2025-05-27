@@ -186,12 +186,10 @@ impl<'a> SyncOperation<'a> {
         Ok(match &self.partial {
             None => {
                 // Complete sync
+                // See dart/test/sync_local_performance_test.dart for an annotated version of this query.
                 self.db
                     .prepare_v2(
                         "\
--- 1. Filter oplog by the ops added but not applied yet (oplog b).
---    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
---    We filter out duplicates using the GROUP BY below.
 WITH updated_rows AS (
     SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
         CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
@@ -199,14 +197,10 @@ WITH updated_rows AS (
     UNION ALL SELECT row_type, row_id FROM ps_updated_rows
 )
 
--- 2. Find *all* current ops over different buckets for those objects (oplog r).
 SELECT
     b.row_type,
     b.row_id,
     (
-        -- 3. For each unique row, select the data from the latest oplog entry.
-        -- The max(r.op_id) clause is used to select the latest oplog entry.
-        -- The iif is to avoid the max(r.op_id) column ending up in the results.
         SELECT iif(max(r.op_id), r.data, null)
                  FROM ps_oplog r
                 WHERE r.row_type = b.row_type
@@ -214,7 +208,6 @@ SELECT
 
     ) as data
     FROM updated_rows b
-    -- Group for (2)
     GROUP BY b.row_type, b.row_id;",
                     )
                     .into_db_result(self.db)?
