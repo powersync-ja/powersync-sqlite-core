@@ -8,10 +8,10 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::bucket_priority::BucketPriority;
 use crate::create_sqlite_optional_text_fn;
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
+use crate::sync::bucket_priority::BucketPriority;
 
 fn powersync_client_id_impl(
     ctx: *mut sqlite::context,
@@ -19,17 +19,21 @@ fn powersync_client_id_impl(
 ) -> Result<String, SQLiteError> {
     let db = ctx.db_handle();
 
+    client_id(db)
+}
+
+pub fn client_id(db: *mut sqlite::sqlite3) -> Result<String, SQLiteError> {
     // language=SQLite
     let statement = db.prepare_v2("select value from ps_kv where key = 'client_id'")?;
 
     if statement.step()? == ResultCode::ROW {
         let client_id = statement.column_text(0)?;
-        return Ok(client_id.to_string());
+        Ok(client_id.to_string())
     } else {
-        return Err(SQLiteError(
+        Err(SQLiteError(
             ResultCode::ABORT,
             Some(format!("No client_id found in ps_kv")),
-        ));
+        ))
     }
 }
 
