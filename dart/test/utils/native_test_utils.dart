@@ -26,13 +26,14 @@ void applyOpenOverride() {
   });
 }
 
-CommonDatabase openTestDatabase([VirtualFileSystem? vfs]) {
+CommonDatabase openTestDatabase(
+    {VirtualFileSystem? vfs, String fileName = ':memory:'}) {
   applyOpenOverride();
   if (!didLoadExtension) {
     loadExtension();
   }
 
-  return sqlite3.open(':memory:', vfs: vfs?.name);
+  return sqlite3.open(fileName, vfs: vfs?.name);
 }
 
 void loadExtension() {

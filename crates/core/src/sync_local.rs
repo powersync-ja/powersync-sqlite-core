@@ -107,7 +107,6 @@ impl<'a> SyncOperation<'a> {
         while statement.step().into_db_result(self.db)? == ResultCode::ROW {
             let type_name = statement.column_text(0)?;
             let id = statement.column_text(1)?;
-            let buckets = statement.column_int(3);
             let data = statement.column_text(2);
 
             let table_name = internal_table_name(type_name);
@@ -115,7 +114,9 @@ impl<'a> SyncOperation<'a> {
             if self.data_tables.contains(&table_name) {
                 let quoted = quote_internal_name(type_name, false);
 
-                if buckets == 0 {
+                // is_err() is essentially a NULL check here.
+                // NULL data means no PUT operations found, so we delete the row.
+                if data.is_err() {
                     // DELETE
                     let delete_statement = self
                         .db
@@ -134,7 +135,7 @@ impl<'a> SyncOperation<'a> {
                     insert_statement.exec()?;
                 }
             } else {
-                if buckets == 0 {
+                if data.is_err() {
                     // DELETE
                     // language=SQLite
                     let delete_statement = self
@@ -185,32 +186,29 @@ impl<'a> SyncOperation<'a> {
         Ok(match &self.partial {
             None => {
                 // Complete sync
+                // See dart/test/sync_local_performance_test.dart for an annotated version of this query.
                 self.db
                     .prepare_v2(
                         "\
--- 1. Filter oplog by the ops added but not applied yet (oplog b).
---    SELECT DISTINCT / UNION is important for cases with many duplicate ids.
 WITH updated_rows AS (
-  SELECT DISTINCT b.row_type, b.row_id FROM ps_buckets AS buckets
-    CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
-  AND (b.op_id > buckets.last_applied_op)
-  UNION SELECT row_type, row_id FROM ps_updated_rows
+    SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
+        CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
+        AND (b.op_id > buckets.last_applied_op)
+    UNION ALL SELECT row_type, row_id FROM ps_updated_rows
 )
 
--- 3. Group the objects from different buckets together into a single one (ops).
-SELECT b.row_type as type,
-    b.row_id as id,
-    r.data as data,
-    count(r.bucket) as buckets,
-    /* max() affects which row is used for 'data' */
-    max(r.op_id) as op_id
--- 2. Find *all* current ops over different buckets for those objects (oplog r).
-FROM updated_rows b
-    LEFT OUTER JOIN ps_oplog AS r
-                ON r.row_type = b.row_type
-                    AND r.row_id = b.row_id
--- Group for (3)
-GROUP BY b.row_type, b.row_id",
+SELECT
+    b.row_type,
+    b.row_id,
+    (
+        SELECT iif(max(r.op_id), r.data, null)
+                 FROM ps_oplog r
+                WHERE r.row_type = b.row_type
+                  AND r.row_id = b.row_id
+
+    ) as data
+    FROM updated_rows b
+    GROUP BY b.row_type, b.row_id;",
                     )
                     .into_db_result(self.db)?
             }
@@ -220,33 +218,38 @@ GROUP BY b.row_type, b.row_id",
                     .prepare_v2(
                         "\
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
---    SELECT DISTINCT / UNION is important for cases with many duplicate ids.
+--    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
+--    We filter out duplicates using the GROUP BY below.
 WITH 
   involved_buckets (id) AS MATERIALIZED (
     SELECT id FROM ps_buckets WHERE ?1 IS NULL
       OR name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))
   ),
   updated_rows AS (
-    SELECT DISTINCT FALSE as local, b.row_type, b.row_id FROM ps_buckets AS buckets
-      CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id AND (b.op_id > buckets.last_applied_op)
-      WHERE buckets.id IN (SELECT id FROM involved_buckets)
+    SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
+        CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
+        AND (b.op_id > buckets.last_applied_op)
+        WHERE buckets.id IN (SELECT id FROM involved_buckets)
   )
 
--- 3. Group the objects from different buckets together into a single one (ops).
-SELECT b.row_type as type,
-    b.row_id as id,
-    r.data as data,
-    count(r.bucket) as buckets,
-    /* max() affects which row is used for 'data' */
-    max(r.op_id) as op_id
 -- 2. Find *all* current ops over different buckets for those objects (oplog r).
-FROM updated_rows b
-    LEFT OUTER JOIN ps_oplog AS r
-               ON r.row_type = b.row_type
-                 AND r.row_id = b.row_id
-                 AND r.bucket IN (SELECT id FROM involved_buckets)
--- Group for (3)
-GROUP BY b.row_type, b.row_id",
+SELECT
+    b.row_type,
+    b.row_id,
+    (
+        -- 3. For each unique row, select the data from the latest oplog entry.
+        -- The max(r.op_id) clause is used to select the latest oplog entry.
+        -- The iif is to avoid the max(r.op_id) column ending up in the results.
+        SELECT iif(max(r.op_id), r.data, null)
+                 FROM ps_oplog r
+                WHERE r.row_type = b.row_type
+                  AND r.row_id = b.row_id
+                  AND r.bucket IN (SELECT id FROM involved_buckets)
+
+    ) as data
+    FROM updated_rows b
+    -- Group for (2)
+    GROUP BY b.row_type, b.row_id;",
                     )
                     .into_db_result(self.db)?;
                 stmt.bind_text(1, partial.args, Destructor::STATIC)?;

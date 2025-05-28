@@ -10,7 +10,9 @@ import 'package:test/test.dart';
 import 'utils/native_test_utils.dart';
 
 void main() {
-  final vfs = TestSqliteFileSystem(fs: const LocalFileSystem());
+  // Needs an unique name per test file to avoid concurrency issues
+  final vfs =
+      TestSqliteFileSystem(fs: const LocalFileSystem(), name: 'sync-test-vfs');
 
   setUpAll(() {
     loadExtension();
@@ -22,7 +24,7 @@ void main() {
     late CommonDatabase db;
 
     setUp(() async {
-      db = openTestDatabase(vfs)
+      db = openTestDatabase(vfs: vfs)
         ..select('select powersync_init();')
         ..select('select powersync_replace_schema(?)', [json.encode(_schema)]);
     });
