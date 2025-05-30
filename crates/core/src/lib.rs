@@ -12,7 +12,6 @@ use core::ffi::{c_char, c_int};
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 
-mod bucket_priority;
 mod checkpoint;
 mod crud_vtab;
 mod diff;
@@ -26,6 +25,7 @@ mod migrations;
 mod operations;
 mod operations_vtab;
 mod schema;
+mod sync;
 mod sync_local;
 mod sync_types;
 mod util;

@@ -4,8 +4,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::bucket_priority::BucketPriority;
 use crate::error::{PSResult, SQLiteError};
+use crate::sync::BucketPriority;
 use sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
 use sqlite_nostd::{ColumnType, Connection, ResultCode};
 
