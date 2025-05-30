@@ -1,101 +1,125 @@
-use core::marker::PhantomData;
+use alloc::{format, string::String, vec, vec::Vec};
+use serde::{de::Visitor, Deserialize};
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
-use streaming_iterator::StreamingIterator;
-
-use crate::error::SQLiteError;
-use sqlite::{Connection, ResultCode};
-use sqlite_nostd::{self as sqlite, ManagedStmt};
-
-pub struct TableInfo {
+#[derive(Deserialize)]
+pub struct Table {
     pub name: String,
-    pub view_name: String,
+    #[serde(rename = "view_name")]
+    pub view_name_override: Option<String>,
+    pub columns: Vec<Column>,
+    #[serde(default)]
+    pub indexes: Vec<Index>,
+    #[serde(
+        default,
+        rename = "include_old",
+        deserialize_with = "deserialize_include_old"
+    )]
     pub diff_include_old: Option<DiffIncludeOld>,
+    #[serde(flatten)]
     pub flags: TableInfoFlags,
 }
 
-impl TableInfo {
-    pub fn parse_from(db: *mut sqlite::sqlite3, data: &str) -> Result<TableInfo, SQLiteError> {
-        // language=SQLite
-        let statement = db.prepare_v2(
-            "SELECT
-        json_extract(?1, '$.name'),
-        ifnull(json_extract(?1, '$.view_name'), json_extract(?1, '$.name')),
-        json_extract(?1, '$.local_only'),
-        json_extract(?1, '$.insert_only'),
-        json_extract(?1, '$.include_old'),
-        json_extract(?1, '$.include_metadata'),
-        json_extract(?1, '$.include_old_only_when_changed'),
-        json_extract(?1, '$.ignore_empty_update')",
-        )?;
-        statement.bind_text(1, data, sqlite::Destructor::STATIC)?;
-
-        let step_result = statement.step()?;
-        if step_result != ResultCode::ROW {
-            return Err(SQLiteError::from(ResultCode::SCHEMA));
-        }
-
-        let name = statement.column_text(0)?.to_string();
-        let view_name = statement.column_text(1)?.to_string();
-        let flags = {
-            let local_only = statement.column_int(2) != 0;
-            let insert_only = statement.column_int(3) != 0;
-            let include_metadata = statement.column_int(5) != 0;
-            let include_old_only_when_changed = statement.column_int(6) != 0;
-            let ignore_empty_update = statement.column_int(7) != 0;
-
-            let mut flags = TableInfoFlags::default();
-            flags = flags.set_flag(TableInfoFlags::LOCAL_ONLY, local_only);
-            flags = flags.set_flag(TableInfoFlags::INSERT_ONLY, insert_only);
-            flags = flags.set_flag(TableInfoFlags::INCLUDE_METADATA, include_metadata);
-            flags = flags.set_flag(
-                TableInfoFlags::INCLUDE_OLD_ONLY_WHEN_CHANGED,
-                include_old_only_when_changed,
-            );
-            flags = flags.set_flag(TableInfoFlags::IGNORE_EMPTY_UPDATE, ignore_empty_update);
-            flags
-        };
-
-        let include_old = match statement.column_type(4)? {
-            sqlite_nostd::ColumnType::Text => {
-                let columns: Vec<String> = serde_json::from_str(statement.column_text(4)?)?;
-                Some(DiffIncludeOld::OnlyForColumns { columns })
-            }
-
-            sqlite_nostd::ColumnType::Integer => {
-                if statement.column_int(4) != 0 {
-                    Some(DiffIncludeOld::ForAllColumns)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-
-        // Don't allow include_metadata for local_only tables, it breaks our trigger setup and makes
-        // no sense because these changes are never inserted into ps_crud.
-        if flags.include_metadata() && flags.local_only() {
-            return Err(SQLiteError(
-                ResultCode::ERROR,
-                Some("include_metadata and local_only are incompatible".to_string()),
-            ));
-        }
-
-        return Ok(TableInfo {
-            name,
-            view_name,
-            diff_include_old: include_old,
-            flags,
-        });
+impl Table {
+    pub fn from_json(text: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(text)
     }
+
+    pub fn view_name(&self) -> &str {
+        self.view_name_override
+            .as_deref()
+            .unwrap_or(self.name.as_str())
+    }
+
+    pub fn internal_name(&self) -> String {
+        if self.flags.local_only() {
+            format!("ps_data_local__{:}", self.name)
+        } else {
+            format!("ps_data__{:}", self.name)
+        }
+    }
+
+    pub fn column_names(&self) -> impl Iterator<Item = &str> {
+        self.columns.iter().map(|c| c.name.as_str())
+    }
+}
+
+#[derive(Deserialize)]
+pub struct Column {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_name: String,
+}
+
+#[derive(Deserialize)]
+pub struct Index {
+    pub name: String,
+    pub columns: Vec<IndexedColumn>,
+}
+
+#[derive(Deserialize)]
+pub struct IndexedColumn {
+    pub name: String,
+    pub ascending: bool,
+    #[serde(rename = "type")]
+    pub type_name: String,
 }
 
 pub enum DiffIncludeOld {
     OnlyForColumns { columns: Vec<String> },
     ForAllColumns,
+}
+
+fn deserialize_include_old<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<DiffIncludeOld>, D::Error> {
+    struct IncludeOldVisitor;
+
+    impl<'de> Visitor<'de> for IncludeOldVisitor {
+        type Value = Option<DiffIncludeOld>;
+
+        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+            write!(formatter, "an array of columns, or true")
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_any(self)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            return Ok(None);
+        }
+
+        fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(if v {
+                Some(DiffIncludeOld::ForAllColumns)
+            } else {
+                None
+            })
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut elements: Vec<String> = vec![];
+            while let Some(next) = seq.next_element::<String>()? {
+                elements.push(next);
+            }
+
+            Ok(Some(DiffIncludeOld::OnlyForColumns { columns: elements }))
+        }
+    }
+
+    deserializer.deserialize_option(IncludeOldVisitor)
 }
 
 #[derive(Clone, Copy)]
@@ -148,53 +172,56 @@ impl Default for TableInfoFlags {
     }
 }
 
-pub struct ColumnNameAndTypeStatement<'a> {
-    pub stmt: ManagedStmt,
-    table: PhantomData<&'a str>,
-}
+impl<'de> Deserialize<'de> for TableInfoFlags {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct FlagsVisitor;
 
-impl ColumnNameAndTypeStatement<'_> {
-    pub fn new(db: *mut sqlite::sqlite3, table: &str) -> Result<Self, ResultCode> {
-        let stmt = db.prepare_v2("select json_extract(e.value, '$.name'), json_extract(e.value, '$.type') from json_each(json_extract(?, '$.columns')) e")?;
-        stmt.bind_text(1, table, sqlite::Destructor::STATIC)?;
+        impl<'de> Visitor<'de> for FlagsVisitor {
+            type Value = TableInfoFlags;
 
-        Ok(Self {
-            stmt,
-            table: PhantomData,
-        })
-    }
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                write!(formatter, "an object with table flags")
+            }
 
-    fn step(stmt: &ManagedStmt) -> Result<Option<ColumnInfo>, ResultCode> {
-        if stmt.step()? == ResultCode::ROW {
-            let name = stmt.column_text(0)?;
-            let type_name = stmt.column_text(1)?;
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut flags = TableInfoFlags::default();
 
-            return Ok(Some(ColumnInfo { name, type_name }));
+                while let Some((key, value)) = map.next_entry::<&'de str, bool>()? {
+                    flags = flags.set_flag(
+                        match key {
+                            "local_only" => TableInfoFlags::LOCAL_ONLY,
+                            "insert_only" => TableInfoFlags::INSERT_ONLY,
+                            "include_metadata" => TableInfoFlags::INCLUDE_METADATA,
+                            "include_old_only_when_changed" => {
+                                TableInfoFlags::INCLUDE_OLD_ONLY_WHEN_CHANGED
+                            }
+                            "ignore_empty_update" => TableInfoFlags::IGNORE_EMPTY_UPDATE,
+                            _ => continue,
+                        },
+                        value,
+                    );
+                }
+
+                Ok(flags)
+            }
         }
 
-        Ok(None)
+        deserializer.deserialize_struct(
+            "TableInfoFlags",
+            &[
+                "local_only",
+                "insert_only",
+                "include_metadata",
+                "include_old_only_when_changed",
+                "ignore_empty_update",
+            ],
+            FlagsVisitor,
+        )
     }
-
-    pub fn streaming_iter(
-        &mut self,
-    ) -> impl StreamingIterator<Item = Result<ColumnInfo, ResultCode>> {
-        streaming_iterator::from_fn(|| match Self::step(&self.stmt) {
-            Err(e) => Some(Err(e)),
-            Ok(Some(other)) => Some(Ok(other)),
-            Ok(None) => None,
-        })
-    }
-
-    pub fn names_iter(&mut self) -> impl StreamingIterator<Item = Result<&str, ResultCode>> {
-        self.streaming_iter().map(|item| match item {
-            Ok(row) => Ok(row.name),
-            Err(e) => Err(*e),
-        })
-    }
-}
-
-#[derive(Clone)]
-pub struct ColumnInfo<'a> {
-    pub name: &'a str,
-    pub type_name: &'a str,
 }
