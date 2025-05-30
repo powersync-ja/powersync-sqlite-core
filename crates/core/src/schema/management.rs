@@ -1,8 +1,8 @@
 extern crate alloc;
 
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::{format, vec};
 use core::ffi::c_int;
 
 use sqlite::{Connection, ResultCode, Value};
@@ -13,6 +13,8 @@ use crate::error::{PSResult, SQLiteError};
 use crate::ext::ExtendedDatabase;
 use crate::util::{quote_identifier, quote_json_path};
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
+
+use super::Schema;
 
 fn update_tables(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), SQLiteError> {
     {
@@ -138,87 +140,83 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
 
 fn update_indexes(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), SQLiteError> {
     let mut statements: Vec<String> = alloc::vec![];
+    let schema = serde_json::from_str::<Schema>(schema)?;
+    let mut expected_index_names: Vec<String> = vec![];
 
     {
         // In a block so that the statement is finalized before dropping indexes
         // language=SQLite
-        let statement = db.prepare_v2("\
-SELECT
-        powersync_internal_table_name(tables.value) as table_name,
-        (powersync_internal_table_name(tables.value) || '__' || json_extract(indexes.value, '$.name')) as index_name,
-        json_extract(indexes.value, '$.columns') as index_columns,
-        ifnull(sqlite_master.sql, '') as sql
-      FROM json_each(json_extract(?, '$.tables')) tables
-      CROSS JOIN json_each(json_extract(tables.value, '$.indexes')) indexes
-      LEFT JOIN sqlite_master ON sqlite_master.name = index_name AND sqlite_master.type = 'index'
-      ").into_db_result(db)?;
-        statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
+        let find_index =
+            db.prepare_v2("SELECT sql FROM sqlite_master WHERE name = ? AND type = 'index'")?;
 
-        while statement.step().into_db_result(db)? == ResultCode::ROW {
-            let table_name = statement.column_text(0)?;
-            let index_name = statement.column_text(1)?;
-            let columns = statement.column_text(2)?;
-            let existing_sql = statement.column_text(3)?;
+        for table in &schema.tables {
+            let table_name = table.internal_name();
 
-            // language=SQLite
-            let stmt2 = db.prepare_v2("select json_extract(e.value, '$.name') as name, json_extract(e.value, '$.type') as type, json_extract(e.value, '$.ascending') as ascending from json_each(?) e")?;
-            stmt2.bind_text(1, columns, sqlite::Destructor::STATIC)?;
+            for index in &table.indexes {
+                let index_name = format!("{}__{}", table_name, &index.name);
 
-            let mut column_values: Vec<String> = alloc::vec![];
-            while stmt2.step()? == ResultCode::ROW {
-                let name = stmt2.column_text(0)?;
-                let type_name = stmt2.column_text(1)?;
-                let ascending = stmt2.column_int(2) != 0;
+                let existing_sql = {
+                    find_index.reset()?;
+                    find_index.bind_text(1, &index_name, sqlite::Destructor::STATIC)?;
 
-                if ascending {
-                    let value = format!(
+                    let result = if let ResultCode::ROW = find_index.step()? {
+                        Some(find_index.column_text(0)?)
+                    } else {
+                        None
+                    };
+
+                    result
+                };
+
+                let mut column_values: Vec<String> = alloc::vec![];
+                for indexed_column in &index.columns {
+                    let mut value = format!(
                         "CAST(json_extract(data, {:}) as {:})",
-                        quote_json_path(name),
-                        type_name
+                        quote_json_path(&indexed_column.name),
+                        &indexed_column.type_name
                     );
-                    column_values.push(value);
-                } else {
-                    let value = format!(
-                        "CAST(json_extract(data, {:}) as {:}) DESC",
-                        quote_json_path(name),
-                        type_name
-                    );
+
+                    if !indexed_column.ascending {
+                        value += " DESC";
+                    }
+
                     column_values.push(value);
                 }
-            }
 
-            let sql = format!(
-                "CREATE INDEX {} ON {}({})",
-                quote_identifier(index_name),
-                quote_identifier(table_name),
-                column_values.join(", ")
-            );
-            if existing_sql == "" {
-                statements.push(sql);
-            } else if existing_sql != sql {
-                statements.push(format!("DROP INDEX {}", quote_identifier(index_name)));
-                statements.push(sql);
+                let sql = format!(
+                    "CREATE INDEX {} ON {}({})",
+                    quote_identifier(&index_name),
+                    quote_identifier(&table_name),
+                    column_values.join(", ")
+                );
+
+                if existing_sql.is_none() {
+                    statements.push(sql);
+                } else if existing_sql != Some(&sql) {
+                    statements.push(format!("DROP INDEX {}", quote_identifier(&index_name)));
+                    statements.push(sql);
+                }
+
+                expected_index_names.push(index_name);
             }
         }
 
         // In a block so that the statement is finalized before dropping indexes
         // language=SQLite
-        let statement = db.prepare_v2("\
-WITH schema_indexes AS (
-SELECT
-        powersync_internal_table_name(tables.value) as table_name,
-        (powersync_internal_table_name(tables.value) || '__' || json_extract(indexes.value, '$.name')) as index_name
-      FROM json_each(json_extract(?1, '$.tables')) tables
-      CROSS JOIN json_each(json_extract(tables.value, '$.indexes')) indexes
-)
+        let statement = db
+            .prepare_v2(
+                "\
 SELECT
     sqlite_master.name as index_name
       FROM sqlite_master
           WHERE sqlite_master.type = 'index'
             AND sqlite_master.name GLOB 'ps_data_*'
-            AND sqlite_master.name NOT IN (SELECT index_name FROM schema_indexes)
-").into_db_result(db)?;
-        statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
+            AND sqlite_master.name NOT IN (SELECT value FROM json_each(?))
+",
+            )
+            .into_db_result(db)?;
+        let json_names = serde_json::to_string(&expected_index_names)?;
+        statement.bind_text(1, &json_names, sqlite::Destructor::STATIC)?;
 
         while statement.step()? == ResultCode::ROW {
             let name = statement.column_text(0)?;

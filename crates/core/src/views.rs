@@ -6,49 +6,41 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;
 use core::fmt::Write;
-use streaming_iterator::StreamingIterator;
 
 use sqlite::{Connection, Context, ResultCode, Value};
 use sqlite_nostd::{self as sqlite};
 
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
-use crate::schema::{ColumnInfo, ColumnNameAndTypeStatement, DiffIncludeOld, TableInfo};
+use crate::schema::{DiffIncludeOld, Table};
 use crate::util::*;
 
 fn powersync_view_sql_impl(
-    ctx: *mut sqlite::context,
+    _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
-    let db = ctx.db_handle();
-    let table = args[0].text();
-    let table_info = TableInfo::parse_from(db, table)?;
+    let table_info = Table::from_json(args[0].text())?;
 
     let name = &table_info.name;
-    let view_name = &table_info.view_name;
+    let view_name = &table_info.view_name();
     let local_only = table_info.flags.local_only();
     let include_metadata = table_info.flags.include_metadata();
 
     let quoted_name = quote_identifier(view_name);
     let internal_name = quote_internal_name(name, local_only);
 
-    let mut columns = ColumnNameAndTypeStatement::new(db, table)?;
-    let mut iter = columns.streaming_iter();
-
     let mut column_names_quoted: Vec<String> = alloc::vec![];
     let mut column_values: Vec<String> = alloc::vec![];
     column_names_quoted.push(quote_identifier("id"));
     column_values.push(String::from("id"));
-    while let Some(row) = iter.next() {
-        let ColumnInfo { name, type_name } = row.clone()?;
-        column_names_quoted.push(quote_identifier(name));
+    for column in &table_info.columns {
+        column_names_quoted.push(quote_identifier(&column.name));
 
-        let foo = format!(
+        column_values.push(format!(
             "CAST(json_extract(data, {:}) as {:})",
-            quote_json_path(name),
-            type_name
-        );
-        column_values.push(foo);
+            quote_json_path(&column.name),
+            &column.type_name
+        ));
     }
 
     if include_metadata {
@@ -77,14 +69,13 @@ create_sqlite_text_fn!(
 );
 
 fn powersync_trigger_delete_sql_impl(
-    ctx: *mut sqlite::context,
+    _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
-    let table = args[0].text();
-    let table_info = TableInfo::parse_from(ctx.db_handle(), table)?;
+    let table_info = Table::from_json(args[0].text())?;
 
     let name = &table_info.name;
-    let view_name = &table_info.view_name;
+    let view_name = &table_info.view_name();
     let local_only = table_info.flags.local_only();
     let insert_only = table_info.flags.insert_only();
 
@@ -93,23 +84,14 @@ fn powersync_trigger_delete_sql_impl(
     let trigger_name = quote_identifier_prefixed("ps_view_delete_", view_name);
     let type_string = quote_string(name);
 
-    let db = ctx.db_handle();
-    let old_fragment: Cow<'static, str> = match table_info.diff_include_old {
+    let old_fragment: Cow<'static, str> = match &table_info.diff_include_old {
         Some(include_old) => {
-            let mut columns = ColumnNameAndTypeStatement::new(db, table)?;
-
             let json = match include_old {
                 DiffIncludeOld::OnlyForColumns { columns } => {
-                    let mut iterator = columns.iter();
-                    let mut columns =
-                        streaming_iterator::from_fn(|| -> Option<Result<&str, ResultCode>> {
-                            Some(Ok(iterator.next()?.as_str()))
-                        });
-
-                    json_object_fragment("OLD", &mut columns)
+                    json_object_fragment("OLD", &mut columns.iter().map(|c| c.as_str()))
                 }
                 DiffIncludeOld::ForAllColumns => {
-                    json_object_fragment("OLD", &mut columns.names_iter())
+                    json_object_fragment("OLD", &mut table_info.column_names())
                 }
             }?;
 
@@ -179,15 +161,13 @@ create_sqlite_text_fn!(
 );
 
 fn powersync_trigger_insert_sql_impl(
-    ctx: *mut sqlite::context,
+    _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
-    let table = args[0].text();
-
-    let table_info = TableInfo::parse_from(ctx.db_handle(), table)?;
+    let table_info = Table::from_json(args[0].text())?;
 
     let name = &table_info.name;
-    let view_name = &table_info.view_name;
+    let view_name = &table_info.view_name();
     let local_only = table_info.flags.local_only();
     let insert_only = table_info.flags.insert_only();
 
@@ -196,10 +176,7 @@ fn powersync_trigger_insert_sql_impl(
     let trigger_name = quote_identifier_prefixed("ps_view_insert_", view_name);
     let type_string = quote_string(name);
 
-    let local_db = ctx.db_handle();
-
-    let mut columns = ColumnNameAndTypeStatement::new(local_db, table)?;
-    let json_fragment = json_object_fragment("NEW", &mut columns.names_iter())?;
+    let json_fragment = json_object_fragment("NEW", &mut table_info.column_names())?;
 
     let metadata_fragment = if table_info.flags.include_metadata() {
         ", 'metadata', NEW._metadata"
@@ -258,15 +235,13 @@ create_sqlite_text_fn!(
 );
 
 fn powersync_trigger_update_sql_impl(
-    ctx: *mut sqlite::context,
+    _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
-    let table = args[0].text();
-
-    let table_info = TableInfo::parse_from(ctx.db_handle(), table)?;
+    let table_info = Table::from_json(args[0].text())?;
 
     let name = &table_info.name;
-    let view_name = &table_info.view_name;
+    let view_name = &table_info.view_name();
     let insert_only = table_info.flags.insert_only();
     let local_only = table_info.flags.local_only();
 
@@ -275,23 +250,16 @@ fn powersync_trigger_update_sql_impl(
     let trigger_name = quote_identifier_prefixed("ps_view_update_", view_name);
     let type_string = quote_string(name);
 
-    let db = ctx.db_handle();
-    let mut columns = ColumnNameAndTypeStatement::new(db, table)?;
-    let json_fragment_new = json_object_fragment("NEW", &mut columns.names_iter())?;
-    let json_fragment_old = json_object_fragment("OLD", &mut columns.names_iter())?;
+    let json_fragment_new = json_object_fragment("NEW", &mut table_info.column_names())?;
+    let json_fragment_old = json_object_fragment("OLD", &mut table_info.column_names())?;
 
     let mut old_values_fragment = match &table_info.diff_include_old {
         None => None,
         Some(DiffIncludeOld::ForAllColumns) => Some(json_fragment_old.clone()),
-        Some(DiffIncludeOld::OnlyForColumns { columns }) => {
-            let mut iterator = columns.iter();
-            let mut columns =
-                streaming_iterator::from_fn(|| -> Option<Result<&str, ResultCode>> {
-                    Some(Ok(iterator.next()?.as_str()))
-                });
-
-            Some(json_object_fragment("OLD", &mut columns)?)
-        }
+        Some(DiffIncludeOld::OnlyForColumns { columns }) => Some(json_object_fragment(
+            "OLD",
+            &mut columns.iter().map(|c| c.as_str()),
+        )?),
     };
 
     if table_info.flags.include_old_only_when_changed() {
@@ -301,15 +269,9 @@ fn powersync_trigger_update_sql_impl(
                 let filtered_new_fragment = match &table_info.diff_include_old {
                     // When include_old_only_when_changed is combined with a column filter, make sure we
                     // only include the powersync_diff of columns matched by the filter.
-                    Some(DiffIncludeOld::OnlyForColumns { columns }) => {
-                        let mut iterator = columns.iter();
-                        let mut columns =
-                            streaming_iterator::from_fn(|| -> Option<Result<&str, ResultCode>> {
-                                Some(Ok(iterator.next()?.as_str()))
-                            });
-
-                        Cow::Owned(json_object_fragment("NEW", &mut columns)?)
-                    }
+                    Some(DiffIncludeOld::OnlyForColumns { columns }) => Cow::Owned(
+                        json_object_fragment("NEW", &mut columns.iter().map(|c| c.as_str()))?,
+                    ),
                     _ => Cow::Borrowed(json_fragment_new.as_str()),
                 };
 
@@ -444,7 +406,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 /// Example output with prefix "NEW": "json_object('id', NEW.id, 'name', NEW.name, 'age', NEW.age)".
 fn json_object_fragment<'a>(
     prefix: &str,
-    name_results: &mut dyn StreamingIterator<Item = Result<&'a str, ResultCode>>,
+    name_results: &mut dyn Iterator<Item = &'a str>,
 ) -> Result<String, SQLiteError> {
     // floor(SQLITE_MAX_FUNCTION_ARG / 2).
     // To keep databases portable, we use the default limit of 100 args for this,
@@ -452,9 +414,7 @@ fn json_object_fragment<'a>(
     const MAX_ARG_COUNT: usize = 50;
 
     let mut column_names_quoted: Vec<String> = alloc::vec![];
-    while let Some(row) = name_results.next() {
-        let name = (*row)?;
-
+    while let Some(name) = name_results.next() {
         let quoted: String = format!(
             "{:}, {:}.{:}",
             quote_string(name),

@@ -117,7 +117,7 @@ fn remove_duplicate_key_encoding(key: &str) -> Option<String> {
 }
 
 fn powersync_remove_duplicate_key_encoding_impl(
-    ctx: *mut sqlite::context,
+    _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<Option<String>, SQLiteError> {
     let arg = args.get(0).ok_or(ResultCode::MISUSE)?;
