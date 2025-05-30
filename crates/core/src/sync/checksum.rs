@@ -164,6 +164,8 @@ impl<'de> Deserialize<'de> for Checksum {
 
 #[cfg(test)]
 mod test {
+    use num_traits::Zero;
+
     use super::Checksum;
 
     #[test]
@@ -186,5 +188,27 @@ mod test {
         assert_eq!(deserialize("3573495687").value(), 3573495687);
         assert_eq!(deserialize("3573495687.0").value(), 3573495687);
         assert_eq!(deserialize("-721471609.0").value(), 3573495687);
+    }
+
+    #[test]
+    pub fn test_arithmetic() {
+        assert_eq!(Checksum::from(3) + Checksum::from(7), Checksum::from(10));
+
+        // Checksums should always wrap around
+        assert_eq!(
+            Checksum::from(0xFFFFFFFF) + Checksum::from(1),
+            Checksum::zero()
+        );
+        assert_eq!(
+            Checksum::zero() - Checksum::from(1),
+            Checksum::from(0xFFFFFFFF)
+        );
+
+        let mut cs = Checksum::from(0x8FFFFFFF);
+        cs += Checksum::from(0x80000000);
+        assert_eq!(cs, Checksum::from(0x0FFFFFFF));
+
+        cs -= Checksum::from(0x80000001);
+        assert_eq!(cs, Checksum::from(0x8FFFFFFE));
     }
 }
