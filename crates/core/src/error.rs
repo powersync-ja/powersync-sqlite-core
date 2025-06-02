@@ -66,3 +66,9 @@ impl From<serde_json::Error> for SQLiteError {
         SQLiteError(ResultCode::ABORT, Some(value.to_string()))
     }
 }
+
+impl From<core::fmt::Error> for SQLiteError {
+    fn from(value: core::fmt::Error) -> Self {
+        SQLiteError(ResultCode::INTERNAL, Some(format!("{}", value)))
+    }
+}
