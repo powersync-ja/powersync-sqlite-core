@@ -50,7 +50,7 @@ where
         type Value = i64;
 
         fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-            formatter.write_str("a string")
+            formatter.write_str("a string representation of a number")
         }
 
         fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
