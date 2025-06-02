@@ -27,7 +27,6 @@ mod operations_vtab;
 mod schema;
 mod sync;
 mod sync_local;
-mod sync_types;
 mod util;
 mod uuid;
 mod version;
