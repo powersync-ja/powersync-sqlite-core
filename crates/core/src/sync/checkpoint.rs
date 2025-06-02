@@ -7,6 +7,8 @@ use crate::{
 };
 use sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
+/// A structure cloned from [BucketChecksum]s with an owned bucket name instead of one borrowed from
+/// a sync line.
 #[derive(Debug, Clone)]
 pub struct OwnedBucketChecksum {
     pub bucket: String,
