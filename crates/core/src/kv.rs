@@ -8,10 +8,10 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::bucket_priority::BucketPriority;
 use crate::create_sqlite_optional_text_fn;
 use crate::create_sqlite_text_fn;
 use crate::error::SQLiteError;
+use crate::sync::BucketPriority;
 
 fn powersync_client_id_impl(
     ctx: *mut sqlite::context,
