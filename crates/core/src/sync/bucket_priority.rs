@@ -4,7 +4,7 @@ use sqlite_nostd::ResultCode;
 use crate::error::SQLiteError;
 
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct BucketPriority {
     pub number: i32,
 }
@@ -14,6 +14,8 @@ impl BucketPriority {
         self == BucketPriority::HIGHEST
     }
 
+    /// The priority to use when the sync service doesn't attach priorities in checkpoints.
+    pub const FALLBACK: BucketPriority = BucketPriority { number: 3 };
     pub const HIGHEST: BucketPriority = BucketPriority { number: 0 };
 
     /// A low priority used to represent fully-completed sync operations across all priorities.

@@ -45,7 +45,7 @@ void main() {
                 'object_id': '1',
                 'subkey': json.encode('subkey'),
                 'checksum': 0,
-                'data': {'col': 'a'},
+                'data': json.encode({'col': 'a'}),
               }
             ],
           }

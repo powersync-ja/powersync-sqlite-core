@@ -52,7 +52,7 @@ void main() {
                 'object_type': 'items',
                 'object_id': rowId,
                 'checksum': 0,
-                'data': data,
+                'data': json.encode(data),
               }
             ],
           }
