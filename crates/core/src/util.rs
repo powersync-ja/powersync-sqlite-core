@@ -61,6 +61,7 @@ where
         }
     }
 
+    // Using a custom visitor here to avoid an intermediate string allocation
     deserializer.deserialize_str(ValueVisitor)
 }
 
@@ -92,7 +93,6 @@ where
         }
     }
 
-    // Using a custom visitor here to avoid an intermediate string allocation
     deserializer.deserialize_option(ValueVisitor)
 }
 
