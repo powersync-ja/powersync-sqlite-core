@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json as json;
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;

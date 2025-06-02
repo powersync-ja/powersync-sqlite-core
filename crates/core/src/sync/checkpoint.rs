@@ -1,13 +1,9 @@
 use alloc::{string::String, vec::Vec};
 use num_traits::Zero;
-use serde::Deserialize;
 
 use crate::{
     error::SQLiteError,
-    sync::{
-        line::{BucketChecksum, Checkpoint},
-        BucketPriority, Checksum,
-    },
+    sync::{line::BucketChecksum, BucketPriority, Checksum},
 };
 use sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
