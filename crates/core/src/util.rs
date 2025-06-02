@@ -44,8 +44,24 @@ pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Erro
 where
     D: serde::Deserializer<'de>,
 {
-    deserialize_optional_string_to_i64(deserializer)?
-        .ok_or_else(|| serde::de::Error::custom("Expected a string."))
+    struct ValueVisitor;
+
+    impl<'de> Visitor<'de> for ValueVisitor {
+        type Value = i64;
+
+        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+            formatter.write_str("a string")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            v.parse::<i64>().map_err(serde::de::Error::custom)
+        }
+    }
+
+    deserializer.deserialize_str(ValueVisitor)
 }
 
 pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
@@ -61,13 +77,6 @@ where
             formatter.write_str("a string or null")
         }
 
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            v.parse::<i64>().map(Some).map_err(serde::de::Error::custom)
-        }
-
         fn visit_none<E>(self) -> Result<Self::Value, E>
         where
             E: serde::de::Error,
@@ -79,7 +88,7 @@ where
         where
             D: serde::Deserializer<'de>,
         {
-            deserializer.deserialize_str(self)
+            Ok(Some(deserialize_string_to_i64(deserializer)?))
         }
     }
 
