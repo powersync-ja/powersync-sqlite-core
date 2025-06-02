@@ -1,5 +1,5 @@
-use alloc::format;
 use alloc::string::String;
+use alloc::{borrow::Cow, format};
 use num_traits::Zero;
 use sqlite_nostd::Connection;
 use sqlite_nostd::{self as sqlite, ResultCode};
@@ -10,33 +10,27 @@ use crate::{
 };
 
 use super::line::OplogData;
-use super::line::{DataLine, OpType};
 use super::Checksum;
+use super::{
+    line::{DataLine, OpType},
+    storage_adapter::{BucketInfo, StorageAdapter},
+};
 
 pub fn insert_bucket_operations(
-    db: *mut sqlite::sqlite3,
+    adapter: &StorageAdapter,
     data: &DataLine,
 ) -> Result<(), SQLiteError> {
-    // We do an ON CONFLICT UPDATE simply so that the RETURNING bit works for existing rows.
-    // We can consider splitting this into separate SELECT and INSERT statements.
-    // language=SQLite
-    let bucket_statement = db.prepare_v2(
-        "INSERT INTO ps_buckets(name)
-                            VALUES(?)
-                        ON CONFLICT DO UPDATE
-                            SET last_applied_op = last_applied_op
-                        RETURNING id, last_applied_op",
-    )?;
-    bucket_statement.bind_text(1, &data.bucket, sqlite::Destructor::STATIC)?;
-    bucket_statement.step()?;
-
-    let bucket_id = bucket_statement.column_int64(0);
+    let db = adapter.db;
+    let BucketInfo {
+        id: bucket_id,
+        last_applied_op,
+    } = adapter.lookup_bucket(&*data.bucket)?;
 
     // This is an optimization for initial sync - we can avoid persisting individual REMOVE
     // operations when last_applied_op = 0.
     // We do still need to do the "supersede_statement" step for this case, since a REMOVE
     // operation can supersede another PUT operation we're syncing at the same time.
-    let mut is_empty = bucket_statement.column_int64(1) == 0;
+    let mut is_empty = last_applied_op == 0;
 
     // Statement to supersede (replace) operations with the same key.
     // language=SQLite
@@ -58,8 +52,6 @@ INSERT INTO ps_oplog(bucket, op_id, key, row_type, row_id, data, hash) VALUES (?
         "\
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
     )?;
-
-    bucket_statement.reset()?;
 
     let mut last_op: Option<i64> = None;
     let mut add_checksum = Checksum::zero();

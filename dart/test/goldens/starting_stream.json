@@ -1,0 +1,30 @@
+[
+  {
+    "operation": "start",
+    "data": null,
+    "output": [
+      {
+        "UpdateSyncStatus": {
+          "status": {
+            "connected": false,
+            "connecting": true,
+            "priority_status": [],
+            "downloading": null
+          }
+        }
+      },
+      {
+        "EstablishSyncStream": {
+          "request": {
+            "buckets": [],
+            "include_checksum": true,
+            "raw_data": true,
+            "binary_data": true,
+            "client_id": "test-test-test-test",
+            "parameters": null
+          }
+        }
+      }
+    ]
+  }
+]
