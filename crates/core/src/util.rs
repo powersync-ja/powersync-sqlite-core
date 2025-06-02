@@ -3,11 +3,9 @@ extern crate alloc;
 use alloc::format;
 use alloc::string::String;
 
-use serde::Deserialize;
-use serde_json as json;
-
 #[cfg(not(feature = "getrandom"))]
 use crate::sqlite;
+use serde::de::Visitor;
 
 use uuid::Uuid;
 
@@ -46,25 +44,47 @@ pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Erro
 where
     D: serde::Deserializer<'de>,
 {
-    let value = json::Value::deserialize(deserializer)?;
-
-    match value {
-        json::Value::String(s) => s.parse::<i64>().map_err(serde::de::Error::custom),
-        _ => Err(serde::de::Error::custom("Expected a string.")),
-    }
+    deserialize_optional_string_to_i64(deserializer)?
+        .ok_or_else(|| serde::de::Error::custom("Expected a string."))
 }
 
 pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let value = json::Value::deserialize(deserializer)?;
+    struct ValueVisitor;
 
-    match value {
-        json::Value::Null => Ok(None),
-        json::Value::String(s) => s.parse::<i64>().map(Some).map_err(serde::de::Error::custom),
-        _ => Err(serde::de::Error::custom("Expected a string or null.")),
+    impl<'de> Visitor<'de> for ValueVisitor {
+        type Value = Option<i64>;
+
+        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+            formatter.write_str("a string or null")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            v.parse::<i64>().map(Some).map_err(serde::de::Error::custom)
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_str(self)
+        }
     }
+
+    // Using a custom visitor here to avoid an intermediate string allocation
+    deserializer.deserialize_option(ValueVisitor)
 }
 
 // Use getrandom crate to generate UUID.
