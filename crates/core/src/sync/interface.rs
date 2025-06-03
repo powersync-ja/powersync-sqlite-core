@@ -17,10 +17,12 @@ use crate::schema::Schema;
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct StartSyncStreamOptions {
     /// Bucket parameters to include in the request when opening a sync stream.
+    #[serde(default)]
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
     pub schema: Schema,
 }
 
@@ -146,10 +148,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
                     if payload.value_type() == ColumnType::Text {
                         serde_json::from_str(payload.text())?
                     } else {
-                        return Err(SQLiteError(
-                            ResultCode::MISUSE,
-                            Some("Second argument must be a string".to_string()),
-                        ));
+                        StartSyncStreamOptions::default()
                     },
                 ),
                 "stop" => SyncControlRequest::StopSyncStream,

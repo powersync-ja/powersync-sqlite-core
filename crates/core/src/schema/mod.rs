@@ -10,7 +10,7 @@ pub use table_info::{
     TableInfoFlags,
 };
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct Schema {
     pub tables: Vec<table_info::Table>,
 }

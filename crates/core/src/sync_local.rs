@@ -136,7 +136,8 @@ impl<'a> SyncOperation<'a> {
                     match data {
                         Ok(data) => {
                             let stmt = raw.put_statement(self.db)?;
-                            stmt.bind_for_put(id, data)?;
+                            let parsed: serde_json::Value = serde_json::from_str(data)?;
+                            stmt.bind_for_put(id, &parsed)?;
                             stmt.stmt.exec()?;
                         }
                         Err(_) => {
@@ -493,11 +494,8 @@ impl<'a> PreparedPendingStatement<'a> {
         })
     }
 
-    pub fn bind_for_put(&self, id: &str, json_data: &str) -> Result<(), SQLiteError> {
+    pub fn bind_for_put(&self, id: &str, json_data: &serde_json::Value) -> Result<(), SQLiteError> {
         use serde_json::Value;
-
-        let parsed: Value = serde_json::from_str(json_data)?;
-
         for (i, source) in self.params.iter().enumerate() {
             let i = (i + 1) as i32;
 
@@ -506,7 +504,7 @@ impl<'a> PreparedPendingStatement<'a> {
                     self.stmt.bind_text(i, id, Destructor::STATIC)?;
                 }
                 PendingStatementValue::Column(column) => {
-                    let parsed = parsed.as_object().ok_or_else(|| {
+                    let parsed = json_data.as_object().ok_or_else(|| {
                         SQLiteError(
                             ResultCode::CONSTRAINT_DATATYPE,
                             Some("expected oplog data to be an object".to_string()),
