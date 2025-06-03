@@ -92,7 +92,7 @@ void _syncTests<T>({
 
   List<Object?> pushSyncData(
       String bucket, String opId, String rowId, Object op, Object? data,
-      {int checksum = 0}) {
+      {int checksum = 0, String objectType = 'items'}) {
     return syncLine({
       'data': {
         'bucket': bucket,
@@ -103,7 +103,7 @@ void _syncTests<T>({
           {
             'op_id': opId,
             'op': op,
-            'object_type': 'items',
+            'object_type': objectType,
             'object_id': rowId,
             'checksum': checksum,
             'data': json.encode(data),
@@ -674,6 +674,72 @@ void _syncTests<T>({
 
       // Should delete bucket with checksum mismatch
       expect(db.select('SELECT * FROM ps_buckets'), isEmpty);
+    });
+  });
+
+  group('raw tables', () {
+    syncTest('smoke test', (_) {
+      db.execute(
+          'CREATE TABLE users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
+
+      invokeControl(
+        'start',
+        json.encode({
+          'schema': {
+            'tables': [
+              {
+                'name': 'users',
+                'raw': {
+                  'put': {
+                    'sql':
+                        'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
+                    'params': [
+                      'Id',
+                      {'Column': 'name'}
+                    ],
+                  },
+                  'delete': {
+                    'sql': 'DELETE FROM users WHERE id = ?',
+                    'params': ['Id'],
+                  },
+                },
+                'columns': [],
+              }
+            ],
+          },
+        }),
+      );
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      final users = db.select('SELECT * FROM users;');
+      expect(users, [
+        {'id': 'my_user', 'name': 'First user'}
+      ]);
+
+      // Delete
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'REMOVE',
+        null,
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('SELECT * FROM users'), isEmpty);
     });
   });
 }
