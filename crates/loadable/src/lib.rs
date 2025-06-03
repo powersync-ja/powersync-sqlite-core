@@ -3,7 +3,6 @@
 #![feature(core_intrinsics)]
 #![allow(internal_features)]
 #![feature(lang_items)]
-#![feature(error_in_core)]
 
 extern crate alloc;
 
