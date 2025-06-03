@@ -17,6 +17,8 @@ pub struct Table {
     pub diff_include_old: Option<DiffIncludeOld>,
     #[serde(flatten)]
     pub flags: TableInfoFlags,
+    #[serde(default)]
+    pub raw: Option<RawTableDefinition>,
 }
 
 impl Table {
@@ -228,4 +230,24 @@ impl<'de> Deserialize<'de> for TableInfoFlags {
             FlagsVisitor,
         )
     }
+}
+
+#[derive(Deserialize)]
+pub struct RawTableDefinition {
+    pub put: PendingStatement,
+    pub delete: PendingStatement,
+}
+
+#[derive(Deserialize)]
+pub struct PendingStatement {
+    pub sql: String,
+    /// This vec should contain an entry for each parameter in [sql].
+    pub params: Vec<PendingStatementValue>,
+}
+
+#[derive(Deserialize)]
+pub enum PendingStatementValue {
+    Id,
+    Column(String),
+    // TODO: Stuff like a raw object of put data?
 }

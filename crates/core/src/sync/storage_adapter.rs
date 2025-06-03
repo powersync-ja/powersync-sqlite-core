@@ -9,6 +9,7 @@ use crate::{
     error::SQLiteError,
     ext::SafeManagedStmt,
     operations::delete_bucket,
+    schema::Schema,
     sync::checkpoint::{validate_checkpoint, ChecksumMismatch},
     sync_local::{PartialSyncOperation, SyncOperation},
 };
@@ -145,6 +146,7 @@ impl StorageAdapter {
         &self,
         checkpoint: &OwnedCheckpoint,
         priority: Option<BucketPriority>,
+        schema: &Schema,
     ) -> Result<SyncLocalResult, SQLiteError> {
         let mismatched_checksums =
             validate_checkpoint(checkpoint.buckets.values(), priority, self.db)?;
@@ -201,14 +203,15 @@ impl StorageAdapter {
 
                 // TODO: Avoid this serialization, it's currently used to bind JSON SQL parameters.
                 let serialized_args = serde_json::to_string(&args)?;
-                SyncOperation::new(
+                let mut sync = SyncOperation::new(
                     self.db,
                     Some(PartialSyncOperation {
                         priority,
                         args: &serialized_args,
                     }),
-                )
-                .apply()
+                );
+                sync.use_schema(schema);
+                sync.apply()
             }
         }?;
 

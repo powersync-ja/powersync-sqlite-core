@@ -12,6 +12,7 @@ use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
 
 use crate::error::SQLiteError;
+use crate::schema::Schema;
 
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
@@ -22,6 +23,8 @@ pub struct StartSyncStream {
     /// Bucket parameters to include in the request when opening a sync stream.
     #[serde(default)]
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    pub schema: Schema,
 }
 
 /// A request sent from a client SDK to the [SyncClient] with a `powersync_control` invocation.
