@@ -184,7 +184,11 @@ impl StorageAdapter {
         }
 
         let sync_result = match priority {
-            None => SyncOperation::new(self.db, None).apply(),
+            None => {
+                let mut sync = SyncOperation::new(self.db, None);
+                sync.use_schema(schema);
+                sync.apply()
+            }
             Some(priority) => {
                 let args = PartialArgs {
                     priority,
