@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use serde::Deserialize;
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
-pub use table_info::{Column, DiffIncludeOld, Table, TableInfoFlags};
+pub use table_info::{DiffIncludeOld, Table, TableInfoFlags};
 
 #[derive(Deserialize)]
 pub struct Schema {

@@ -1,7 +1,5 @@
 extern crate alloc;
 
-use core::ptr::{self, null_mut};
-
 use alloc::format;
 use alloc::string::String;
 

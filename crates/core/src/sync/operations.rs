@@ -1,5 +1,5 @@
+use alloc::format;
 use alloc::string::String;
-use alloc::{borrow::Cow, format};
 use num_traits::Zero;
 use sqlite_nostd::Connection;
 use sqlite_nostd::{self as sqlite, ResultCode};

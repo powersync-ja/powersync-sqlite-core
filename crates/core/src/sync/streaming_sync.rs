@@ -18,13 +18,11 @@ use crate::{bson, error::SQLiteError, kv::client_id, sync::checkpoint::OwnedBuck
 use sqlite_nostd::{self as sqlite, ResultCode};
 
 use super::{
-    bucket_priority::BucketPriority,
     interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},
-    line::{BucketChecksum, Checkpoint, CheckpointDiff, SyncLine},
+    line::{Checkpoint, CheckpointDiff, SyncLine},
     operations::insert_bucket_operations,
     storage_adapter::{StorageAdapter, SyncLocalResult},
     sync_status::{SyncDownloadProgress, SyncProgressFromCheckpoint, SyncStatusContainer},
-    Checksum,
 };
 
 /// The sync client implementation, responsible for parsing lines received by the sync service and

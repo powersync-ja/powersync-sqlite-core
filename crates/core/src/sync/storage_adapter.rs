@@ -1,10 +1,6 @@
 use core::{assert_matches::debug_assert_matches, fmt::Display};
 
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
-use num_traits::Zero;
+use alloc::{string::ToString, vec::Vec};
 use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 use streaming_iterator::StreamingIterator;
@@ -13,10 +9,7 @@ use crate::{
     error::SQLiteError,
     ext::SafeManagedStmt,
     operations::delete_bucket,
-    sync::{
-        checkpoint::{validate_checkpoint, ChecksumMismatch},
-        Checksum,
-    },
+    sync::checkpoint::{validate_checkpoint, ChecksumMismatch},
     sync_local::{PartialSyncOperation, SyncOperation},
 };
 
