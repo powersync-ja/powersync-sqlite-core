@@ -13,7 +13,10 @@ use crate::{
     error::SQLiteError,
     ext::SafeManagedStmt,
     operations::delete_bucket,
-    sync::Checksum,
+    sync::{
+        checkpoint::{validate_checkpoint, ChecksumMismatch},
+        Checksum,
+    },
     sync_local::{PartialSyncOperation, SyncOperation},
 };
 
@@ -145,69 +148,20 @@ impl StorageAdapter {
         });
     }
 
-    fn validate_checkpoint(
-        &self,
-        checkpoint: &OwnedCheckpoint,
-        priority: Option<BucketPriority>,
-    ) -> Result<CheckpointResult, SQLiteError> {
-        // language=SQLite
-        let statement = self.db.prepare_v2(
-            "
-SELECT
-    ps_buckets.add_checksum as add_checksum,
-    ps_buckets.op_checksum as oplog_checksum
-FROM ps_buckets WHERE name = ?;",
-        )?;
-
-        let mut failures: Vec<ChecksumMismatch> = Vec::new();
-        for bucket in checkpoint.buckets.values() {
-            if bucket.is_in_priority(priority) {
-                statement.bind_text(1, &bucket.bucket, sqlite_nostd::Destructor::STATIC)?;
-
-                let (add_checksum, oplog_checksum) = match statement.step()? {
-                    ResultCode::ROW => {
-                        let add_checksum = Checksum::from_i32(statement.column_int(0));
-                        let oplog_checksum = Checksum::from_i32(statement.column_int(1));
-                        (add_checksum, oplog_checksum)
-                    }
-                    _ => (Checksum::zero(), Checksum::zero()),
-                };
-
-                let actual = add_checksum + oplog_checksum;
-
-                if actual != bucket.checksum {
-                    failures.push(ChecksumMismatch {
-                        bucket_name: bucket.bucket.clone(),
-                        expected_checksum: bucket.checksum,
-                        actual_add_checksum: add_checksum,
-                        actual_op_checksum: oplog_checksum,
-                    });
-                }
-
-                statement.reset()?;
-            }
-        }
-
-        Ok(CheckpointResult {
-            failed_buckets: failures,
-        })
-    }
-
     pub fn sync_local(
         &self,
         checkpoint: &OwnedCheckpoint,
         priority: Option<BucketPriority>,
     ) -> Result<SyncLocalResult, SQLiteError> {
-        let checksums = self.validate_checkpoint(checkpoint, priority)?;
+        let mismatched_checksums =
+            validate_checkpoint(checkpoint.buckets.values(), priority, self.db)?;
 
-        if !checksums.is_valid() {
-            self.delete_buckets(
-                checksums
-                    .failed_buckets
-                    .iter()
-                    .map(|i| i.bucket_name.as_str()),
-            )?;
-            return Ok(SyncLocalResult::ChecksumFailure(checksums));
+        if !mismatched_checksums.is_empty() {
+            self.delete_buckets(mismatched_checksums.iter().map(|i| i.bucket_name.as_str()))?;
+
+            return Ok(SyncLocalResult::ChecksumFailure(CheckpointResult {
+                failed_buckets: mismatched_checksums,
+            }));
         }
 
         let update_bucket = self
@@ -266,8 +220,6 @@ FROM ps_buckets WHERE name = ?;",
         }?;
 
         if sync_result == 1 {
-            // TODO: Force compact
-
             if priority.is_none() {
                 // Reset progress counters. We only do this for a complete sync, as we want a
                 // download progress to always cover a complete checkpoint instead of resetting for
@@ -308,13 +260,6 @@ pub struct BucketInfo {
 
 pub struct CheckpointResult {
     failed_buckets: Vec<ChecksumMismatch>,
-}
-
-pub struct ChecksumMismatch {
-    bucket_name: String,
-    expected_checksum: Checksum,
-    actual_op_checksum: Checksum,
-    actual_add_checksum: Checksum,
 }
 
 impl CheckpointResult {
