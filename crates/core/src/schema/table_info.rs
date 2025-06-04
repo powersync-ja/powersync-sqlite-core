@@ -17,8 +17,13 @@ pub struct Table {
     pub diff_include_old: Option<DiffIncludeOld>,
     #[serde(flatten)]
     pub flags: TableInfoFlags,
-    #[serde(default)]
-    pub raw: Option<RawTableDefinition>,
+}
+
+#[derive(Deserialize)]
+pub struct RawTable {
+    pub name: String,
+    pub put: PendingStatement,
+    pub delete: PendingStatement,
 }
 
 impl Table {
@@ -226,12 +231,6 @@ impl<'de> Deserialize<'de> for TableInfoFlags {
             FlagsVisitor,
         )
     }
-}
-
-#[derive(Deserialize)]
-pub struct RawTableDefinition {
-    pub put: PendingStatement,
-    pub delete: PendingStatement,
 }
 
 #[derive(Deserialize)]
