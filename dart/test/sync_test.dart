@@ -686,26 +686,24 @@ void _syncTests<T>({
         'start',
         json.encode({
           'schema': {
-            'tables': [
+            'raw_tables': [
               {
                 'name': 'users',
-                'raw': {
-                  'put': {
-                    'sql':
-                        'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
-                    'params': [
-                      'Id',
-                      {'Column': 'name'}
-                    ],
-                  },
-                  'delete': {
-                    'sql': 'DELETE FROM users WHERE id = ?',
-                    'params': ['Id'],
-                  },
+                'put': {
+                  'sql':
+                      'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
+                  'params': [
+                    'Id',
+                    {'Column': 'name'}
+                  ],
                 },
-                'columns': [],
+                'delete': {
+                  'sql': 'DELETE FROM users WHERE id = ?',
+                  'params': ['Id'],
+                },
               }
             ],
+            'tables': [],
           },
         }),
       );

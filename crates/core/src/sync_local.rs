@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use serde::Deserialize;
 
 use crate::error::{PSResult, SQLiteError};
-use crate::schema::{PendingStatement, PendingStatementValue, RawTableDefinition, Schema};
+use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
 use crate::sync::BucketPriority;
 use sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
 use sqlite_nostd::{ColumnType, Connection, ResultCode};
@@ -392,11 +392,9 @@ impl<'a> ParsedDatabaseSchema<'a> {
     }
 
     fn add_from_schema(&mut self, schema: &'a Schema) {
-        for table in &schema.tables {
-            if let Some(raw) = &table.raw {
-                self.tables
-                    .insert(table.name.clone(), ParsedSchemaTable::raw(raw));
-            }
+        for raw in &schema.raw_tables {
+            self.tables
+                .insert(raw.name.clone(), ParsedSchemaTable::raw(raw));
         }
     }
 
@@ -426,7 +424,7 @@ struct ParsedSchemaTable<'a> {
 }
 
 struct RawTableWithCachedStatements<'a> {
-    definition: &'a RawTableDefinition,
+    definition: &'a RawTable,
     cached_put: Option<PreparedPendingStatement<'a>>,
     cached_delete: Option<PreparedPendingStatement<'a>>,
 }
@@ -464,7 +462,7 @@ impl<'a> ParsedSchemaTable<'a> {
         Self { raw: None }
     }
 
-    pub fn raw(definition: &'a RawTableDefinition) -> Self {
+    pub fn raw(definition: &'a RawTable) -> Self {
         Self {
             raw: Some(RawTableWithCachedStatements {
                 definition,
