@@ -128,6 +128,7 @@ jobs:
           echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
       - name: Dispatch release to SPM package
         uses: peter-evans/repository-dispatch@v3
+        if: ${{ inputs.publish }}
         with:
           token: ${{ secrets.SWIFT_PUBLISH_TOKEN }}
           repository: powersync-ja/powersync-sqlite-core-swift
