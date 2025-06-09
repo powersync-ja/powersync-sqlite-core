@@ -9,8 +9,11 @@ extern crate alloc;
 
 use core::ffi::{c_char, c_int};
 
+use alloc::sync::Arc;
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
+
+use crate::state::DatabaseState;
 
 mod bson;
 mod checkpoint;
@@ -26,6 +29,7 @@ mod migrations;
 mod operations;
 mod operations_vtab;
 mod schema;
+mod state;
 mod sync;
 mod sync_local;
 mod util;
@@ -53,6 +57,8 @@ pub extern "C" fn sqlite3_powersync_init(
 }
 
 fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+    let state = Arc::new(DatabaseState::new());
+
     crate::version::register(db)?;
     crate::views::register(db)?;
     crate::uuid::register(db)?;
@@ -62,10 +68,11 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::view_admin::register(db)?;
     crate::checkpoint::register(db)?;
     crate::kv::register(db)?;
-    sync::register(db)?;
+    crate::state::register(db, state.clone())?;
+    sync::register(db, state.clone())?;
 
     crate::schema::register(db)?;
-    crate::operations_vtab::register(db)?;
+    crate::operations_vtab::register(db, state.clone())?;
     crate::crud_vtab::register(db)?;
 
     Ok(())

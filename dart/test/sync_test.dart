@@ -677,6 +677,47 @@ void _syncTests<T>({
     });
   });
 
+  syncTest('sets powersync_in_sync_operation', (_) {
+    var [row] = db.select('SELECT powersync_in_sync_operation() as r');
+    expect(row, {'r': 0});
+
+    var testInSyncInvocations = <bool>[];
+
+    db.createFunction(
+      functionName: 'test_in_sync',
+      function: (args) {
+        testInSyncInvocations.add((args[0] as int) != 0);
+        return null;
+      },
+      argumentCount: const AllowedArgumentCount(1),
+      directOnly: false,
+    );
+
+    db.execute('''
+CREATE TRIGGER foo AFTER INSERT ON ps_data__items BEGIN
+  SELECT test_in_sync(powersync_in_sync_operation());
+END;
+''');
+
+    // Run an insert sync iteration to start the trigger
+    invokeControl('start', null);
+    pushCheckpoint(buckets: [bucketDescription('a')]);
+    pushSyncData(
+      'a',
+      '1',
+      '1',
+      'PUT',
+      {'col': 'foo'},
+      objectType: 'items',
+    );
+    pushCheckpointComplete();
+
+    expect(testInSyncInvocations, [true]);
+
+    [row] = db.select('SELECT powersync_in_sync_operation() as r');
+    expect(row, {'r': 0});
+  });
+
   group('raw tables', () {
     syncTest('smoke test', (_) {
       db.execute(

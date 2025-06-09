@@ -1,6 +1,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use core::ffi::{c_char, c_int, c_void};
 
 use sqlite::{Connection, ResultCode, Value};
@@ -9,6 +10,7 @@ use sqlite_nostd as sqlite;
 use crate::operations::{
     clear_remove_ops, delete_bucket, delete_pending_buckets, insert_operation,
 };
+use crate::state::DatabaseState;
 use crate::sync_local::sync_local;
 use crate::vtab_util::*;
 
@@ -16,6 +18,7 @@ use crate::vtab_util::*;
 struct VirtualTable {
     base: sqlite::vtab,
     db: *mut sqlite::sqlite3,
+    state: Arc<DatabaseState>,
 
     target_applied: bool,
     target_validated: bool,
@@ -23,7 +26,7 @@ struct VirtualTable {
 
 extern "C" fn connect(
     db: *mut sqlite::sqlite3,
-    _aux: *mut c_void,
+    aux: *mut c_void,
     _argc: c_int,
     _argv: *const *const c_char,
     vtab: *mut *mut sqlite::vtab,
@@ -43,6 +46,14 @@ extern "C" fn connect(
                 zErrMsg: core::ptr::null_mut(),
             },
             db,
+            state: {
+                // Increase refcount - we can't use from_raw alone because we don't own the aux
+                // data (connect could be called multiple times).
+                let state = Arc::from_raw(aux as *mut DatabaseState);
+                let clone = state.clone();
+                core::mem::forget(state);
+                clone
+            },
             target_validated: false,
             target_applied: false,
         }));
@@ -83,7 +94,7 @@ extern "C" fn update(
             let result = insert_operation(db, args[3].text());
             vtab_result(vtab, result)
         } else if op == "sync_local" {
-            let result = sync_local(db, &args[3]);
+            let result = sync_local(&tab.state, db, &args[3]);
             if let Ok(result_row) = result {
                 unsafe {
                     *p_row_id = result_row;
@@ -139,8 +150,13 @@ static MODULE: sqlite_nostd::module = sqlite_nostd::module {
     xIntegrity: None,
 };
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
-    db.create_module_v2("powersync_operations", &MODULE, None, None)?;
+pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
+    db.create_module_v2(
+        "powersync_operations",
+        &MODULE,
+        Some(Arc::into_raw(state) as *mut c_void),
+        Some(DatabaseState::destroy_arc),
+    )?;
 
     Ok(())
 }
