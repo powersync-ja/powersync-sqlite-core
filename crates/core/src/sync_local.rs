@@ -6,6 +6,7 @@ use serde::Deserialize;
 
 use crate::error::{PSResult, SQLiteError};
 use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
+use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
 use sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
 use sqlite_nostd::{ColumnType, Connection, ResultCode};
@@ -13,8 +14,12 @@ use sqlite_nostd::{ColumnType, Connection, ResultCode};
 use crate::ext::SafeManagedStmt;
 use crate::util::quote_internal_name;
 
-pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, SQLiteError> {
-    let mut operation = SyncOperation::from_args(db, data)?;
+pub fn sync_local<V: Value>(
+    state: &DatabaseState,
+    db: *mut sqlite::sqlite3,
+    data: &V,
+) -> Result<i64, SQLiteError> {
+    let mut operation: SyncOperation<'_> = SyncOperation::from_args(state, db, data)?;
     operation.apply()
 }
 
@@ -27,14 +32,20 @@ pub struct PartialSyncOperation<'a> {
 }
 
 pub struct SyncOperation<'a> {
+    state: &'a DatabaseState,
     db: *mut sqlite::sqlite3,
     schema: ParsedDatabaseSchema<'a>,
     partial: Option<PartialSyncOperation<'a>>,
 }
 
 impl<'a> SyncOperation<'a> {
-    fn from_args<V: Value>(db: *mut sqlite::sqlite3, data: &'a V) -> Result<Self, SQLiteError> {
+    fn from_args<V: Value>(
+        state: &'a DatabaseState,
+        db: *mut sqlite::sqlite3,
+        data: &'a V,
+    ) -> Result<Self, SQLiteError> {
         Ok(Self::new(
+            state,
             db,
             match data.value_type() {
                 ColumnType::Text => {
@@ -61,8 +72,13 @@ impl<'a> SyncOperation<'a> {
         ))
     }
 
-    pub fn new(db: *mut sqlite::sqlite3, partial: Option<PartialSyncOperation<'a>>) -> Self {
+    pub fn new(
+        state: &'a DatabaseState,
+        db: *mut sqlite::sqlite3,
+        partial: Option<PartialSyncOperation<'a>>,
+    ) -> Self {
         Self {
+            state,
             db,
             schema: ParsedDatabaseSchema::new(),
             partial,
@@ -109,6 +125,8 @@ impl<'a> SyncOperation<'a> {
     }
 
     pub fn apply(&mut self) -> Result<i64, SQLiteError> {
+        let guard = self.state.sync_local_guard();
+
         if !self.can_apply_sync_changes()? {
             return Ok(0);
         }
@@ -229,6 +247,7 @@ impl<'a> SyncOperation<'a> {
         self.set_last_applied_op()?;
         self.mark_completed()?;
 
+        drop(guard);
         Ok(1)
     }
 

@@ -5,6 +5,7 @@ use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::string::ToString;
+use alloc::sync::Arc;
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 use sqlite::{ResultCode, Value};
@@ -13,6 +14,7 @@ use sqlite_nostd::{Connection, Context};
 
 use crate::error::SQLiteError;
 use crate::schema::Schema;
+use crate::state::DatabaseState;
 
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
@@ -121,7 +123,7 @@ struct SqlController {
     client: SyncClient,
 }
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
     extern "C" fn control(
         ctx: *mut sqlite::context,
         argc: c_int,
@@ -202,7 +204,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     }
 
     let controller = Box::new(SqlController {
-        client: SyncClient::new(db),
+        client: SyncClient::new(db, state),
     });
 
     db.create_function_v2(

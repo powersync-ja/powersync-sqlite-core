@@ -1,6 +1,6 @@
 use core::{assert_matches::debug_assert_matches, fmt::Display};
 
-use alloc::{string::ToString, vec::Vec};
+use alloc::{string::ToString, sync::Arc, vec::Vec};
 use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 use streaming_iterator::StreamingIterator;
@@ -10,6 +10,7 @@ use crate::{
     ext::SafeManagedStmt,
     operations::delete_bucket,
     schema::Schema,
+    state::DatabaseState,
     sync::checkpoint::{validate_checkpoint, ChecksumMismatch},
     sync_local::{PartialSyncOperation, SyncOperation},
 };
@@ -144,6 +145,7 @@ impl StorageAdapter {
 
     pub fn sync_local(
         &self,
+        state: &DatabaseState,
         checkpoint: &OwnedCheckpoint,
         priority: Option<BucketPriority>,
         schema: &Schema,
@@ -185,7 +187,7 @@ impl StorageAdapter {
 
         let sync_result = match priority {
             None => {
-                let mut sync = SyncOperation::new(self.db, None);
+                let mut sync = SyncOperation::new(state, self.db, None);
                 sync.use_schema(schema);
                 sync.apply()
             }
@@ -208,6 +210,7 @@ impl StorageAdapter {
                 // TODO: Avoid this serialization, it's currently used to bind JSON SQL parameters.
                 let serialized_args = serde_json::to_string(&args)?;
                 let mut sync = SyncOperation::new(
+                    state,
                     self.db,
                     Some(PartialSyncOperation {
                         priority,

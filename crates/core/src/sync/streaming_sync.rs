@@ -10,6 +10,7 @@ use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     format,
     string::{String, ToString},
+    sync::Arc,
     vec::Vec,
 };
 use futures_lite::FutureExt;
@@ -18,6 +19,7 @@ use crate::{
     bson,
     error::SQLiteError,
     kv::client_id,
+    state::DatabaseState,
     sync::{checkpoint::OwnedBucketChecksum, interface::StartSyncStream},
 };
 use sqlite_nostd::{self as sqlite, ResultCode};
@@ -37,14 +39,16 @@ use super::{
 /// initialized.
 pub struct SyncClient {
     db: *mut sqlite::sqlite3,
+    db_state: Arc<DatabaseState>,
     /// The current [ClientState] (essentially an optional [StreamingSyncIteration]).
     state: ClientState,
 }
 
 impl SyncClient {
-    pub fn new(db: *mut sqlite::sqlite3) -> Self {
+    pub fn new(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Self {
         Self {
             db,
+            db_state: state,
             state: ClientState::Idle,
         }
     }
@@ -57,7 +61,7 @@ impl SyncClient {
             SyncControlRequest::StartSyncStream(options) => {
                 self.state.tear_down()?;
 
-                let mut handle = SyncIterationHandle::new(self.db, options)?;
+                let mut handle = SyncIterationHandle::new(self.db, options, self.db_state.clone())?;
                 let instructions = handle.initialize()?;
                 self.state = ClientState::IterationActive(handle);
 
@@ -125,10 +129,15 @@ struct SyncIterationHandle {
 impl SyncIterationHandle {
     /// Creates a new sync iteration in a pending state by preparing statements for
     /// [StorageAdapter] and setting up the initial downloading state for [StorageAdapter] .
-    fn new(db: *mut sqlite::sqlite3, options: StartSyncStream) -> Result<Self, ResultCode> {
+    fn new(
+        db: *mut sqlite::sqlite3,
+        options: StartSyncStream,
+        state: Arc<DatabaseState>,
+    ) -> Result<Self, ResultCode> {
         let runner = StreamingSyncIteration {
             db,
             options,
+            state,
             adapter: StorageAdapter::new(db)?,
             status: SyncStatusContainer::new(),
         };
@@ -192,6 +201,7 @@ impl<'a> ActiveEvent<'a> {
 
 struct StreamingSyncIteration {
     db: *mut sqlite::sqlite3,
+    state: Arc<DatabaseState>,
     adapter: StorageAdapter,
     options: StartSyncStream,
     status: SyncStatusContainer,
@@ -246,9 +256,12 @@ impl StreamingSyncIteration {
                 SyncEvent::BinaryLine { data } => bson::from_bytes(data)?,
                 SyncEvent::UploadFinished => {
                     if let Some(checkpoint) = validated_but_not_applied.take() {
-                        let result =
-                            self.adapter
-                                .sync_local(&checkpoint, None, &self.options.schema)?;
+                        let result = self.adapter.sync_local(
+                            &self.state,
+                            &checkpoint,
+                            None,
+                            &self.options.schema,
+                        )?;
 
                         match result {
                             SyncLocalResult::ChangesApplied => {
@@ -324,9 +337,9 @@ impl StreamingSyncIteration {
                             ),
                         ));
                     };
-                    let result = self
-                        .adapter
-                        .sync_local(target, None, &self.options.schema)?;
+                    let result =
+                        self.adapter
+                            .sync_local(&self.state, target, None, &self.options.schema)?;
 
                     match result {
                         SyncLocalResult::ChecksumFailure(checkpoint_result) => {
@@ -369,9 +382,12 @@ impl StreamingSyncIteration {
                             ),
                         ));
                     };
-                    let result =
-                        self.adapter
-                            .sync_local(target, Some(priority), &self.options.schema)?;
+                    let result = self.adapter.sync_local(
+                        &self.state,
+                        target,
+                        Some(priority),
+                        &self.options.schema,
+                    )?;
 
                     match result {
                         SyncLocalResult::ChecksumFailure(checkpoint_result) => {
