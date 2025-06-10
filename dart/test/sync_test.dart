@@ -49,8 +49,10 @@ void _syncTests<T>({
   late SyncLinesGoldenTest matcher;
 
   List<Object?> invokeControlRaw(String operation, Object? data) {
+    db.execute('begin');
     final [row] =
         db.select('SELECT powersync_control(?, ?)', [operation, data]);
+    db.execute('commit');
     return jsonDecode(row.columnAt(0));
   }
 
@@ -59,9 +61,7 @@ void _syncTests<T>({
       // Trace through golden matcher
       return matcher.invoke(operation, data);
     } else {
-      final [row] =
-          db.select('SELECT powersync_control(?, ?)', [operation, data]);
-      return jsonDecode(row.columnAt(0));
+      return invokeControlRaw(operation, data);
     }
   }
 

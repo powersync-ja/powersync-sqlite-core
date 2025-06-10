@@ -5,6 +5,7 @@ sync line sent from a PowerSync service instance.
 
 After registering the PowerSync extension, this client is available through the `powersync_control`
 function, which takes two arguments: A command (text), and a payload (text, blob, or null).
+The function should always be called in a transaction.
 
 The following commands are supported:
 

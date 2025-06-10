@@ -125,6 +125,8 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         argv: *mut *mut sqlite::value,
     ) -> () {
         let result = (|| -> Result<(), SQLiteError> {
+            debug_assert!(!ctx.db_handle().get_autocommit());
+
             let controller = unsafe { ctx.user_data().cast::<SqlController>().as_mut() }
                 .ok_or_else(|| SQLiteError::from(ResultCode::INTERNAL))?;
 
