@@ -9,8 +9,10 @@ The function should always be called in a transaction.
 
 The following commands are supported:
 
-1. `start`: Payload is a JSON-encoded object. This requests the client to start a sync iteration, specifying
-   parameters.
+1. `start`: Payload is a JSON-encoded object. This requests the client to start a sync iteration.
+   The payload can either be `null` or an JSON object with:
+    - An optional `parameters: Record<string, any>` entry, specifying parameters to include in the request
+      to the sync service.
 2. `stop`: No payload, requests the current sync iteration (if any) to be shut down.
 3. `line_text`: Payload is a serialized JSON object received from the sync service.
 4. `line_binary`: Payload is a BSON-encoded object received from the sync service.
