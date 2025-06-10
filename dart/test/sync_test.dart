@@ -141,7 +141,12 @@ void _syncTests<T>({
   group('goldens', () {
     syncTest('starting stream', (_) {
       matcher.load('starting_stream');
-      invokeControl('start', null);
+      invokeControl(
+        'start',
+        json.encode({
+          'parameters': {'foo': 'bar'}
+        }),
+      );
     });
 
     syncTest('simple sync iteration', (_) {

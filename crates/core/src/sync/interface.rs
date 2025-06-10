@@ -6,7 +6,7 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::string::ToString;
 use alloc::{string::String, vec::Vec};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlite::{ResultCode, Value};
 use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
@@ -16,15 +16,20 @@ use crate::error::SQLiteError;
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
 
+/// Payload provided by SDKs when requesting a sync iteration.
+#[derive(Default, Deserialize)]
+pub struct StartSyncStream {
+    /// Bucket parameters to include in the request when opening a sync stream.
+    #[serde(default)]
+    pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
 /// A request sent from a client SDK to the [SyncClient] with a `powersync_control` invocation.
 pub enum SyncControlRequest<'a> {
     /// The client requests to start a sync iteration.
     ///
     /// Earlier iterations are implicitly dropped when receiving this request.
-    StartSyncStream {
-        /// Bucket parameters to include in the request when opening a sync stream.
-        parameters: Option<serde_json::Map<String, serde_json::Value>>,
-    },
+    StartSyncStream(StartSyncStream),
     /// The client requests to stop the current sync iteration.
     StopSyncStream,
     /// The client is forwading a sync event to the core extension.
@@ -137,13 +142,13 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 
             let op = op.text();
             let event = match op {
-                "start" => SyncControlRequest::StartSyncStream {
-                    parameters: if payload.value_type() == ColumnType::Text {
-                        Some(serde_json::from_str(payload.text())?)
+                "start" => SyncControlRequest::StartSyncStream({
+                    if payload.value_type() == ColumnType::Text {
+                        serde_json::from_str(payload.text())?
                     } else {
-                        None
-                    },
-                },
+                        StartSyncStream::default()
+                    }
+                }),
                 "stop" => SyncControlRequest::StopSyncStream,
                 "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
                     data: if payload.value_type() == ColumnType::Text {

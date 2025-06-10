@@ -49,10 +49,10 @@ impl SyncClient {
         event: SyncControlRequest<'a>,
     ) -> Result<Vec<Instruction>, SQLiteError> {
         match event {
-            SyncControlRequest::StartSyncStream { parameters } => {
+            SyncControlRequest::StartSyncStream(options) => {
                 self.state.tear_down()?;
 
-                let mut handle = SyncIterationHandle::new(self.db, parameters)?;
+                let mut handle = SyncIterationHandle::new(self.db, options.parameters)?;
                 let instructions = handle.initialize()?;
                 self.state = ClientState::IterationActive(handle);
 
