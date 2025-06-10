@@ -1,4 +1,3 @@
-
 fn main() {
     let mut cfg = cc::Build::new();
 

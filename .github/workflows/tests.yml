@@ -28,7 +28,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2025-04-15
-          components: rust-src
+          components: rust-src,rustfmt,clippy
+
+      - name: Check formatting
+        run: cargo fmt --all --check
 
       - name: Build
         run: |
