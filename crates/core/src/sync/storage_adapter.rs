@@ -1,6 +1,6 @@
 use core::{assert_matches::debug_assert_matches, fmt::Display};
 
-use alloc::{string::ToString, sync::Arc, vec::Vec};
+use alloc::{string::ToString, vec::Vec};
 use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 use streaming_iterator::StreamingIterator;

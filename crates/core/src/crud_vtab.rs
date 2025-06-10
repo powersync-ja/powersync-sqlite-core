@@ -2,9 +2,10 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use const_format::formatcp;
 use core::ffi::{c_char, c_int, c_void, CStr};
-use core::ptr::null_mut;
+use core::sync::atomic::Ordering;
 use serde::Serialize;
 use serde_json::value::RawValue;
 
@@ -15,6 +16,7 @@ use sqlite_nostd::{self as sqlite, ColumnType};
 use crate::error::SQLiteError;
 use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
+use crate::state::DatabaseState;
 use crate::util::MAX_OP_ID;
 use crate::vtab_util::*;
 
@@ -41,6 +43,7 @@ struct VirtualTable {
     db: *mut sqlite::sqlite3,
     current_tx: Option<ActiveCrudTransaction>,
     is_simple: bool,
+    state: Arc<DatabaseState>,
 }
 
 struct ActiveCrudTransaction {
@@ -85,6 +88,15 @@ impl VirtualTable {
             .as_mut()
             .ok_or_else(|| SQLiteError(ResultCode::MISUSE, Some(String::from("No tx_id"))))?;
         let db = self.db;
+
+        if self.state.is_in_sync_local.load(Ordering::Relaxed) {
+            // Don't collect CRUD writes while we're syncing the local database - writes made here
+            // aren't writes we should upload.
+            // This normally doesn't happen because we insert directly into the data tables, but
+            // users might have custom raw tables used for sycing with triggers on them to call
+            // this function. And those specifically should not trigger here.
+            return Ok(());
+        }
 
         match &mut current_tx.mode {
             CrudTransactionMode::Manual(manual) => {
@@ -258,7 +270,7 @@ fn prepare_lazy(
 
 extern "C" fn connect(
     db: *mut sqlite::sqlite3,
-    _aux: *mut c_void,
+    aux: *mut c_void,
     argc: c_int,
     argv: *const *const c_char,
     vtab: *mut *mut sqlite::vtab,
@@ -288,6 +300,14 @@ extern "C" fn connect(
                 nRef: 0,
                 pModule: core::ptr::null(),
                 zErrMsg: core::ptr::null_mut(),
+            },
+            state: {
+                // Increase refcount - we can't use from_raw alone because we don't own the aux
+                // data (connect could be called multiple times).
+                let state = Arc::from_raw(aux as *mut DatabaseState);
+                let clone = state.clone();
+                core::mem::forget(state);
+                clone
             },
             db,
             current_tx: None,
@@ -380,20 +400,20 @@ static MODULE: sqlite_nostd::module = sqlite_nostd::module {
     xIntegrity: None,
 };
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
     sqlite::convert_rc(sqlite::create_module_v2(
         db,
         SIMPLE_NAME.as_ptr(),
         &MODULE,
-        null_mut(),
-        None,
+        Arc::into_raw(state.clone()) as *mut c_void,
+        Some(DatabaseState::destroy_arc),
     ))?;
     sqlite::convert_rc(sqlite::create_module_v2(
         db,
         MANUAL_NAME.as_ptr(),
         &MODULE,
-        null_mut(),
-        None,
+        Arc::into_raw(state) as *mut c_void,
+        Some(DatabaseState::destroy_arc),
     ))?;
 
     Ok(())

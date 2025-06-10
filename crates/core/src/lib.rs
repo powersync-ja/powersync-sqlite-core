@@ -73,7 +73,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 
     crate::schema::register(db)?;
     crate::operations_vtab::register(db, state.clone())?;
-    crate::crud_vtab::register(db)?;
+    crate::crud_vtab::register(db, state)?;
 
     Ok(())
 }
