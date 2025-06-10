@@ -1,10 +1,10 @@
-use serde::{de::Visitor, Deserialize};
+use serde::{de::Visitor, Deserialize, Serialize};
 use sqlite_nostd::ResultCode;
 
 use crate::error::SQLiteError;
 
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BucketPriority {
     pub number: i32,
 }
@@ -45,7 +45,13 @@ impl Into<i32> for BucketPriority {
 
 impl PartialOrd<BucketPriority> for BucketPriority {
     fn partial_cmp(&self, other: &BucketPriority) -> Option<core::cmp::Ordering> {
-        Some(self.number.partial_cmp(&other.number)?.reverse())
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for BucketPriority {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.number.cmp(&other.number).reverse()
     }
 }
 
@@ -87,5 +93,14 @@ impl<'de> Deserialize<'de> for BucketPriority {
         }
 
         deserializer.deserialize_i32(PriorityVisitor)
+    }
+}
+
+impl Serialize for BucketPriority {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_i32(self.number)
     }
 }

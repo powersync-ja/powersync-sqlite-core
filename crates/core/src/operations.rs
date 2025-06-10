@@ -1,13 +1,9 @@
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
-use num_traits::Zero;
-use serde::Deserialize;
-
-use crate::error::{PSResult, SQLiteError};
+use crate::error::SQLiteError;
 use crate::sync::line::DataLine;
 use crate::sync::operations::insert_bucket_operations;
-use crate::sync::Checksum;
+use crate::sync::storage_adapter::StorageAdapter;
+use alloc::vec::Vec;
+use serde::Deserialize;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, ResultCode};
 
@@ -22,8 +18,10 @@ pub fn insert_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), SQLi
     }
 
     let batch: BucketBatch = serde_json::from_str(data)?;
+    let adapter = StorageAdapter::new(db)?;
+
     for line in &batch.buckets {
-        insert_bucket_operations(db, line)?;
+        insert_bucket_operations(&adapter, &line)?;
     }
 
     Ok(())
