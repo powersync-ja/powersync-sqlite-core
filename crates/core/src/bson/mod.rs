@@ -15,7 +15,7 @@ pub fn from_bytes<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, BsonE
 
 #[cfg(test)]
 mod test {
-    use alloc::{string::String, vec, vec::Vec};
+    use alloc::{vec, vec::Vec};
     use core::assert_matches::assert_matches;
 
     use crate::sync::line::{SyncLine, TokenExpiresIn};
@@ -288,6 +288,7 @@ mod test {
         let bson = b"\x10\x00\x00\x00\x63test\x00\x01\x00\x00\x00\x00";
 
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct TestDoc {
             test: i32,
         }
@@ -302,6 +303,7 @@ mod test {
         let bson = b"\xff\x00\x00\x00\x10test\x00";
 
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct TestDoc {
             test: i32,
         }
@@ -316,6 +318,7 @@ mod test {
         let bson = b"\x15\x00\x00\x00\x02test\x00\xff\xff\xff\xff\x00";
 
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct TestDoc<'a> {
             test: &'a str,
         }
@@ -330,6 +333,7 @@ mod test {
         let bson = b"\x10\x00\x00\x00\x10test\x01\x00\x00\x00\x00\x00";
 
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct TestDoc {
             test: i32,
         }
@@ -344,6 +348,7 @@ mod test {
         let bson = b"\x0d\x00\x00\x00\x10test\x00*\x00\x00\x00";
 
         #[derive(Deserialize)]
+        #[allow(dead_code)]
         struct TestDoc {
             test: i32,
         }
