@@ -203,6 +203,305 @@ impl<'de> Parser<'de> {
     }
 }
 
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_read_int64_negative_values() {
+        let neg_one_bytes = (-1i64).to_le_bytes();
+        let mut parser = Parser::new(&neg_one_bytes);
+        assert_eq!(parser.read_int64().unwrap(), -1);
+        
+        let min_bytes = (i64::MIN).to_le_bytes();
+        let mut parser = Parser::new(&min_bytes);
+        assert_eq!(parser.read_int64().unwrap(), i64::MIN);
+        
+        let neg_42_bytes = (-42i64).to_le_bytes();
+        let mut parser = Parser::new(&neg_42_bytes);
+        assert_eq!(parser.read_int64().unwrap(), -42);
+    }
+
+    #[test]
+    fn test_read_int32_negative_values() {
+        let neg_one_bytes = (-1i32).to_le_bytes();
+        let mut parser = Parser::new(&neg_one_bytes);
+        assert_eq!(parser.read_int32().unwrap(), -1);
+        
+        let min_bytes = (i32::MIN).to_le_bytes();
+        let mut parser = Parser::new(&min_bytes);
+        assert_eq!(parser.read_int32().unwrap(), i32::MIN);
+        
+        let neg_42_bytes = (-42i32).to_le_bytes();
+        let mut parser = Parser::new(&neg_42_bytes);
+        assert_eq!(parser.read_int32().unwrap(), -42);
+    }
+
+    #[test]
+    fn test_read_double_negative_and_special() {
+        let neg_pi_bytes = (-3.14159f64).to_le_bytes();
+        let mut parser = Parser::new(&neg_pi_bytes);
+        let val = parser.read_double().unwrap();
+        assert!((val - (-3.14159)).abs() < 0.00001);
+        
+        let neg_inf_bytes = f64::NEG_INFINITY.to_le_bytes();
+        let mut parser = Parser::new(&neg_inf_bytes);
+        assert_eq!(parser.read_double().unwrap(), f64::NEG_INFINITY);
+        
+        let nan_bytes = f64::NAN.to_le_bytes();
+        let mut parser = Parser::new(&nan_bytes);
+        assert!(parser.read_double().unwrap().is_nan());
+    }
+
+    #[test]
+    fn test_read_bool_edge_cases() {
+        let mut parser = Parser::new(&[0x00]);
+        assert_eq!(parser.read_bool().unwrap(), false);
+        
+        let mut parser = Parser::new(&[0x01]);
+        assert_eq!(parser.read_bool().unwrap(), true);
+        
+        let mut parser = Parser::new(&[0xFF]);
+        assert_eq!(parser.read_bool().unwrap(), true);
+        
+        let mut parser = Parser::new(&[0x7F]);
+        assert_eq!(parser.read_bool().unwrap(), true);
+    }
+
+    #[test]
+    fn test_read_string_empty() {
+        // Empty string: length=1, content=null terminator
+        let data = &[0x01, 0x00, 0x00, 0x00, 0x00];
+        let mut parser = Parser::new(data);
+        assert_eq!(parser.read_string().unwrap(), "");
+    }
+
+    #[test]
+    fn test_read_string_unicode() {
+        // String "🦀" (4 UTF-8 bytes + null terminator)
+        let data = &[0x05, 0x00, 0x00, 0x00, 0xf0, 0x9f, 0xa6, 0x80, 0x00];
+        let mut parser = Parser::new(data);
+        assert_eq!(parser.read_string().unwrap(), "🦀");
+    }
+
+    #[test]
+    fn test_read_cstr_empty() {
+        let data = &[0x00];
+        let mut parser = Parser::new(data);
+        assert_eq!(parser.read_cstr().unwrap(), "");
+    }
+
+    #[test]
+    fn test_read_cstr_unicode() {
+        let data = &[0xf0, 0x9f, 0xa6, 0x80, 0x00]; // "🦀\0"
+        let mut parser = Parser::new(data);
+        assert_eq!(parser.read_cstr().unwrap(), "🦀");
+    }
+
+    #[test]
+    fn test_element_type_all_valid() {
+        let valid_types = [
+            (1, ElementType::Double),
+            (2, ElementType::String),
+            (3, ElementType::Document),
+            (4, ElementType::Array),
+            (5, ElementType::Binary),
+            (6, ElementType::Undefined),
+            (7, ElementType::ObjectId),
+            (8, ElementType::Boolean),
+            (9, ElementType::DatetimeUtc),
+            (10, ElementType::Null),
+            (16, ElementType::Int32),
+            (17, ElementType::Timestamp),
+            (18, ElementType::Int64),
+        ];
+
+        for (byte, expected) in valid_types {
+            let data = [byte];
+            let mut parser = Parser::new(&data);
+            let result = parser.read_element_type().unwrap();
+            assert_eq!(result as u8, expected as u8);
+        }
+    }
+
+    #[test]
+    fn test_element_type_invalid() {
+        let invalid_types = [0, 11, 12, 13, 14, 15, 19, 20, 99, 255];
+        
+        for invalid_type in invalid_types {
+            let data = [invalid_type];
+            let mut parser = Parser::new(&data);
+            let result = parser.read_element_type();
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn test_document_scope_minimum_size() {
+        // Minimum valid document: 5 bytes total
+        let data = &[0x05, 0x00, 0x00, 0x00, 0x00];
+        let mut parser = Parser::new(data);
+        let sub_parser = parser.document_scope().unwrap();
+        assert_eq!(sub_parser.remaining().len(), 1); // Just the terminator
+    }
+
+    #[test]
+    fn test_document_scope_invalid_size() {
+        // Document claiming size < 5
+        let data = &[0x04, 0x00, 0x00, 0x00];
+        let mut parser = Parser::new(data);
+        assert!(parser.document_scope().is_err());
+    }
+
+    #[test]
+    fn test_binary_data_empty() {
+        // Binary with length 0, subtype 0
+        let data = &[0x00, 0x00, 0x00, 0x00, 0x00];
+        let mut parser = Parser::new(data);
+        let (subtype, binary) = parser.read_binary().unwrap();
+        assert_eq!(subtype.0, 0);
+        assert_eq!(binary.len(), 0);
+    }
+
+    #[test]
+    fn test_binary_data_with_content() {
+        // Binary with length 3, subtype 5, content [1,2,3]
+        let data = &[0x03, 0x00, 0x00, 0x00, 0x05, 0x01, 0x02, 0x03];
+        let mut parser = Parser::new(data);
+        let (subtype, binary) = parser.read_binary().unwrap();
+        assert_eq!(subtype.0, 5);
+        assert_eq!(binary, &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_object_id_exact_size() {
+        let data = &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c];
+        let mut parser = Parser::new(data);
+        let oid = parser.read_object_id().unwrap();
+        assert_eq!(oid, data);
+    }
+
+    #[test]
+    fn test_advance_checked_boundary() {
+        let data = &[0x01, 0x02, 0x03];
+        let mut parser = Parser::new(data);
+        
+        // Should succeed
+        assert!(parser.advance_checked(3).is_ok());
+        assert_eq!(parser.remaining().len(), 0);
+        
+        // Should fail - no more data
+        assert!(parser.advance_checked(1).is_err());
+    }
+
+    #[test]
+    fn test_end_document_valid() {
+        let data = &[0x00];
+        let mut parser = Parser::new(data);
+        assert_eq!(parser.end_document().unwrap(), true);
+        assert_eq!(parser.remaining().len(), 0);
+    }
+
+    #[test]
+    fn test_end_document_invalid_terminator() {
+        let data = &[0x01];
+        let mut parser = Parser::new(data);
+        assert!(parser.end_document().is_err());
+    }
+
+    #[test]
+    fn test_end_document_not_at_end() {
+        let data = &[0x01, 0x02, 0x03];
+        let mut parser = Parser::new(data);
+        assert_eq!(parser.end_document().unwrap(), false);
+    }
+
+    // Error boundary tests
+
+    #[test]
+    fn test_unexpected_eof_int32() {
+        let data = &[0x01, 0x02]; // Only 2 bytes, need 4
+        let mut parser = Parser::new(data);
+        assert!(parser.read_int32().is_err());
+    }
+
+    #[test]
+    fn test_unexpected_eof_int64() {
+        let data = &[0x01, 0x02, 0x03, 0x04]; // Only 4 bytes, need 8
+        let mut parser = Parser::new(data);
+        assert!(parser.read_int64().is_err());
+    }
+
+    #[test]
+    fn test_unexpected_eof_double() {
+        let data = &[0x01, 0x02, 0x03, 0x04]; // Only 4 bytes, need 8
+        let mut parser = Parser::new(data);
+        assert!(parser.read_double().is_err());
+    }
+
+    #[test]
+    fn test_unexpected_eof_object_id() {
+        let data = &[0x01, 0x02, 0x03, 0x04]; // Only 4 bytes, need 12
+        let mut parser = Parser::new(data);
+        assert!(parser.read_object_id().is_err());
+    }
+
+    #[test]
+    fn test_string_length_overflow() {
+        // Invalid negative length
+        let data = &[0xff, 0xff, 0xff, 0xff, 0x00];
+        let mut parser = Parser::new(data);
+        assert!(parser.read_string().is_err());
+    }
+
+    #[test]
+    fn test_string_insufficient_data() {
+        // Claims length 10 but only has 5 bytes total
+        let data = &[0x0a, 0x00, 0x00, 0x00, 0x00];
+        let mut parser = Parser::new(data);
+        assert!(parser.read_string().is_err());
+    }
+
+    #[test]
+    fn test_binary_length_overflow() {
+        // Invalid negative length
+        let data = &[0xff, 0xff, 0xff, 0xff, 0x00];
+        let mut parser = Parser::new(data);
+        assert!(parser.read_binary().is_err());
+    }
+
+    #[test]
+    fn test_binary_insufficient_data() {
+        // Claims length 10 but only has 2 bytes after subtype
+        let data = &[0x0a, 0x00, 0x00, 0x00, 0x05, 0x01, 0x02];
+        let mut parser = Parser::new(data);
+        assert!(parser.read_binary().is_err());
+    }
+
+    #[test]
+    fn test_cstr_unterminated() {
+        let data = &[0x48, 0x65, 0x6c, 0x6c, 0x6f]; // "Hello" without null terminator
+        let mut parser = Parser::new(data);
+        assert!(parser.read_cstr().is_err());
+    }
+
+    #[test]
+    fn test_invalid_utf8_string() {
+        // Invalid UTF-8 sequence in string
+        let data = &[0x05, 0x00, 0x00, 0x00, 0xff, 0xfe, 0xfd, 0xfc, 0x00];
+        let mut parser = Parser::new(data);
+        assert!(parser.read_string().is_err());
+    }
+
+    #[test]
+    fn test_invalid_utf8_cstr() {
+        // Invalid UTF-8 sequence in cstring
+        let data = &[0xff, 0xfe, 0xfd, 0xfc, 0x00];
+        let mut parser = Parser::new(data);
+        assert!(parser.read_cstr().is_err());
+    }
+}
+
 #[repr(transparent)]
 pub struct BinarySubtype(pub u8);
 
