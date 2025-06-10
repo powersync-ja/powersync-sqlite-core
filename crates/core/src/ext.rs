@@ -1,4 +1,4 @@
-use sqlite_nostd::{Connection, Destructor, ManagedStmt, ResultCode, sqlite3};
+use sqlite_nostd::{sqlite3, Connection, Destructor, ManagedStmt, ResultCode};
 
 pub trait SafeManagedStmt {
     fn exec(&self) -> Result<(), ResultCode>;
@@ -22,7 +22,6 @@ impl SafeManagedStmt for ManagedStmt {
         Ok(())
     }
 }
-
 
 pub trait ExtendedDatabase {
     fn exec_text(&self, sql: &str, param: &str) -> Result<(), ResultCode>;
