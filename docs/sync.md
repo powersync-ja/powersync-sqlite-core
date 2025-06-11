@@ -13,6 +13,9 @@ The following commands are supported:
    The payload can either be `null` or an JSON object with:
     - An optional `parameters: Record<string, any>` entry, specifying parameters to include in the request
       to the sync service.
+    - A `schema: { tables: Table[], raw_tables: RawTable[] }` entry specifying the schema of the database to
+      use. Regular tables are also inferred from the database itself, but raw tables need to be specified.
+      If no raw tables are used, the `schema` entry can be omitted.
 2. `stop`: No payload, requests the current sync iteration (if any) to be shut down.
 3. `line_text`: Payload is a serialized JSON object received from the sync service.
 4. `line_binary`: Payload is a BSON-encoded object received from the sync service.
