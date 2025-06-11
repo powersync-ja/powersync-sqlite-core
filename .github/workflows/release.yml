@@ -271,7 +271,7 @@ jobs:
     needs: [draft_release]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
 
@@ -284,7 +284,7 @@ jobs:
       - name: Setup emsdk
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.68
+          version: 4.0.10
 
       - name: Build WASM
         run: ./tool/build_wasm.sh
