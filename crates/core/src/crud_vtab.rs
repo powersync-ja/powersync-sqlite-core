@@ -23,7 +23,7 @@ const SIMPLE_NAME: &CStr = c"powersync_crud";
 
 // Structure:
 //   CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);
-//   CREATE TABLE powersync_crud(op TEXT, id TEXT, data TEXT old_values TEXT, metadata TEXT);
+//   CREATE TABLE powersync_crud(op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT);
 //
 // This is a insert-only virtual table. It generates transaction ids in ps_tx, and inserts data in
 // ps_crud(tx_id, data).
@@ -110,8 +110,11 @@ impl VirtualTable {
                     id: &'a str,
                     #[serde(rename = "type")]
                     row_type: &'a str,
+                    #[serde(skip_serializing_if = "Option::is_none")]
                     data: Option<&'a RawValue>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
                     old: Option<&'a RawValue>,
+                    #[serde(skip_serializing_if = "Option::is_none")]
                     metadata: Option<&'a str>,
                 }
 

@@ -248,7 +248,7 @@ void main() {
             'id': 1,
             'tx_id': 1,
             'data':
-                '{"op":"PUT","id":"foo","type":"users","data":{"my":"value"},"old":null,"metadata":null}',
+                '{"op":"PUT","id":"foo","type":"users","data":{"my":"value"}}',
           });
         });
 
@@ -285,8 +285,7 @@ void main() {
           expect(row, {
             'id': 1,
             'tx_id': 1,
-            'data':
-                '{"op":"DELETE","id":"foo","type":"users","data":null,"old":null,"metadata":null}',
+            'data': '{"op":"DELETE","id":"foo","type":"users"}',
           });
         });
 
@@ -300,7 +299,7 @@ void main() {
             'id': 1,
             'tx_id': 1,
             'data':
-                '{"op":"DELETE","id":"foo","type":"users","data":null,"old":null,"metadata":"my metadata"}',
+                '{"op":"DELETE","id":"foo","type":"users","metadata":"my metadata"}',
           });
         });
 
@@ -320,7 +319,7 @@ void main() {
             'id': 1,
             'tx_id': 1,
             'data':
-                '{"op":"PUT","id":"foo","type":"users","data":{"my":"value"},"old":{"previous":"value"},"metadata":null}',
+                '{"op":"PUT","id":"foo","type":"users","data":{"my":"value"},"old":{"previous":"value"}}',
           });
         });
       });

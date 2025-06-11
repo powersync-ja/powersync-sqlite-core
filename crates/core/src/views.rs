@@ -84,21 +84,23 @@ fn powersync_trigger_delete_sql_impl(
     let trigger_name = quote_identifier_prefixed("ps_view_delete_", view_name);
     let type_string = quote_string(name);
 
-    let old_fragment: Cow<'static, str> = match &table_info.diff_include_old {
-        Some(include_old) => {
-            let json = match include_old {
-                DiffIncludeOld::OnlyForColumns { columns } => {
-                    json_object_fragment("OLD", &mut columns.iter().map(|c| c.as_str()))
-                }
-                DiffIncludeOld::ForAllColumns => {
-                    json_object_fragment("OLD", &mut table_info.column_names())
-                }
-            }?;
+    let (old_data_name, old_data_value): (&'static str, Cow<'static, str>) =
+        match &table_info.diff_include_old {
+            Some(include_old) => {
+                let mut json = match include_old {
+                    DiffIncludeOld::OnlyForColumns { columns } => {
+                        json_object_fragment("OLD", &mut columns.iter().map(|c| c.as_str()))
+                    }
+                    DiffIncludeOld::ForAllColumns => {
+                        json_object_fragment("OLD", &mut table_info.column_names())
+                    }
+                }?;
 
-            format!(", 'old', {json}").into()
-        }
-        None => "".into(),
-    };
+                json.insert(0, ',');
+                (",old_values", json.into())
+            }
+            None => ("", "".into()),
+        };
 
     return if !local_only && !insert_only {
         let mut trigger = format!(
@@ -108,9 +110,7 @@ INSTEAD OF DELETE ON {quoted_name}
 FOR EACH ROW
 BEGIN
 DELETE FROM {internal_name} WHERE id = OLD.id;
-INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', OLD.id{old_fragment}));
-INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, OLD.id);
-INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
+INSERT INTO powersync_crud(op,id,type{old_data_name}) VALUES ('DELETE',OLD.id,{type_string}{old_data_value});
 END"
         );
 
@@ -126,9 +126,7 @@ FOR EACH ROW
 WHEN NEW._deleted IS TRUE
 BEGIN
 DELETE FROM {internal_name} WHERE id = NEW.id;
-INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', NEW.id{old_fragment}, 'metadata', NEW._metadata));
-INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
-INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
+INSERT INTO powersync_crud(op,id,type,metadata{old_data_name}) VALUES ('DELETE',OLD.id,{type_string},NEW._metadata{old_data_value});
 END"
                     ).expect("writing to string should be infallible");
         }
