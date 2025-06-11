@@ -23,7 +23,7 @@ const SIMPLE_NAME: &CStr = c"powersync_crud";
 
 // Structure:
 //   CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);
-//   CREATE TABLE powersync_crud(op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT);
+//   CREATE TABLE powersync_crud(op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT, options INT HIDDEN);
 //
 // This is a insert-only virtual table. It generates transaction ids in ps_tx, and inserts data in
 // ps_crud(tx_id, data).
@@ -98,11 +98,24 @@ impl VirtualTable {
                 set_updated_rows,
                 update_local_bucket,
             } => {
-                // Columns are (op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT)
-                let metadata = args[5];
+                // Columns are (op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT, options INT HIDDEN)
+                let flags = match args[6].value_type() {
+                    sqlite_nostd::ColumnType::Null => TableInfoFlags::default(),
+                    _ => TableInfoFlags(args[1].int() as u32),
+                };
                 let op = args[0].text();
                 let id = args[1].text();
                 let row_type = args[2].text();
+                let metadata = args[5];
+                let data = Self::value_to_json(&args[3]);
+
+                if flags.include_old_only_when_changed()
+                    && op == "PATCH"
+                    && data.map(|r| r.get()) == Some("{}")
+                {
+                    // Ignore this empty update
+                    return Ok(());
+                }
 
                 #[derive(Serialize)]
                 struct CrudEntry<'a> {
@@ -121,11 +134,12 @@ impl VirtualTable {
                 // First, we insert into ps_crud like the manual vtab would too. We have to create
                 // the JSON out of the individual components for that.
                 stmt.bind_int64(1, current_tx.tx_id)?;
+
                 let serialized = serde_json::to_string(&CrudEntry {
                     op,
                     id,
                     row_type,
-                    data: Self::value_to_json(&args[3]),
+                    data: data,
                     old: Self::value_to_json(&args[4]),
                     metadata: if metadata.value_type() == ColumnType::Text {
                         Some(metadata.text())
@@ -214,7 +228,7 @@ extern "C" fn connect(
     let is_simple = name == SIMPLE_NAME;
 
     let sql = if is_simple {
-        "CREATE TABLE powersync_crud(op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT);"
+        "CREATE TABLE powersync_crud(op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT, options INT HIDDEN);"
     } else {
         "CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);"
     };

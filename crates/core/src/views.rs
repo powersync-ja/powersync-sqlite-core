@@ -279,15 +279,15 @@ fn powersync_trigger_update_sql_impl(
         }
     }
 
-    let old_fragment: Cow<'static, str> = match old_values_fragment {
-        Some(f) => format!(", 'old', {f}").into(),
-        None => "".into(),
+    let (old_key, old_value): (&'static str, Cow<'static, str>) = match old_values_fragment {
+        Some(f) => (",old_values", format!(",{f}").into()),
+        None => ("", "".into()),
     };
 
-    let metadata_fragment = if table_info.flags.include_metadata() {
-        ", 'metadata', NEW._metadata"
+    let (metadata_key, metadata_value) = if table_info.flags.include_metadata() {
+        (",metadata", ",NEW._metadata")
     } else {
-        ""
+        ("", "")
     };
 
     return if !local_only && !insert_only {
@@ -313,10 +313,8 @@ BEGIN
   UPDATE {internal_name}
       SET data = {json_fragment_new}
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud_(data, options) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:})){:}{:}), {flags});
-  INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
-  INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
-END", type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment);
+  INSERT INTO powersync_crud(op,type,id,data,options{old_key}{metadata_key}) VALUES ('PATCH',{type_string},NEW.id,json(powersync_diff({:}, {:})),{flags}{old_value}{metadata_value});
+END", json_fragment_old, json_fragment_new);
         Ok(trigger)
     } else if local_only {
         debug_assert!(!table_info.flags.include_metadata());
