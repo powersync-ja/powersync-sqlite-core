@@ -101,7 +101,7 @@ impl VirtualTable {
                 // Columns are (op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT, options INT HIDDEN)
                 let flags = match args[6].value_type() {
                     sqlite_nostd::ColumnType::Null => TableInfoFlags::default(),
-                    _ => TableInfoFlags(args[1].int() as u32),
+                    _ => TableInfoFlags(args[6].int() as u32),
                 };
                 let op = args[0].text();
                 let id = args[1].text();
