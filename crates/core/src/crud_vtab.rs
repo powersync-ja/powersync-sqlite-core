@@ -2,8 +2,10 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::sync::Arc;
 use const_format::formatcp;
 use core::ffi::{c_char, c_int, c_void};
+use core::sync::atomic::Ordering;
 
 use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
@@ -13,6 +15,7 @@ use sqlite_nostd::ResultCode::NULL;
 use crate::error::SQLiteError;
 use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
+use crate::state::DatabaseState;
 use crate::vtab_util::*;
 
 // Structure:
@@ -31,11 +34,12 @@ struct VirtualTable {
     db: *mut sqlite::sqlite3,
     current_tx: Option<i64>,
     insert_statement: Option<ManagedStmt>,
+    state: Arc<DatabaseState>,
 }
 
 extern "C" fn connect(
     db: *mut sqlite::sqlite3,
-    _aux: *mut c_void,
+    aux: *mut c_void,
     _argc: c_int,
     _argv: *const *const c_char,
     vtab: *mut *mut sqlite::vtab,
@@ -58,6 +62,14 @@ extern "C" fn connect(
             db,
             current_tx: None,
             insert_statement: None,
+            state: {
+                // Increase refcount - we can't use from_raw alone because we don't own the aux
+                // data (connect could be called multiple times).
+                let state = Arc::from_raw(aux as *mut DatabaseState);
+                let clone = state.clone();
+                core::mem::forget(state);
+                clone
+            },
         }));
         *vtab = tab.cast::<sqlite::vtab>();
         let _ = sqlite::vtab_config(db, 0);
@@ -127,13 +139,20 @@ fn insert_operation(
     flags: TableInfoFlags,
 ) -> Result<(), SQLiteError> {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
-    if tab.current_tx.is_none() {
+    if tab.state.is_in_sync_local.load(Ordering::Relaxed) {
+        return Err(SQLiteError(
+            ResultCode::MISUSE,
+            Some(String::from("Using ps_crud during sync operation")),
+        ));
+    }
+
+    let Some(current_tx) = tab.current_tx else {
         return Err(SQLiteError(
             ResultCode::MISUSE,
             Some(String::from("No tx_id")),
         ));
-    }
-    let current_tx = tab.current_tx.unwrap();
+    };
+
     // language=SQLite
     let statement = tab
         .insert_statement
@@ -206,8 +225,13 @@ static MODULE: sqlite_nostd::module = sqlite_nostd::module {
     xIntegrity: None,
 };
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
-    db.create_module_v2("powersync_crud_", &MODULE, None, None)?;
+pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
+    db.create_module_v2(
+        "powersync_crud_",
+        &MODULE,
+        Some(Arc::into_raw(state) as *mut c_void),
+        Some(DatabaseState::destroy_arc),
+    )?;
 
     Ok(())
 }
