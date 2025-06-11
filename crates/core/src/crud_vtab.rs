@@ -109,7 +109,7 @@ impl VirtualTable {
                 let metadata = args[5];
                 let data = Self::value_to_json(&args[3]);
 
-                if flags.include_old_only_when_changed()
+                if flags.ignore_empty_update()
                     && op == "PATCH"
                     && data.map(|r| r.get()) == Some("{}")
                 {

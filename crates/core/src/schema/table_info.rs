@@ -149,6 +149,10 @@ impl TableInfoFlags {
         self.0 & Self::INCLUDE_OLD_ONLY_WHEN_CHANGED != 0
     }
 
+    pub const fn ignore_empty_update(self) -> bool {
+        self.0 & Self::IGNORE_EMPTY_UPDATE != 0
+    }
+
     const fn with_flag(self, flag: u32) -> Self {
         Self(self.0 | flag)
     }
