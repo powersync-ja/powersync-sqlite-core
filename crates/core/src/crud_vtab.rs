@@ -3,7 +3,8 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::string::String;
 use const_format::formatcp;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int, c_void, CStr};
+use core::ptr::null_mut;
 
 use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
@@ -14,6 +15,9 @@ use crate::error::SQLiteError;
 use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
 use crate::vtab_util::*;
+
+const MANUAL_NAME: &CStr = c"powersync_crud";
+const SIMPLE_NAME: &CStr = c"powersync_crud";
 
 // Structure:
 //   CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);
@@ -36,15 +40,26 @@ struct VirtualTable {
 extern "C" fn connect(
     db: *mut sqlite::sqlite3,
     _aux: *mut c_void,
-    _argc: c_int,
-    _argv: *const *const c_char,
+    argc: c_int,
+    argv: *const *const c_char,
     vtab: *mut *mut sqlite::vtab,
     _err: *mut *mut c_char,
 ) -> c_int {
-    if let Err(rc) = sqlite::declare_vtab(
-        db,
-        "CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);",
-    ) {
+    let args = sqlite::args!(argc, argv);
+    let Some(name) = args.get(0) else {
+        return ResultCode::MISUSE as c_int;
+    };
+
+    let name = unsafe { CStr::from_ptr(*name) };
+    let is_simple = name == SIMPLE_NAME;
+
+    let sql = if is_simple {
+        "CREATE TABLE powersync_crud(op TEXT, id TEXT, data TEXT old_values TEXT, metadata TEXT);"
+    } else {
+        "CREATE TABLE powersync_crud_(data TEXT, options INT HIDDEN);"
+    };
+
+    if let Err(rc) = sqlite::declare_vtab(db, sql) {
         return rc as c_int;
     }
 
@@ -207,7 +222,20 @@ static MODULE: sqlite_nostd::module = sqlite_nostd::module {
 };
 
 pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
-    db.create_module_v2("powersync_crud_", &MODULE, None, None)?;
+    sqlite::convert_rc(sqlite::create_module_v2(
+        db,
+        SIMPLE_NAME.as_ptr(),
+        &MODULE,
+        null_mut(),
+        None,
+    ))?;
+    sqlite::convert_rc(sqlite::create_module_v2(
+        db,
+        MANUAL_NAME.as_ptr(),
+        &MODULE,
+        null_mut(),
+        None,
+    ))?;
 
     Ok(())
 }
