@@ -176,10 +176,10 @@ fn powersync_trigger_insert_sql_impl(
 
     let json_fragment = json_object_fragment("NEW", &mut table_info.column_names())?;
 
-    let metadata_fragment = if table_info.flags.include_metadata() {
-        ", 'metadata', NEW._metadata"
+    let (metadata_key, metadata_value) = if table_info.flags.include_metadata() {
+        (",metadata", ",NEW._metadata")
     } else {
-        ""
+        ("", "")
     };
 
     return if !local_only && !insert_only {
@@ -194,12 +194,9 @@ fn powersync_trigger_insert_sql_impl(
       WHEN (typeof(NEW.id) != 'text')
       THEN RAISE (FAIL, 'id should be text')
       END;
-      INSERT INTO {internal_name}
-      SELECT NEW.id, {json_fragment};
-      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:})){metadata_fragment}));
-      INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
-      INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
-    END", type_string, json_fragment);
+      INSERT INTO {internal_name} SELECT NEW.id, {json_fragment};
+      INSERT INTO powersync_crud(op,id,type,data{metadata_key}) VALUES ('PUT',NEW.id,{type_string},json(powersync_diff('{{}}', {:})){metadata_value});
+    END",  json_fragment);
         Ok(trigger)
     } else if local_only {
         let trigger = format!(
@@ -213,6 +210,8 @@ fn powersync_trigger_insert_sql_impl(
         );
         Ok(trigger)
     } else if insert_only {
+        // This is using the manual powersync_crud_ instead of powersync_crud because insert-only
+        // writes shouldn't prevent us from receiving new data.
         let trigger = format!("\
     CREATE TRIGGER {trigger_name}
     INSTEAD OF INSERT ON {quoted_name}
