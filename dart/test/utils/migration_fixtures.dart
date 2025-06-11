@@ -563,3 +563,41 @@ BEGIN
   INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, 9223372036854775807);
 END
 ''';
+
+const currentDeveloperSchema = r'''
+;CREATE TABLE "ps_data__lists"(id TEXT PRIMARY KEY NOT NULL, data TEXT)
+;CREATE VIEW "lists"("id", "description") AS SELECT id, CAST(json_extract(data, '$.description') as TEXT) FROM "ps_data__lists" -- powersync-auto-generated
+;CREATE TRIGGER "ps_view_delete_lists"
+INSTEAD OF DELETE ON "lists"
+FOR EACH ROW
+BEGIN
+DELETE FROM "ps_data__lists" WHERE id = OLD.id;
+INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE',OLD.id,'lists');
+END
+;CREATE TRIGGER "ps_view_insert_lists"
+    INSTEAD OF INSERT ON "lists"
+    FOR EACH ROW
+    BEGIN
+      SELECT CASE
+      WHEN (NEW.id IS NULL)
+      THEN RAISE (FAIL, 'id is required')
+      WHEN (typeof(NEW.id) != 'text')
+      THEN RAISE (FAIL, 'id should be text')
+      END;
+      INSERT INTO "ps_data__lists" SELECT NEW.id, json_object('description', NEW."description");
+      INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT',NEW.id,'lists',json(powersync_diff('{}', json_object('description', NEW."description"))));
+    END
+;CREATE TRIGGER "ps_view_update_lists"
+INSTEAD OF UPDATE ON "lists"
+FOR EACH ROW
+BEGIN
+  SELECT CASE
+  WHEN (OLD.id != NEW.id)
+  THEN RAISE (FAIL, 'Cannot update id')
+  END;
+  UPDATE "ps_data__lists"
+      SET data = json_object('description', NEW."description")
+      WHERE id = NEW.id;
+  INSERT INTO powersync_crud(op,type,id,data,options) VALUES ('PATCH','lists',NEW.id,json(powersync_diff(json_object('description', OLD."description"), json_object('description', NEW."description"))),0);
+END
+''';
