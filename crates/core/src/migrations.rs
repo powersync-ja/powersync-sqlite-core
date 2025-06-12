@@ -371,6 +371,9 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 9')
     }
 
     if current_version < 10 && target_version >= 10 {
+        // We want to re-create views and triggers because their definition at version 10 and above
+        // might reference vtabs that don't exist on older versions. These views will be re-created
+        // by applying the PowerSync user schema after these internal migrations finish.
         local_db
             .exec_safe(
                 "\
