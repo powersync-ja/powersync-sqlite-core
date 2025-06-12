@@ -227,6 +227,104 @@ void main() {
       });
     }
 
+    group('crud vtab', () {
+      setUp(() {
+        db.select('select powersync_init()');
+      });
+
+      group('simple', () {
+        test('can insert', () {
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type, data) VALUES (?, ?, ?, ?)',
+              [
+                'PUT',
+                'foo',
+                'users',
+                json.encode({'my': 'value'})
+              ]);
+
+          final [row] = db.select('SELECT * FROM ps_crud');
+          expect(row, {
+            'id': 1,
+            'tx_id': 1,
+            'data':
+                '{"op":"PUT","id":"foo","type":"users","data":{"my":"value"}}',
+          });
+        });
+
+        test('updates local bucket and updated rows', () {
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type, data) VALUES (?, ?, ?, ?)',
+              [
+                'PUT',
+                'foo',
+                'users',
+                json.encode({'my': 'value'})
+              ]);
+
+          expect(db.select('SELECT * FROM ps_updated_rows'), [
+            {'row_type': 'users', 'row_id': 'foo'}
+          ]);
+          expect(db.select('SELECT * FROM ps_buckets'), [
+            allOf(
+              containsPair('name', r'$local'),
+              containsPair('target_op', 9223372036854775807),
+            )
+          ]);
+        });
+
+        test('does not require data', () {
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type) VALUES (?, ?, ?)', [
+            'DELETE',
+            'foo',
+            'users',
+          ]);
+
+          final [row] = db.select('SELECT * FROM ps_crud');
+          expect(row, {
+            'id': 1,
+            'tx_id': 1,
+            'data': '{"op":"DELETE","id":"foo","type":"users"}',
+          });
+        });
+
+        test('can insert metadata', () {
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type, metadata) VALUES (?, ?, ?, ?)',
+              ['DELETE', 'foo', 'users', 'my metadata']);
+
+          final [row] = db.select('SELECT * FROM ps_crud');
+          expect(row, {
+            'id': 1,
+            'tx_id': 1,
+            'data':
+                '{"op":"DELETE","id":"foo","type":"users","metadata":"my metadata"}',
+          });
+        });
+
+        test('can insert old data', () {
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type, data, old_values) VALUES (?, ?, ?, ?, ?)',
+              [
+                'PUT',
+                'foo',
+                'users',
+                json.encode({'my': 'value'}),
+                json.encode({'previous': 'value'})
+              ]);
+
+          final [row] = db.select('SELECT * FROM ps_crud');
+          expect(row, {
+            'id': 1,
+            'tx_id': 1,
+            'data':
+                '{"op":"PUT","id":"foo","type":"users","data":{"my":"value"},"old":{"previous":"value"}}',
+          });
+        });
+      });
+    });
+
     group('tracks previous values', () {
       void createTable([Map<String, Object?> options = const {}]) {
         final tableSchema = {

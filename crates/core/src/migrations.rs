@@ -12,7 +12,7 @@ use crate::error::{PSResult, SQLiteError};
 use crate::fix_data::apply_v035_fix;
 use crate::sync::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 9;
+pub const LATEST_VERSION: i32 = 10;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -368,6 +368,22 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 9')
 ";
 
         local_db.exec_safe(stmt).into_db_result(local_db)?;
+    }
+
+    if current_version < 10 && target_version >= 10 {
+        // We want to re-create views and triggers because their definition at version 10 and above
+        // might reference vtabs that don't exist on older versions. These views will be re-created
+        // by applying the PowerSync user schema after these internal migrations finish.
+        local_db
+            .exec_safe(
+                "\
+INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
+  json_object('sql', 'SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated'''),
+  json_object('sql', 'DELETE FROM ps_migration WHERE id >= 10')
+));
+        ",
+            )
+            .into_db_result(local_db)?;
     }
 
     Ok(())
