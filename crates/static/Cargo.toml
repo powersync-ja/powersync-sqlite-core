@@ -1,0 +1,24 @@
+[package]
+name = "powersync_static"
+edition.workspace = true
+version.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+authors.workspace = true
+keywords.workspace = true
+
+[lib]
+name = "powersync"
+crate-type = ["staticlib"]
+
+[dependencies]
+sqlite_nostd = { workspace=true }
+
+[dependencies.powersync_core]
+path = "../core"
+default-features = false
+features = []
+
+[features]
+default = ["powersync_core/static", "powersync_core/omit_load_extension", "sqlite_nostd/omit_load_extension"]

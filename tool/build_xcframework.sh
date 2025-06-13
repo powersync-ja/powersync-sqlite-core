@@ -149,7 +149,16 @@ rm -rf powersync-sqlite-core.xcframework
 
 for TARGET in ${TARGETS[@]}; do
   echo "Building PowerSync loadable extension for $TARGET"
-  cargo build -p powersync_loadable --profile release_apple --target $TARGET -Zbuild-std
+
+  if [[ $TARGET == *"watchos"* ]]; then
+    cargo build \
+      -p powersync_static \
+      --profile release_apple \
+      --target $TARGET \
+      -Zbuild-std
+  else
+    cargo build -p powersync_loadable --profile release_apple --target $TARGET -Zbuild-std
+  fi
 done
 
 createXcframework
