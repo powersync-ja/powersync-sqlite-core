@@ -80,7 +80,7 @@ function createXcframework() {
 
   echo "===================== create ios device framework ====================="
   mkdir -p "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework"
-  echo "${ios_plist}" >"${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework/Info.plist"
+  echo "${ios_plist}" > "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework/Info.plist"
   cp -f "./target/aarch64-apple-ios/release_apple/libpowersync.dylib" "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework/powersync-sqlite-core"
   install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync-sqlite-core" "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework/powersync-sqlite-core"
   # Generate dSYM for iOS Device
@@ -88,7 +88,7 @@ function createXcframework() {
 
   echo "===================== create ios simulator framework ====================="
   mkdir -p "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework"
-  echo "${ios_plist}" >"${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework/Info.plist"
+  echo "${ios_plist}" > "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework/Info.plist"
   lipo ./target/aarch64-apple-ios-sim/release_apple/libpowersync.dylib ./target/x86_64-apple-ios/release_apple/libpowersync.dylib -create -output "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework/powersync-sqlite-core"
   install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync-sqlite-core" "${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework/powersync-sqlite-core"
   # Generate dSYM for iOS Simulator
@@ -96,7 +96,7 @@ function createXcframework() {
 
   echo "===================== create macos framework ====================="
   mkdir -p "${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework/Versions/A/Resources"
-  echo "${ios_plist}" >"${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
+  echo "${ios_plist}" > "${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
   lipo ./target/x86_64-apple-darwin/release_apple/libpowersync.dylib ./target/aarch64-apple-darwin/release_apple/libpowersync.dylib -create -output "${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
   install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync-sqlite-core" "${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
   ln -sf A "${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework/Versions/Current"
@@ -107,7 +107,7 @@ function createXcframework() {
 
   echo "===================== create watchos device framework ====================="
   mkdir -p "${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework/Versions/A/Resources"
-  echo "${watchos_plist}" >"${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
+  echo "${watchos_plist}" > "${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
   lipo ./target/aarch64-apple-watchos/release_apple/libpowersync.a ./target/arm64_32-apple-watchos/release_apple/libpowersync.a -create -output "${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
   # install_name_tool isn't necessary, we use a statically-linked library
   ln -sf A "${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework/Versions/Current"
@@ -116,7 +116,7 @@ function createXcframework() {
 
   echo "===================== create watchos simulator framework ====================="
   mkdir -p "${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework/Versions/A/Resources"
-  echo "${watchos_plist}" >"${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
+  echo "${watchos_plist}" > "${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
   lipo ./target/aarch64-apple-watchos-sim/release_apple/libpowersync.a ./target/x86_64-apple-watchos-sim/release_apple/libpowersync.a -create -output "${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
   # install_name_tool isn't necessary, we use a statically-linked library
   ln -sf A "${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework/Versions/Current"
