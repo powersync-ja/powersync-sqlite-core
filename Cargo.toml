@@ -38,3 +38,4 @@ repository = "https://github.com/powersync-ja/powersync-sqlite-core"
 
 [workspace.dependencies]
 sqlite_nostd = { path="./sqlite-rs-embedded/sqlite_nostd" }
+

@@ -1,4 +1,3 @@
-
 # Previously we added this to rustflags for all linux builds:
 #   "-C", "link-arg=-lgcc_eh"
 # It was to fix this error when loading the loadable extension:
@@ -85,4 +84,19 @@ rustflags = [
 [target.i686-linux-android]
 rustflags = [
     "-C", "link-arg=-Wl,-soname,libpowersync.so",
+]
+
+[target.aarch64-apple-watchos]
+rustflags = [
+    "-C", "link-arg=-mwatchos-version-min=9.0",
+]
+
+[target.aarch64-apple-watchos-sim]
+rustflags = [
+    "-C", "link-arg=-mwatchsimulator-version-min=9.0",
+]
+
+[target.x86_64-apple-watchos-sim]
+rustflags = [
+    "-C", "link-arg=-mwatchos-version-min=9.0",
 ]

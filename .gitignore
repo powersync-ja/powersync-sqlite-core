@@ -9,3 +9,4 @@ target/
 *.tar.gz
 *.tar.xz
 *.zip
+.build
