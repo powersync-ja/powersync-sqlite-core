@@ -28,6 +28,7 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 #[lang = "eh_personality"]
 extern "C" fn eh_personality() {}
 
+
 #[no_mangle]
 pub extern "C" fn core_init(_dummy: *mut c_char) -> c_int {
     powersync_init_static()

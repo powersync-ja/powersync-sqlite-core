@@ -137,6 +137,7 @@ function createXcframework() {
     -framework "${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework" \
     -output "${BUILD_DIR}/powersync-sqlite-core.xcframework"
 
+  cp -Rf "${BUILD_DIR}/powersync-sqlite-core.xcframework" "powersync-sqlite-core.xcframework"
   zip -r --symlinks powersync-sqlite-core.xcframework.zip powersync-sqlite-core.xcframework LICENSE README.md
   rm -rf ${BUILD_DIR}
 }
@@ -148,7 +149,7 @@ rm -rf powersync-sqlite-core.xcframework
 
 for TARGET in ${TARGETS[@]}; do
   echo "Building PowerSync loadable extension for $TARGET"
-  #cargo build -p powersync_loadable --profile release_apple --target $TARGET -Zbuild-std
+  cargo build -p powersync_loadable --profile release_apple --target $TARGET -Zbuild-std
 done
 
 createXcframework

@@ -88,15 +88,15 @@ rustflags = [
 
 [target.aarch64-apple-watchos]
 rustflags = [
-    "-C", "link-arg=-mwatchos-version-min=7.0",
+    "-C", "link-arg=-mwatchos-version-min=9.0",
 ]
 
 [target.aarch64-apple-watchos-sim]
 rustflags = [
-    "-C", "link-arg=-mwatchsimulator-version-min=7.0",
+    "-C", "link-arg=-mwatchsimulator-version-min=9.0",
 ]
 
 [target.x86_64-apple-watchos-sim]
 rustflags = [
-    "-C", "link-arg=-mwatchos-version-min=7.0",
+    "-C", "link-arg=-mwatchos-version-min=9.0",
 ]
