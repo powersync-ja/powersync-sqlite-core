@@ -119,7 +119,7 @@ void main() {
 
       final schema = getSchema(db);
       final expected =
-          '${fixtures.finalState.replaceAll(RegExp(r';INSERT INTO ps_migration.*'), '').trim()}\n${fixtures.schema5.trim()}';
+          '${fixtures.finalState.replaceAll(RegExp(r';INSERT INTO ps_migration.*'), '').trim()}\n${fixtures.currentDeveloperSchema.trim()}';
       expect(schema, equals(expected));
     });
 
