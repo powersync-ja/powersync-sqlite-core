@@ -32,10 +32,6 @@ pub fn quote_internal_name(name: &str, local_only: bool) -> String {
     }
 }
 
-pub fn internal_table_name(name: &str) -> String {
-    return format!("ps_data__{}", name);
-}
-
 pub fn quote_identifier_prefixed(prefix: &str, name: &str) -> String {
     return format!("\"{:}{:}\"", prefix, name.replace("\"", "\"\""));
 }
