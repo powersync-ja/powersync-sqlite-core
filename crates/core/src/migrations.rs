@@ -384,5 +384,24 @@ INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
             .into_db_result(local_db)?;
     }
 
+    if current_version < 11 && target_version >= 11 {
+        let stmt = "\
+CREATE TABLE ps_streams (
+  id NOT NULL INTEGER PRIMARY KEY,
+  definition_name TEXT NOT NULL,
+  is_default INTEGER NOT NULL,
+  local_priority INTEGER,
+  local_params TEXT
+) STRICT;
+ALTER TABLE ps_buckets ADD COLUMN derived_from INTEGER REFERENCES ps_streams (id);
+
+INSERT INTO ps_migration(id, down_migrations) VALUES(9, json_array(
+json_object('sql', 'todo down migration'),
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 10')
+));
+";
+        local_db.exec_safe(stmt)?;
+    }
+
     Ok(())
 }
