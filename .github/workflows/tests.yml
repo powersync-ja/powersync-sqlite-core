@@ -58,5 +58,5 @@ jobs:
         run: |
           cd dart
           dart pub get
-          dart test
+          dart --enable-experiment=native-assets test
           dart analyze

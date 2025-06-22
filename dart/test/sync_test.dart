@@ -7,7 +7,7 @@ import 'package:fake_async/fake_async.dart';
 import 'package:file/local.dart';
 import 'package:meta/meta.dart';
 import 'package:sqlite3/common.dart';
-import 'package:sqlite3/sqlite3.dart';
+import 'package:sqlite3/native_assets.dart';
 import 'package:sqlite3_test/sqlite3_test.dart';
 import 'package:test/test.dart';
 import 'package:path/path.dart';
@@ -28,9 +28,9 @@ void main() {
 
   setUpAll(() {
     loadExtension();
-    sqlite3.registerVirtualFileSystem(vfs, makeDefault: false);
+    sqlite3Native.registerVirtualFileSystem(vfs, makeDefault: false);
   });
-  tearDownAll(() => sqlite3.unregisterVirtualFileSystem(vfs));
+  tearDownAll(() => sqlite3Native.unregisterVirtualFileSystem(vfs));
 
   group('text lines', () {
     _syncTests(vfs: vfs, isBson: false);
@@ -52,6 +52,14 @@ void _syncTests<T>({
     db.execute('begin');
     final [row] =
         db.select('SELECT powersync_control(?, ?)', [operation, data]);
+
+    // Make sure that powersync_control doesn't leave any busy statements
+    // behind.
+    final busy = db.select(
+        'SELECT * FROM sqlite_stmt WHERE busy AND sql NOT LIKE ?;',
+        ['%sqlite_stmt%']);
+    expect(busy, isEmpty);
+
     db.execute('commit');
     return jsonDecode(row.columnAt(0));
   }
