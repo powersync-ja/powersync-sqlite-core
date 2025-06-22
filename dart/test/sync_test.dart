@@ -55,9 +55,8 @@ void _syncTests<T>({
 
     // Make sure that powersync_control doesn't leave any busy statements
     // behind.
-    final busy = db.select(
-        'SELECT * FROM sqlite_stmt WHERE busy AND sql NOT LIKE ?;',
-        ['%sqlite_stmt%']);
+    const statement = 'SELECT * FROM sqlite_stmt WHERE busy AND sql != ?;';
+    final busy = db.select(statement, [statement]);
     expect(busy, isEmpty);
 
     db.execute('commit');
