@@ -501,8 +501,20 @@ impl<'a> PreparedPendingStatement<'a> {
     pub fn prepare(
         db: *mut sqlite::sqlite3,
         pending: &'a PendingStatement,
-    ) -> Result<Self, ResultCode> {
+    ) -> Result<Self, SQLiteError> {
         let stmt = db.prepare_v2(&pending.sql)?;
+        if stmt.bind_parameter_count() as usize != pending.params.len() {
+            return Err(SQLiteError(
+                ResultCode::MISUSE,
+                Some(format!(
+                    "Statement {} has {} parameters, but {} values were provided as sources.",
+                    &pending.sql,
+                    stmt.bind_parameter_count(),
+                    pending.params.len(),
+                )),
+            ));
+        }
+
         // TODO: Compare number of variables / other validity checks?
 
         Ok(Self {
@@ -534,8 +546,7 @@ impl<'a> PreparedPendingStatement<'a> {
                         }
                         Some(Value::Number(value)) => {
                             if let Some(value) = value.as_f64() {
-                                // ??? there's no bind_double???
-                                self.stmt.bind_int64(i, value as i64)
+                                self.stmt.bind_double(i, value)
                             } else if let Some(value) = value.as_u64() {
                                 self.stmt.bind_int64(i, value as i64)
                             } else {
