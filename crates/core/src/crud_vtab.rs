@@ -160,7 +160,7 @@ impl VirtualTable {
                 set_updated_rows.bind_text(1, row_type, sqlite::Destructor::STATIC)?;
                 set_updated_rows.bind_text(2, id, sqlite::Destructor::STATIC)?;
                 set_updated_rows.exec()?;
-                simple.had_writes = true;
+                simple.record_local_write(db)?;
             }
         }
 
@@ -191,26 +191,7 @@ impl VirtualTable {
         Ok(())
     }
 
-    fn end_transaction(&mut self) -> Result<(), SQLiteError> {
-        let tx = self.current_tx.take();
-        if let Some(tx) = tx {
-            let needs_local_bucket_update = match tx.mode {
-                CrudTransactionMode::Manual { .. } => {
-                    // In manual mode, users need to update the $local bucket themselves.
-                    false
-                }
-                CrudTransactionMode::Simple(simple) => simple.had_writes,
-            };
-
-            if needs_local_bucket_update {
-                self.db.exec_safe(formatcp!("INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID})"))?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn clear_transaction_state(&mut self) {
+    fn end_transaction(&mut self) {
         self.current_tx = None;
     }
 }
@@ -251,6 +232,15 @@ impl SimpleCrudTransactionMode {
                 0,
             )
         })
+    }
+
+    fn record_local_write(&mut self, db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+        if !self.had_writes {
+            db.exec_safe(formatcp!("INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID})"))?;
+            self.had_writes = true;
+        }
+
+        Ok(())
     }
 }
 
@@ -324,12 +314,13 @@ extern "C" fn begin(vtab: *mut sqlite::vtab) -> c_int {
 
 extern "C" fn commit(vtab: *mut sqlite::vtab) -> c_int {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
-    vtab_result(vtab, tab.end_transaction())
+    tab.end_transaction();
+    ResultCode::OK as c_int
 }
 
 extern "C" fn rollback(vtab: *mut sqlite::vtab) -> c_int {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
-    tab.clear_transaction_state();
+    tab.end_transaction();
     // ps_tx will be rolled back automatically
     ResultCode::OK as c_int
 }
