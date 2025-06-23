@@ -322,6 +322,51 @@ void main() {
                 '{"op":"PUT","id":"foo","type":"users","data":{"my":"value"},"old":{"previous":"value"}}',
           });
         });
+
+        test('resets state after commit', () {
+          db.execute('BEGIN');
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type) VALUES (?, ?, ?)', [
+            'DELETE',
+            'foo',
+            'users',
+          ]);
+          db.execute('commit');
+
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type) VALUES (?, ?, ?)', [
+            'DELETE',
+            'foo',
+            'users',
+          ]);
+          expect(db.select('SELECT * FROM ps_crud').map((r) => r['tx_id']),
+              [1, 2]);
+        });
+
+        test('resets state after rollback', () {
+          db.execute('BEGIN');
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type) VALUES (?, ?, ?)', [
+            'DELETE',
+            'foo',
+            'users',
+          ]);
+          db.execute('rollback');
+
+          db.execute(
+              'INSERT INTO powersync_crud (op, id, type) VALUES (?, ?, ?)', [
+            'DELETE',
+            'foo2',
+            'users',
+          ]);
+          expect(db.select('SELECT * FROM ps_crud'), [
+            {
+              'id': 1,
+              'data': '{"op":"DELETE","id":"foo2","type":"users"}',
+              'tx_id': 1,
+            }
+          ]);
+        });
       });
     });
 
