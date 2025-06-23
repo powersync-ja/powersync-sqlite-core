@@ -84,21 +84,23 @@ fn powersync_trigger_delete_sql_impl(
     let trigger_name = quote_identifier_prefixed("ps_view_delete_", view_name);
     let type_string = quote_string(name);
 
-    let old_fragment: Cow<'static, str> = match &table_info.diff_include_old {
-        Some(include_old) => {
-            let json = match include_old {
-                DiffIncludeOld::OnlyForColumns { columns } => {
-                    json_object_fragment("OLD", &mut columns.iter().map(|c| c.as_str()))
-                }
-                DiffIncludeOld::ForAllColumns => {
-                    json_object_fragment("OLD", &mut table_info.column_names())
-                }
-            }?;
+    let (old_data_name, old_data_value): (&'static str, Cow<'static, str>) =
+        match &table_info.diff_include_old {
+            Some(include_old) => {
+                let mut json = match include_old {
+                    DiffIncludeOld::OnlyForColumns { columns } => {
+                        json_object_fragment("OLD", &mut columns.iter().map(|c| c.as_str()))
+                    }
+                    DiffIncludeOld::ForAllColumns => {
+                        json_object_fragment("OLD", &mut table_info.column_names())
+                    }
+                }?;
 
-            format!(", 'old', {json}").into()
-        }
-        None => "".into(),
-    };
+                json.insert(0, ',');
+                (",old_values", json.into())
+            }
+            None => ("", "".into()),
+        };
 
     return if !local_only && !insert_only {
         let mut trigger = format!(
@@ -108,9 +110,7 @@ INSTEAD OF DELETE ON {quoted_name}
 FOR EACH ROW
 BEGIN
 DELETE FROM {internal_name} WHERE id = OLD.id;
-INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', OLD.id{old_fragment}));
-INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, OLD.id);
-INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
+INSERT INTO powersync_crud(op,id,type{old_data_name}) VALUES ('DELETE',OLD.id,{type_string}{old_data_value});
 END"
         );
 
@@ -126,9 +126,7 @@ FOR EACH ROW
 WHEN NEW._deleted IS TRUE
 BEGIN
 DELETE FROM {internal_name} WHERE id = NEW.id;
-INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'DELETE', 'type', {type_string}, 'id', NEW.id{old_fragment}, 'metadata', NEW._metadata));
-INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
-INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
+INSERT INTO powersync_crud(op,id,type,metadata{old_data_name}) VALUES ('DELETE',OLD.id,{type_string},NEW._metadata{old_data_value});
 END"
                     ).expect("writing to string should be infallible");
         }
@@ -178,10 +176,10 @@ fn powersync_trigger_insert_sql_impl(
 
     let json_fragment = json_object_fragment("NEW", &mut table_info.column_names())?;
 
-    let metadata_fragment = if table_info.flags.include_metadata() {
-        ", 'metadata', NEW._metadata"
+    let (metadata_key, metadata_value) = if table_info.flags.include_metadata() {
+        (",metadata", ",NEW._metadata")
     } else {
-        ""
+        ("", "")
     };
 
     return if !local_only && !insert_only {
@@ -196,12 +194,9 @@ fn powersync_trigger_insert_sql_impl(
       WHEN (typeof(NEW.id) != 'text')
       THEN RAISE (FAIL, 'id should be text')
       END;
-      INSERT INTO {internal_name}
-      SELECT NEW.id, {json_fragment};
-      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:})){metadata_fragment}));
-      INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
-      INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
-    END", type_string, json_fragment);
+      INSERT INTO {internal_name} SELECT NEW.id, {json_fragment};
+      INSERT INTO powersync_crud(op,id,type,data{metadata_key}) VALUES ('PUT',NEW.id,{type_string},json(powersync_diff('{{}}', {:})){metadata_value});
+    END",  json_fragment);
         Ok(trigger)
     } else if local_only {
         let trigger = format!(
@@ -215,6 +210,8 @@ fn powersync_trigger_insert_sql_impl(
         );
         Ok(trigger)
     } else if insert_only {
+        // This is using the manual powersync_crud_ instead of powersync_crud because insert-only
+        // writes shouldn't prevent us from receiving new data.
         let trigger = format!("\
     CREATE TRIGGER {trigger_name}
     INSTEAD OF INSERT ON {quoted_name}
@@ -282,15 +279,15 @@ fn powersync_trigger_update_sql_impl(
         }
     }
 
-    let old_fragment: Cow<'static, str> = match old_values_fragment {
-        Some(f) => format!(", 'old', {f}").into(),
-        None => "".into(),
+    let (old_key, old_value): (&'static str, Cow<'static, str>) = match old_values_fragment {
+        Some(f) => (",old_values", format!(",{f}").into()),
+        None => ("", "".into()),
     };
 
-    let metadata_fragment = if table_info.flags.include_metadata() {
-        ", 'metadata', NEW._metadata"
+    let (metadata_key, metadata_value) = if table_info.flags.include_metadata() {
+        (",metadata", ",NEW._metadata")
     } else {
-        ""
+        ("", "")
     };
 
     return if !local_only && !insert_only {
@@ -316,10 +313,8 @@ BEGIN
   UPDATE {internal_name}
       SET data = {json_fragment_new}
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud_(data, options) VALUES(json_object('op', 'PATCH', 'type', {:}, 'id', NEW.id, 'data', json(powersync_diff({:}, {:})){:}{:}), {flags});
-  INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES({type_string}, NEW.id);
-  INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID});
-END", type_string, json_fragment_old, json_fragment_new, old_fragment, metadata_fragment);
+  INSERT INTO powersync_crud(op,type,id,data,options{old_key}{metadata_key}) VALUES ('PATCH',{type_string},NEW.id,json(powersync_diff({:}, {:})),{flags}{old_value}{metadata_value});
+END", json_fragment_old, json_fragment_new);
         Ok(trigger)
     } else if local_only {
         debug_assert!(!table_info.flags.include_metadata());
