@@ -781,7 +781,7 @@ END;
       expect(db.select('SELECT * FROM users'), isEmpty);
     });
 
-    test("can't use crud vtab during sync", () {
+    test("crud vtab is no-op during sync", () {
       db.execute(
           'CREATE TABLE users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
 
@@ -793,8 +793,6 @@ END;
               {
                 'name': 'users',
                 'put': {
-                  // Inserting into powersync_crud_ during a sync operation is
-                  // forbidden, that vtab should only collect local writes.
                   'sql': "INSERT INTO powersync_crud_(data) VALUES (?);",
                   'params': [
                     {'Column': 'name'}
@@ -822,7 +820,8 @@ END;
         objectType: 'users',
       );
 
-      expect(pushCheckpointComplete, throwsA(isA<SqliteException>()));
+      pushCheckpointComplete();
+      expect(db.select('SELECT * FROM ps_crud'), isEmpty);
     });
   });
 }
