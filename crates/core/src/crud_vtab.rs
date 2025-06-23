@@ -49,14 +49,20 @@ struct ActiveCrudTransaction {
 }
 
 enum CrudTransactionMode {
-    Manual {
-        stmt: ManagedStmt,
-    },
-    Simple {
-        stmt: ManagedStmt,
-        set_updated_rows: ManagedStmt,
-        had_writes: bool,
-    },
+    Manual(ManualCrudTransactionMode),
+    Simple(SimpleCrudTransactionMode),
+}
+
+#[derive(Default)]
+struct ManualCrudTransactionMode {
+    stmt: Option<ManagedStmt>,
+}
+
+#[derive(Default)]
+struct SimpleCrudTransactionMode {
+    stmt: Option<ManagedStmt>,
+    set_updated_rows: Option<ManagedStmt>,
+    had_writes: bool,
 }
 
 impl VirtualTable {
@@ -78,9 +84,10 @@ impl VirtualTable {
             .current_tx
             .as_mut()
             .ok_or_else(|| SQLiteError(ResultCode::MISUSE, Some(String::from("No tx_id"))))?;
+        let db = self.db;
 
         match &mut current_tx.mode {
-            CrudTransactionMode::Manual { stmt } => {
+            CrudTransactionMode::Manual(manual) => {
                 // Columns are (data TEXT, options INT HIDDEN)
                 let data = args[0].text();
                 let flags = match args[1].value_type() {
@@ -88,16 +95,13 @@ impl VirtualTable {
                     _ => TableInfoFlags(args[1].int() as u32),
                 };
 
+                let stmt = manual.raw_crud_statement(db)?;
                 stmt.bind_int64(1, current_tx.tx_id)?;
                 stmt.bind_text(2, data, sqlite::Destructor::STATIC)?;
                 stmt.bind_int(3, flags.0 as i32)?;
                 stmt.exec()?;
             }
-            CrudTransactionMode::Simple {
-                stmt,
-                set_updated_rows,
-                had_writes,
-            } => {
+            CrudTransactionMode::Simple(simple) => {
                 // Columns are (op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT, options INT HIDDEN)
                 let flags = match args[6].value_type() {
                     sqlite_nostd::ColumnType::Null => TableInfoFlags::default(),
@@ -133,6 +137,7 @@ impl VirtualTable {
 
                 // First, we insert into ps_crud like the manual vtab would too. We have to create
                 // the JSON out of the individual components for that.
+                let stmt = simple.raw_crud_statement(db)?;
                 stmt.bind_int64(1, current_tx.tx_id)?;
 
                 let serialized = serde_json::to_string(&CrudEntry {
@@ -151,10 +156,11 @@ impl VirtualTable {
                 stmt.exec()?;
 
                 // However, we also set ps_updated_rows and update the $local bucket
+                let set_updated_rows = simple.set_updated_rows_statement(db)?;
                 set_updated_rows.bind_text(1, row_type, sqlite::Destructor::STATIC)?;
                 set_updated_rows.bind_text(2, id, sqlite::Destructor::STATIC)?;
                 set_updated_rows.exec()?;
-                *had_writes = true;
+                simple.had_writes = true;
             }
         }
 
@@ -176,30 +182,9 @@ impl VirtualTable {
         self.current_tx = Some(ActiveCrudTransaction {
             tx_id,
             mode: if self.is_simple {
-                CrudTransactionMode::Simple {
-                    // language=SQLite
-                    stmt: db.prepare_v3("INSERT INTO ps_crud(tx_id, data) VALUES (?, ?)", 0)?,
-                    // language=SQLite
-                    set_updated_rows: db.prepare_v3(
-                        "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?, ?)",
-                        0,
-                    )?,
-                    had_writes: false,
-                }
+                CrudTransactionMode::Simple(Default::default())
             } else {
-                const SQL: &str = formatcp!(
-                    "\
-WITH insertion (tx_id, data) AS (VALUES (?1, ?2))
-INSERT INTO ps_crud(tx_id, data)
-SELECT * FROM insertion WHERE (NOT (?3 & {})) OR data->>'op' != 'PATCH' OR data->'data' != '{{}}';
-    ",
-                    TableInfoFlags::IGNORE_EMPTY_UPDATE
-                );
-
-                let insert_statement = db.prepare_v3(SQL, 0)?;
-                CrudTransactionMode::Manual {
-                    stmt: insert_statement,
-                }
+                CrudTransactionMode::Manual(Default::default())
             },
         });
 
@@ -214,11 +199,7 @@ SELECT * FROM insertion WHERE (NOT (?3 & {})) OR data->>'op' != 'PATCH' OR data-
                     // In manual mode, users need to update the $local bucket themselves.
                     false
                 }
-                CrudTransactionMode::Simple {
-                    had_writes,
-                    stmt: _,
-                    set_updated_rows: _,
-                } => had_writes,
+                CrudTransactionMode::Simple(simple) => simple.had_writes,
             };
 
             if needs_local_bucket_update {
@@ -232,6 +213,57 @@ SELECT * FROM insertion WHERE (NOT (?3 & {})) OR data->>'op' != 'PATCH' OR data-
     fn clear_transaction_state(&mut self) {
         self.current_tx = None;
     }
+}
+
+impl ManualCrudTransactionMode {
+    fn raw_crud_statement(&mut self, db: *mut sqlite::sqlite3) -> Result<&ManagedStmt, ResultCode> {
+        prepare_lazy(&mut self.stmt, || {
+            const SQL: &str = formatcp!(
+                "\
+WITH insertion (tx_id, data) AS (VALUES (?1, ?2))
+INSERT INTO ps_crud(tx_id, data)
+SELECT * FROM insertion WHERE (NOT (?3 & {})) OR data->>'op' != 'PATCH' OR data->'data' != '{{}}';
+    ",
+                TableInfoFlags::IGNORE_EMPTY_UPDATE
+            );
+
+            db.prepare_v3(SQL, 0)
+        })
+    }
+}
+
+impl SimpleCrudTransactionMode {
+    fn raw_crud_statement(&mut self, db: *mut sqlite::sqlite3) -> Result<&ManagedStmt, ResultCode> {
+        prepare_lazy(&mut self.stmt, || {
+            // language=SQLite
+            db.prepare_v3("INSERT INTO ps_crud(tx_id, data) VALUES (?, ?)", 0)
+        })
+    }
+
+    fn set_updated_rows_statement(
+        &mut self,
+        db: *mut sqlite::sqlite3,
+    ) -> Result<&ManagedStmt, ResultCode> {
+        prepare_lazy(&mut self.set_updated_rows, || {
+            // language=SQLite
+            db.prepare_v3(
+                "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?, ?)",
+                0,
+            )
+        })
+    }
+}
+
+/// A variant of `Option.get_or_insert` that handles insertions returning errors.
+fn prepare_lazy(
+    stmt: &mut Option<ManagedStmt>,
+    prepare: impl FnOnce() -> Result<ManagedStmt, ResultCode>,
+) -> Result<&ManagedStmt, ResultCode> {
+    if let None = stmt {
+        *stmt = Some(prepare()?);
+    }
+
+    return Ok(unsafe { stmt.as_ref().unwrap_unchecked() });
 }
 
 extern "C" fn connect(
