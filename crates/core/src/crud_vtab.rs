@@ -55,7 +55,7 @@ enum CrudTransactionMode {
     Simple {
         stmt: ManagedStmt,
         set_updated_rows: ManagedStmt,
-        update_local_bucket: ManagedStmt,
+        had_writes: bool,
     },
 }
 
@@ -73,13 +73,13 @@ impl VirtualTable {
         }
     }
 
-    fn handle_insert(&self, args: &[*mut sqlite::value]) -> Result<(), SQLiteError> {
+    fn handle_insert(&mut self, args: &[*mut sqlite::value]) -> Result<(), SQLiteError> {
         let current_tx = self
             .current_tx
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| SQLiteError(ResultCode::MISUSE, Some(String::from("No tx_id"))))?;
 
-        match &current_tx.mode {
+        match &mut current_tx.mode {
             CrudTransactionMode::Manual { stmt } => {
                 // Columns are (data TEXT, options INT HIDDEN)
                 let data = args[0].text();
@@ -96,7 +96,7 @@ impl VirtualTable {
             CrudTransactionMode::Simple {
                 stmt,
                 set_updated_rows,
-                update_local_bucket,
+                had_writes,
             } => {
                 // Columns are (op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT, options INT HIDDEN)
                 let flags = match args[6].value_type() {
@@ -154,7 +154,7 @@ impl VirtualTable {
                 set_updated_rows.bind_text(1, row_type, sqlite::Destructor::STATIC)?;
                 set_updated_rows.bind_text(2, id, sqlite::Destructor::STATIC)?;
                 set_updated_rows.exec()?;
-                update_local_bucket.exec()?;
+                *had_writes = true;
             }
         }
 
@@ -184,7 +184,7 @@ impl VirtualTable {
                         "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?, ?)",
                         0,
                     )?,
-                    update_local_bucket: db.prepare_v3(formatcp!("INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID})"), 0)?,
+                    had_writes: false,
                 }
             } else {
                 const SQL: &str = formatcp!(
@@ -206,7 +206,30 @@ SELECT * FROM insertion WHERE (NOT (?3 & {})) OR data->>'op' != 'PATCH' OR data-
         Ok(())
     }
 
-    fn end_transaction(&mut self) {
+    fn end_transaction(&mut self) -> Result<(), SQLiteError> {
+        let tx = self.current_tx.take();
+        if let Some(tx) = tx {
+            let needs_local_bucket_update = match tx.mode {
+                CrudTransactionMode::Manual { .. } => {
+                    // In manual mode, users need to update the $local bucket themselves.
+                    false
+                }
+                CrudTransactionMode::Simple {
+                    had_writes,
+                    stmt: _,
+                    set_updated_rows: _,
+                } => had_writes,
+            };
+
+            if needs_local_bucket_update {
+                self.db.exec_safe(formatcp!("INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID})"))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn clear_transaction_state(&mut self) {
         self.current_tx = None;
     }
 }
@@ -269,13 +292,12 @@ extern "C" fn begin(vtab: *mut sqlite::vtab) -> c_int {
 
 extern "C" fn commit(vtab: *mut sqlite::vtab) -> c_int {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
-    tab.end_transaction();
-    ResultCode::OK as c_int
+    vtab_result(vtab, tab.end_transaction())
 }
 
 extern "C" fn rollback(vtab: *mut sqlite::vtab) -> c_int {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
-    tab.end_transaction();
+    tab.clear_transaction_state();
     // ps_tx will be rolled back automatically
     ResultCode::OK as c_int
 }
@@ -295,7 +317,7 @@ extern "C" fn update(
         ResultCode::MISUSE as c_int
     } else if rowid.value_type() == sqlite::ColumnType::Null {
         // INSERT
-        let tab = unsafe { &*(vtab.cast::<VirtualTable>()) };
+        let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
         let result = tab.handle_insert(&args[2..]);
         vtab_result(vtab, result)
     } else {
