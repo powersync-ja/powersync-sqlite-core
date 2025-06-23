@@ -113,7 +113,7 @@ create_sqlite_text_fn!(
 
 fn powersync_init_impl(
     ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
+    _args: &[*mut sqlite::value],
 ) -> Result<String, SQLiteError> {
     let local_db = ctx.db_handle();
 
@@ -319,7 +319,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     // Initialize the extension internal tables.
     db.create_function_v2(
         "powersync_init",
-        -1,
+        0,
         sqlite::UTF8,
         None,
         Some(powersync_init),
