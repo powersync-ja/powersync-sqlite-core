@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:sqlite3/common.dart';
-import 'package:sqlite3/native_assets.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
@@ -32,13 +32,13 @@ void testFilesystemOperations(
     // Needs an unique name per test file to avoid concurrency issues
     vfs = new TrackingFileSystem(
         parent: new InMemoryFileSystem(), name: 'perf-test-vfs');
-    sqlite3Native.registerVirtualFileSystem(vfs, makeDefault: false);
+    sqlite3.registerVirtualFileSystem(vfs, makeDefault: false);
     db = openTestDatabase(vfs: vfs, fileName: 'test.db');
   });
 
   tearDown(() {
     db.dispose();
-    sqlite3Native.unregisterVirtualFileSystem(vfs);
+    sqlite3.unregisterVirtualFileSystem(vfs);
   });
 
   setUp(() {
