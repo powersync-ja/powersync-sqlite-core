@@ -425,11 +425,10 @@ impl StreamingSyncIteration {
         &self,
         checkpoint: &OwnedCheckpoint,
     ) -> Result<SyncDownloadProgress, SQLiteError> {
-        let local_progress = self.adapter.local_progress()?;
         let SyncProgressFromCheckpoint {
             progress,
             needs_counter_reset,
-        } = SyncDownloadProgress::for_checkpoint(checkpoint, local_progress)?;
+        } = SyncDownloadProgress::for_checkpoint(checkpoint, &self.adapter)?;
 
         if needs_counter_reset {
             self.adapter.reset_progress()?;

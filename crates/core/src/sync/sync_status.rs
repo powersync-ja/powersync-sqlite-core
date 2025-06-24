@@ -3,11 +3,12 @@ use core::{cell::RefCell, hash::BuildHasher};
 use rustc_hash::FxBuildHasher;
 use serde::Serialize;
 use sqlite_nostd::ResultCode;
-use streaming_iterator::StreamingIterator;
+
+use crate::sync::storage_adapter::StorageAdapter;
 
 use super::{
     bucket_priority::BucketPriority, interface::Instruction, line::DataLine,
-    storage_adapter::PersistedBucketProgress, streaming_sync::OwnedCheckpoint,
+    streaming_sync::OwnedCheckpoint,
 };
 
 /// Information about a progressing download.
@@ -187,9 +188,7 @@ pub struct SyncProgressFromCheckpoint {
 impl SyncDownloadProgress {
     pub fn for_checkpoint<'a>(
         checkpoint: &OwnedCheckpoint,
-        mut local_progress: impl StreamingIterator<
-            Item = Result<PersistedBucketProgress<'a>, ResultCode>,
-        >,
+        adapter: &StorageAdapter,
     ) -> Result<SyncProgressFromCheckpoint, ResultCode> {
         let mut buckets = BTreeMap::<String, BucketProgress>::new();
         let mut needs_reset = false;
@@ -206,12 +205,11 @@ impl SyncDownloadProgress {
             );
         }
 
-        while let Some(row) = local_progress.next() {
-            let row = match row {
-                Ok(row) => row,
-                Err(e) => return Err(*e),
-            };
+        // Go through local bucket states to detect pending progress from previous sync iterations
+        // that may have been interrupted.
+        adapter.progress_stmt.reset()?;
 
+        while let Some(row) = adapter.step_progress()? {
             let Some(progress) = buckets.get_mut(row.bucket) else {
                 continue;
             };
@@ -231,6 +229,8 @@ impl SyncDownloadProgress {
                 break;
             }
         }
+
+        adapter.progress_stmt.reset()?;
 
         Ok(SyncProgressFromCheckpoint {
             progress: Self { buckets },

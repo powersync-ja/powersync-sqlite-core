@@ -52,6 +52,14 @@ void _syncTests<T>({
     db.execute('begin');
     final [row] =
         db.select('SELECT powersync_control(?, ?)', [operation, data]);
+
+    // Make sure that powersync_control doesn't leave any busy statements
+    // behind.
+    // TODO: Re-enable after we can guarantee sqlite_stmt being available
+    // const statement = 'SELECT * FROM sqlite_stmt WHERE busy AND sql != ?;';
+    // final busy = db.select(statement, [statement]);
+    // expect(busy, isEmpty);
+
     db.execute('commit');
     return jsonDecode(row.columnAt(0));
   }

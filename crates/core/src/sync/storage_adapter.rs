@@ -3,7 +3,6 @@ use core::{assert_matches::debug_assert_matches, fmt::Display};
 use alloc::{string::ToString, vec::Vec};
 use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
-use streaming_iterator::StreamingIterator;
 
 use crate::{
     error::SQLiteError,
@@ -25,7 +24,7 @@ use super::{
 /// used frequently as an optimization, but we're not taking advantage of that yet.
 pub struct StorageAdapter {
     pub db: *mut sqlite::sqlite3,
-    progress_stmt: ManagedStmt,
+    pub progress_stmt: ManagedStmt,
     time_stmt: ManagedStmt,
 }
 
@@ -78,37 +77,22 @@ impl StorageAdapter {
         Ok(())
     }
 
-    pub fn local_progress(
-        &self,
-    ) -> Result<
-        impl StreamingIterator<Item = Result<PersistedBucketProgress, ResultCode>>,
-        ResultCode,
-    > {
-        self.progress_stmt.reset()?;
+    pub fn step_progress(&self) -> Result<Option<PersistedBucketProgress>, ResultCode> {
+        if self.progress_stmt.step()? == ResultCode::ROW {
+            let bucket = self.progress_stmt.column_text(0)?;
+            let count_at_last = self.progress_stmt.column_int64(1);
+            let count_since_last = self.progress_stmt.column_int64(2);
 
-        fn step(stmt: &ManagedStmt) -> Result<Option<PersistedBucketProgress>, ResultCode> {
-            if stmt.step()? == ResultCode::ROW {
-                let bucket = stmt.column_text(0)?;
-                let count_at_last = stmt.column_int64(1);
-                let count_since_last = stmt.column_int64(2);
-
-                return Ok(Some(PersistedBucketProgress {
-                    bucket,
-                    count_at_last,
-                    count_since_last,
-                }));
-            }
-
+            Ok(Some(PersistedBucketProgress {
+                bucket,
+                count_at_last,
+                count_since_last,
+            }))
+        } else {
+            // Done
+            self.progress_stmt.reset()?;
             Ok(None)
         }
-
-        Ok(streaming_iterator::from_fn(|| {
-            match step(&self.progress_stmt) {
-                Err(e) => Some(Err(e)),
-                Ok(Some(other)) => Some(Ok(other)),
-                Ok(None) => None,
-            }
-        }))
     }
 
     pub fn reset_progress(&self) -> Result<(), ResultCode> {
@@ -239,10 +223,11 @@ impl StorageAdapter {
     }
 
     pub fn now(&self) -> Result<Timestamp, ResultCode> {
-        self.time_stmt.reset()?;
         self.time_stmt.step()?;
+        let res = Timestamp(self.time_stmt.column_int64(0));
+        self.time_stmt.reset()?;
 
-        Ok(Timestamp(self.time_stmt.column_int64(0)))
+        Ok(res)
     }
 }
 
