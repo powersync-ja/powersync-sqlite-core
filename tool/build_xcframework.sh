@@ -20,7 +20,7 @@ TARGETS=(
   x86_64-apple-watchos-sim
   arm64_32-apple-watchos
 )
-VERSION=0.4.0
+VERSION=0.4.1
 
 function generatePlist() {
   min_os_version=0
