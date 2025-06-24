@@ -120,6 +120,36 @@ void main() {
         );
       });
     });
+
+    test('raw tables', () {
+      db.execute('SELECT powersync_replace_schema(?)', [
+        json.encode({
+          'raw_tables': [
+            {
+              'name': 'users',
+              'put': {
+                'sql': 'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
+                'params': [
+                  'Id',
+                  {'Column': 'name'}
+                ],
+              },
+              'delete': {
+                'sql': 'DELETE FROM users WHERE id = ?',
+                'params': ['Id'],
+              },
+            }
+          ],
+          'tables': [],
+        })
+      ]);
+
+      expect(
+        db.select(
+            "SELECT * FROM sqlite_schema WHERE type = 'table' AND name LIKE 'ps_data%'"),
+        isEmpty,
+      );
+    });
   });
 }
 

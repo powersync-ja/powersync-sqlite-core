@@ -100,7 +100,7 @@ void _syncTests<T>({
 
   List<Object?> pushSyncData(
       String bucket, String opId, String rowId, Object op, Object? data,
-      {int checksum = 0}) {
+      {int checksum = 0, String objectType = 'items'}) {
     return syncLine({
       'data': {
         'bucket': bucket,
@@ -111,7 +111,7 @@ void _syncTests<T>({
           {
             'op_id': opId,
             'op': op,
-            'object_type': 'items',
+            'object_type': objectType,
             'object_id': rowId,
             'checksum': checksum,
             'data': json.encode(data),
@@ -682,6 +682,154 @@ void _syncTests<T>({
 
       // Should delete bucket with checksum mismatch
       expect(db.select('SELECT * FROM ps_buckets'), isEmpty);
+    });
+  });
+
+  syncTest('sets powersync_in_sync_operation', (_) {
+    var [row] = db.select('SELECT powersync_in_sync_operation() as r');
+    expect(row, {'r': 0});
+
+    var testInSyncInvocations = <bool>[];
+
+    db.createFunction(
+      functionName: 'test_in_sync',
+      function: (args) {
+        testInSyncInvocations.add((args[0] as int) != 0);
+        return null;
+      },
+      argumentCount: const AllowedArgumentCount(1),
+      directOnly: false,
+    );
+
+    db.execute('''
+CREATE TRIGGER foo AFTER INSERT ON ps_data__items BEGIN
+  SELECT test_in_sync(powersync_in_sync_operation());
+END;
+''');
+
+    // Run an insert sync iteration to start the trigger
+    invokeControl('start', null);
+    pushCheckpoint(buckets: [bucketDescription('a')]);
+    pushSyncData(
+      'a',
+      '1',
+      '1',
+      'PUT',
+      {'col': 'foo'},
+      objectType: 'items',
+    );
+    pushCheckpointComplete();
+
+    expect(testInSyncInvocations, [true]);
+
+    [row] = db.select('SELECT powersync_in_sync_operation() as r');
+    expect(row, {'r': 0});
+  });
+
+  group('raw tables', () {
+    syncTest('smoke test', (_) {
+      db.execute(
+          'CREATE TABLE users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
+
+      invokeControl(
+        'start',
+        json.encode({
+          'schema': {
+            'raw_tables': [
+              {
+                'name': 'users',
+                'put': {
+                  'sql':
+                      'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
+                  'params': [
+                    'Id',
+                    {'Column': 'name'}
+                  ],
+                },
+                'delete': {
+                  'sql': 'DELETE FROM users WHERE id = ?',
+                  'params': ['Id'],
+                },
+              }
+            ],
+            'tables': [],
+          },
+        }),
+      );
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      final users = db.select('SELECT * FROM users;');
+      expect(users, [
+        {'id': 'my_user', 'name': 'First user'}
+      ]);
+
+      // Delete
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'REMOVE',
+        null,
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('SELECT * FROM users'), isEmpty);
+    });
+
+    test("crud vtab is no-op during sync", () {
+      db.execute(
+          'CREATE TABLE users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
+
+      invokeControl(
+        'start',
+        json.encode({
+          'schema': {
+            'raw_tables': [
+              {
+                'name': 'users',
+                'put': {
+                  'sql': "INSERT INTO powersync_crud_(data) VALUES (?);",
+                  'params': [
+                    {'Column': 'name'}
+                  ],
+                },
+                'delete': {
+                  'sql': 'DELETE FROM users WHERE id = ?',
+                  'params': ['Id'],
+                },
+              }
+            ],
+            'tables': [],
+          },
+        }),
+      );
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+
+      pushCheckpointComplete();
+      expect(db.select('SELECT * FROM ps_crud'), isEmpty);
     });
   });
 }

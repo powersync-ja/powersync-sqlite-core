@@ -1,19 +1,25 @@
-use alloc::collections::BTreeSet;
+use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::Deserialize;
 
 use crate::error::{PSResult, SQLiteError};
+use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
+use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
 use sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
 use sqlite_nostd::{ColumnType, Connection, ResultCode};
 
 use crate::ext::SafeManagedStmt;
-use crate::util::{internal_table_name, quote_internal_name};
+use crate::util::quote_internal_name;
 
-pub fn sync_local<V: Value>(db: *mut sqlite::sqlite3, data: &V) -> Result<i64, SQLiteError> {
-    let mut operation = SyncOperation::from_args(db, data)?;
+pub fn sync_local<V: Value>(
+    state: &DatabaseState,
+    db: *mut sqlite::sqlite3,
+    data: &V,
+) -> Result<i64, SQLiteError> {
+    let mut operation: SyncOperation<'_> = SyncOperation::from_args(state, db, data)?;
     operation.apply()
 }
 
@@ -26,14 +32,20 @@ pub struct PartialSyncOperation<'a> {
 }
 
 pub struct SyncOperation<'a> {
+    state: &'a DatabaseState,
     db: *mut sqlite::sqlite3,
-    data_tables: BTreeSet<String>,
+    schema: ParsedDatabaseSchema<'a>,
     partial: Option<PartialSyncOperation<'a>>,
 }
 
 impl<'a> SyncOperation<'a> {
-    fn from_args<V: Value>(db: *mut sqlite::sqlite3, data: &'a V) -> Result<Self, SQLiteError> {
+    fn from_args<V: Value>(
+        state: &'a DatabaseState,
+        db: *mut sqlite::sqlite3,
+        data: &'a V,
+    ) -> Result<Self, SQLiteError> {
         Ok(Self::new(
+            state,
             db,
             match data.value_type() {
                 ColumnType::Text => {
@@ -60,12 +72,21 @@ impl<'a> SyncOperation<'a> {
         ))
     }
 
-    pub fn new(db: *mut sqlite::sqlite3, partial: Option<PartialSyncOperation<'a>>) -> Self {
+    pub fn new(
+        state: &'a DatabaseState,
+        db: *mut sqlite::sqlite3,
+        partial: Option<PartialSyncOperation<'a>>,
+    ) -> Self {
         Self {
+            state,
             db,
-            data_tables: BTreeSet::new(),
+            schema: ParsedDatabaseSchema::new(),
             partial,
         }
+    }
+
+    pub fn use_schema(&mut self, schema: &'a Schema) {
+        self.schema.add_from_schema(schema);
     }
 
     fn can_apply_sync_changes(&self) -> Result<bool, SQLiteError> {
@@ -104,6 +125,8 @@ impl<'a> SyncOperation<'a> {
     }
 
     pub fn apply(&mut self) -> Result<i64, SQLiteError> {
+        let guard = self.state.sync_local_guard();
+
         if !self.can_apply_sync_changes()? {
             return Ok(0);
         }
@@ -126,48 +149,62 @@ impl<'a> SyncOperation<'a> {
             let id = statement.column_text(1)?;
             let data = statement.column_text(2);
 
-            let table_name = internal_table_name(type_name);
-
-            if self.data_tables.contains(&table_name) {
-                let quoted = quote_internal_name(type_name, false);
-
-                // is_err() is essentially a NULL check here.
-                // NULL data means no PUT operations found, so we delete the row.
-                if data.is_err() {
-                    // DELETE
-                    if last_delete_table.as_deref() != Some(&quoted) {
-                        // Prepare statement when the table changed
-                        last_delete_statement = Some(
-                            self.db
-                                .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
-                                .into_db_result(self.db)?,
-                        );
-                        last_delete_table = Some(quoted.clone());
+            if let Some(known) = self.schema.tables.get_mut(type_name) {
+                if let Some(raw) = &mut known.raw {
+                    match data {
+                        Ok(data) => {
+                            let stmt = raw.put_statement(self.db)?;
+                            let parsed: serde_json::Value = serde_json::from_str(data)?;
+                            stmt.bind_for_put(id, &parsed)?;
+                            stmt.stmt.exec()?;
+                        }
+                        Err(_) => {
+                            let stmt = raw.delete_statement(self.db)?;
+                            stmt.bind_for_delete(id)?;
+                            stmt.stmt.exec()?;
+                        }
                     }
-                    let delete_statement = last_delete_statement.as_mut().unwrap();
-
-                    delete_statement.reset()?;
-                    delete_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
-                    delete_statement.exec()?;
                 } else {
-                    // INSERT/UPDATE
-                    if last_insert_table.as_deref() != Some(&quoted) {
-                        // Prepare statement when the table changed
-                        last_insert_statement = Some(
-                            self.db
-                                .prepare_v2(&format!(
-                                    "REPLACE INTO {}(id, data) VALUES(?, ?)",
-                                    quoted
-                                ))
-                                .into_db_result(self.db)?,
-                        );
-                        last_insert_table = Some(quoted.clone());
+                    let quoted = quote_internal_name(type_name, false);
+
+                    // is_err() is essentially a NULL check here.
+                    // NULL data means no PUT operations found, so we delete the row.
+                    if data.is_err() {
+                        // DELETE
+                        if last_delete_table.as_deref() != Some(&quoted) {
+                            // Prepare statement when the table changed
+                            last_delete_statement = Some(
+                                self.db
+                                    .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
+                                    .into_db_result(self.db)?,
+                            );
+                            last_delete_table = Some(quoted.clone());
+                        }
+                        let delete_statement = last_delete_statement.as_mut().unwrap();
+
+                        delete_statement.reset()?;
+                        delete_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
+                        delete_statement.exec()?;
+                    } else {
+                        // INSERT/UPDATE
+                        if last_insert_table.as_deref() != Some(&quoted) {
+                            // Prepare statement when the table changed
+                            last_insert_statement = Some(
+                                self.db
+                                    .prepare_v2(&format!(
+                                        "REPLACE INTO {}(id, data) VALUES(?, ?)",
+                                        quoted
+                                    ))
+                                    .into_db_result(self.db)?,
+                            );
+                            last_insert_table = Some(quoted.clone());
+                        }
+                        let insert_statement = last_insert_statement.as_mut().unwrap();
+                        insert_statement.reset()?;
+                        insert_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
+                        insert_statement.bind_text(2, data?, sqlite::Destructor::STATIC)?;
+                        insert_statement.exec()?;
                     }
-                    let insert_statement = last_insert_statement.as_mut().unwrap();
-                    insert_statement.reset()?;
-                    insert_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
-                    insert_statement.bind_text(2, data?, sqlite::Destructor::STATIC)?;
-                    insert_statement.exec()?;
                 }
             } else {
                 if data.is_err() {
@@ -210,23 +247,12 @@ impl<'a> SyncOperation<'a> {
         self.set_last_applied_op()?;
         self.mark_completed()?;
 
+        drop(guard);
         Ok(1)
     }
 
     fn collect_tables(&mut self) -> Result<(), SQLiteError> {
-        // language=SQLite
-        let statement = self
-            .db
-            .prepare_v2(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data_*'",
-            )
-            .into_db_result(self.db)?;
-
-        while statement.step()? == ResultCode::ROW {
-            let name = statement.column_text(0)?;
-            self.data_tables.insert(String::from(name));
-        }
-        Ok(())
+        self.schema.add_from_db(self.db)
     }
 
     fn collect_full_operations(&self) -> Result<ManagedStmt, SQLiteError> {
@@ -368,6 +394,189 @@ SELECT
             .into_db_result(self.db)?;
         stmt.bind_int(1, priority_code)?;
         stmt.exec()?;
+
+        Ok(())
+    }
+}
+
+struct ParsedDatabaseSchema<'a> {
+    tables: BTreeMap<String, ParsedSchemaTable<'a>>,
+}
+
+impl<'a> ParsedDatabaseSchema<'a> {
+    fn new() -> Self {
+        Self {
+            tables: BTreeMap::new(),
+        }
+    }
+
+    fn add_from_schema(&mut self, schema: &'a Schema) {
+        for raw in &schema.raw_tables {
+            self.tables
+                .insert(raw.name.clone(), ParsedSchemaTable::raw(raw));
+        }
+    }
+
+    fn add_from_db(&mut self, db: *mut sqlite::sqlite3) -> Result<(), SQLiteError> {
+        // language=SQLite
+        let statement = db
+            .prepare_v2(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data_*'",
+            )
+            .into_db_result(db)?;
+
+        while statement.step()? == ResultCode::ROW {
+            let name = statement.column_text(0)?;
+            // Strip the ps_data__ prefix so that we can lookup tables by their sync protocol name.
+            let visible_name = name.get(9..).unwrap_or(name);
+
+            // Tables which haven't been passed explicitly are assumed to not be raw tables.
+            self.tables
+                .insert(String::from(visible_name), ParsedSchemaTable::json_table());
+        }
+        Ok(())
+    }
+}
+
+struct ParsedSchemaTable<'a> {
+    raw: Option<RawTableWithCachedStatements<'a>>,
+}
+
+struct RawTableWithCachedStatements<'a> {
+    definition: &'a RawTable,
+    cached_put: Option<PreparedPendingStatement<'a>>,
+    cached_delete: Option<PreparedPendingStatement<'a>>,
+}
+
+impl<'a> RawTableWithCachedStatements<'a> {
+    fn put_statement(
+        &mut self,
+        db: *mut sqlite::sqlite3,
+    ) -> Result<&PreparedPendingStatement, SQLiteError> {
+        let cache_slot = &mut self.cached_put;
+        if let None = cache_slot {
+            let stmt = PreparedPendingStatement::prepare(db, &self.definition.put)?;
+            *cache_slot = Some(stmt);
+        }
+
+        return Ok(cache_slot.as_ref().unwrap());
+    }
+
+    fn delete_statement(
+        &mut self,
+        db: *mut sqlite::sqlite3,
+    ) -> Result<&PreparedPendingStatement, SQLiteError> {
+        let cache_slot = &mut self.cached_delete;
+        if let None = cache_slot {
+            let stmt = PreparedPendingStatement::prepare(db, &self.definition.delete)?;
+            *cache_slot = Some(stmt);
+        }
+
+        return Ok(cache_slot.as_ref().unwrap());
+    }
+}
+
+impl<'a> ParsedSchemaTable<'a> {
+    pub const fn json_table() -> Self {
+        Self { raw: None }
+    }
+
+    pub fn raw(definition: &'a RawTable) -> Self {
+        Self {
+            raw: Some(RawTableWithCachedStatements {
+                definition,
+                cached_put: None,
+                cached_delete: None,
+            }),
+        }
+    }
+}
+
+struct PreparedPendingStatement<'a> {
+    stmt: ManagedStmt,
+    params: &'a [PendingStatementValue],
+}
+
+impl<'a> PreparedPendingStatement<'a> {
+    pub fn prepare(
+        db: *mut sqlite::sqlite3,
+        pending: &'a PendingStatement,
+    ) -> Result<Self, SQLiteError> {
+        let stmt = db.prepare_v2(&pending.sql)?;
+        if stmt.bind_parameter_count() as usize != pending.params.len() {
+            return Err(SQLiteError(
+                ResultCode::MISUSE,
+                Some(format!(
+                    "Statement {} has {} parameters, but {} values were provided as sources.",
+                    &pending.sql,
+                    stmt.bind_parameter_count(),
+                    pending.params.len(),
+                )),
+            ));
+        }
+
+        // TODO: Compare number of variables / other validity checks?
+
+        Ok(Self {
+            stmt,
+            params: &pending.params,
+        })
+    }
+
+    pub fn bind_for_put(&self, id: &str, json_data: &serde_json::Value) -> Result<(), SQLiteError> {
+        use serde_json::Value;
+        for (i, source) in self.params.iter().enumerate() {
+            let i = (i + 1) as i32;
+
+            match source {
+                PendingStatementValue::Id => {
+                    self.stmt.bind_text(i, id, Destructor::STATIC)?;
+                }
+                PendingStatementValue::Column(column) => {
+                    let parsed = json_data.as_object().ok_or_else(|| {
+                        SQLiteError(
+                            ResultCode::CONSTRAINT_DATATYPE,
+                            Some("expected oplog data to be an object".to_string()),
+                        )
+                    })?;
+
+                    match parsed.get(column) {
+                        Some(Value::Bool(value)) => {
+                            self.stmt.bind_int(i, if *value { 1 } else { 0 })
+                        }
+                        Some(Value::Number(value)) => {
+                            if let Some(value) = value.as_f64() {
+                                self.stmt.bind_double(i, value)
+                            } else if let Some(value) = value.as_u64() {
+                                self.stmt.bind_int64(i, value as i64)
+                            } else {
+                                self.stmt.bind_int64(i, value.as_i64().unwrap())
+                            }
+                        }
+                        Some(Value::String(source)) => {
+                            self.stmt.bind_text(i, &source, Destructor::STATIC)
+                        }
+                        _ => self.stmt.bind_null(i),
+                    }?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn bind_for_delete(&self, id: &str) -> Result<(), SQLiteError> {
+        for (i, source) in self.params.iter().enumerate() {
+            if let PendingStatementValue::Id = source {
+                self.stmt
+                    .bind_text((i + 1) as i32, id, Destructor::STATIC)?;
+            } else {
+                return Err(SQLiteError(
+                    ResultCode::MISUSE,
+                    Some("Raw delete statement parameters must only reference id".to_string()),
+                ));
+            }
+        }
 
         Ok(())
     }

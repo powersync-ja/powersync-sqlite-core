@@ -19,6 +19,13 @@ pub struct Table {
     pub flags: TableInfoFlags,
 }
 
+#[derive(Deserialize)]
+pub struct RawTable {
+    pub name: String,
+    pub put: PendingStatement,
+    pub delete: PendingStatement,
+}
+
 impl Table {
     pub fn from_json(text: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(text)
@@ -228,4 +235,18 @@ impl<'de> Deserialize<'de> for TableInfoFlags {
             FlagsVisitor,
         )
     }
+}
+
+#[derive(Deserialize)]
+pub struct PendingStatement {
+    pub sql: String,
+    /// This vec should contain an entry for each parameter in [sql].
+    pub params: Vec<PendingStatementValue>,
+}
+
+#[derive(Deserialize)]
+pub enum PendingStatementValue {
+    Id,
+    Column(String),
+    // TODO: Stuff like a raw object of put data?
 }
