@@ -1,7 +1,6 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::string::String;
 use alloc::sync::Arc;
 use const_format::formatcp;
 use core::ffi::{c_char, c_int, c_void, CStr};
@@ -86,7 +85,7 @@ impl VirtualTable {
         let current_tx = self
             .current_tx
             .as_mut()
-            .ok_or_else(|| SQLiteError(ResultCode::MISUSE, Some(String::from("No tx_id"))))?;
+            .ok_or_else(|| SQLiteError::misuse("No tx_id"))?;
         let db = self.db;
 
         if self.state.is_in_sync_local.load(Ordering::Relaxed) {

@@ -1,6 +1,5 @@
 extern crate alloc;
 
-use alloc::format;
 use alloc::string::{String, ToString};
 use core::ffi::c_int;
 
@@ -30,9 +29,9 @@ pub fn client_id(db: *mut sqlite::sqlite3) -> Result<String, SQLiteError> {
         let client_id = statement.column_text(0)?;
         Ok(client_id.to_string())
     } else {
-        Err(SQLiteError(
+        Err(SQLiteError::with_description(
             ResultCode::ABORT,
-            Some(format!("No client_id found in ps_kv")),
+            "No client_id found in ps_kv",
         ))
     }
 }

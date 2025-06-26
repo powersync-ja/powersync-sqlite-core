@@ -4,7 +4,6 @@ use core::ffi::{c_int, c_void};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
-use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
@@ -141,10 +140,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
             };
 
             if op.value_type() != ColumnType::Text {
-                return Err(SQLiteError(
-                    ResultCode::MISUSE,
-                    Some("First argument must be a string".to_string()),
-                ));
+                return Err(SQLiteError::misuse("First argument must be a string"));
             }
 
             let op = op.text();
@@ -161,29 +157,20 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
                     data: if payload.value_type() == ColumnType::Text {
                         payload.text()
                     } else {
-                        return Err(SQLiteError(
-                            ResultCode::MISUSE,
-                            Some("Second argument must be a string".to_string()),
-                        ));
+                        return Err(SQLiteError::misuse("Second argument must be a string"));
                     },
                 }),
                 "line_binary" => SyncControlRequest::SyncEvent(SyncEvent::BinaryLine {
                     data: if payload.value_type() == ColumnType::Blob {
                         payload.blob()
                     } else {
-                        return Err(SQLiteError(
-                            ResultCode::MISUSE,
-                            Some("Second argument must be a byte array".to_string()),
-                        ));
+                        return Err(SQLiteError::misuse("Second argument must be a byte array"));
                     },
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
                 "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
                 _ => {
-                    return Err(SQLiteError(
-                        ResultCode::MISUSE,
-                        Some("Unknown operation".to_string()),
-                    ))
+                    return Err(SQLiteError::misuse("Unknown operation"));
                 }
             };
 

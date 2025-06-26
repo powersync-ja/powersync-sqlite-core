@@ -71,10 +71,7 @@ impl SyncClient {
                 let mut active = ActiveEvent::new(sync_event);
 
                 let ClientState::IterationActive(handle) = &mut self.state else {
-                    return Err(SQLiteError(
-                        ResultCode::MISUSE,
-                        Some("No iteration is active".to_string()),
-                    ));
+                    return Err(SQLiteError::misuse("No iteration is active"));
                 };
 
                 match handle.run(&mut active) {
@@ -308,11 +305,9 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointDiff(diff) => {
                     let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(SQLiteError(
+                        return Err(SQLiteError::with_description(
                             ResultCode::ABORT,
-                            Some(
-                                "Received checkpoint_diff without previous checkpoint".to_string(),
-                            ),
+                            "Received checkpoint_diff without previous checkpoint",
                         ));
                     };
 
@@ -329,12 +324,9 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointComplete(_) => {
                     let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(SQLiteError(
+                        return Err(SQLiteError::with_description(
                             ResultCode::ABORT,
-                            Some(
-                                "Received checkpoint complete without previous checkpoint"
-                                    .to_string(),
-                            ),
+                            "Received checkpoint complete without previous checkpoint",
                         ));
                     };
                     let result =
@@ -374,12 +366,9 @@ impl StreamingSyncIteration {
                 SyncLine::CheckpointPartiallyComplete(complete) => {
                     let priority = complete.priority;
                     let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(SQLiteError(
+                        return Err(SQLiteError::with_description(
                             ResultCode::ABORT,
-                            Some(
-                                "Received checkpoint complete without previous checkpoint"
-                                    .to_string(),
-                            ),
+                            "Received checkpoint complete without previous checkpoint",
                         ));
                     };
                     let result = self.adapter.sync_local(
