@@ -1,4 +1,5 @@
 use alloc::{
+    borrow::Cow,
     format,
     string::{String, ToString},
 };
@@ -8,11 +9,25 @@ use sqlite_nostd::{context, sqlite3, Connection, Context, ResultCode};
 use crate::bson::BsonError;
 
 #[derive(Debug)]
-pub struct SQLiteError(pub ResultCode, pub Option<String>);
+pub struct SQLiteError(pub ResultCode, pub Option<Cow<'static, str>>);
+
+impl SQLiteError {
+    pub fn with_description(code: ResultCode, message: impl Into<Cow<'static, str>>) -> Self {
+        Self(code, Some(message.into()))
+    }
+
+    pub fn misuse(message: impl Into<Cow<'static, str>>) -> Self {
+        Self::with_description(ResultCode::MISUSE, message)
+    }
+}
 
 impl core::fmt::Display for SQLiteError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "SQLiteError: {:?}", self.0)?;
+        if let Some(desc) = &self.1 {
+            write!(f, ", desc: {}", desc)?;
+        }
+        Ok(())
     }
 }
 
@@ -20,8 +35,8 @@ impl SQLiteError {
     pub fn apply_to_ctx(self, description: &str, ctx: *mut context) {
         let SQLiteError(code, message) = self;
 
-        if message.is_some() {
-            ctx.result_error(&format!("{:} {:}", description, message.unwrap()));
+        if let Some(msg) = message {
+            ctx.result_error(&format!("{:} {:}", description, msg));
         } else {
             let error = ctx.db_handle().errmsg().unwrap();
             if error == "not an error" {
@@ -47,7 +62,7 @@ impl<T> PSResult<T> for Result<T, ResultCode> {
             if message == "not an error" {
                 Err(SQLiteError(code, None))
             } else {
-                Err(SQLiteError(code, Some(message)))
+                Err(SQLiteError(code, Some(message.into())))
             }
         } else if let Ok(r) = self {
             Ok(r)
@@ -65,18 +80,18 @@ impl From<ResultCode> for SQLiteError {
 
 impl From<serde_json::Error> for SQLiteError {
     fn from(value: serde_json::Error) -> Self {
-        SQLiteError(ResultCode::ABORT, Some(value.to_string()))
+        SQLiteError::with_description(ResultCode::ABORT, value.to_string())
     }
 }
 
 impl From<core::fmt::Error> for SQLiteError {
     fn from(value: core::fmt::Error) -> Self {
-        SQLiteError(ResultCode::INTERNAL, Some(format!("{}", value)))
+        SQLiteError::with_description(ResultCode::INTERNAL, format!("{}", value))
     }
 }
 
 impl From<BsonError> for SQLiteError {
     fn from(value: BsonError) -> Self {
-        SQLiteError(ResultCode::ERROR, Some(value.to_string()))
+        SQLiteError::with_description(ResultCode::ERROR, value.to_string())
     }
 }

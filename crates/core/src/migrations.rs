@@ -55,16 +55,16 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         for sql in down_sql {
             let rs = local_db.exec_safe(&sql);
             if let Err(code) = rs {
-                return Err(SQLiteError(
+                return Err(SQLiteError::with_description(
                     code,
-                    Some(format!(
+                    format!(
                         "Down migration failed for {:} {:} {:}",
                         current_version,
                         sql,
                         local_db
                             .errmsg()
                             .unwrap_or(String::from("Conversion error"))
-                    )),
+                    ),
                 ));
             }
         }
@@ -73,20 +73,20 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         current_version_stmt.reset()?;
         let rc = current_version_stmt.step()?;
         if rc != ResultCode::ROW {
-            return Err(SQLiteError(
+            return Err(SQLiteError::with_description(
                 rc,
-                Some("Down migration failed - could not get version".to_string()),
+                "Down migration failed - could not get version",
             ));
         }
         let new_version = current_version_stmt.column_int(0);
         if new_version >= current_version {
             // Database down from version $currentVersion to $version failed - version not updated after dow migration
-            return Err(SQLiteError(
+            return Err(SQLiteError::with_description(
                 ResultCode::ABORT,
-                Some(format!(
+                format!(
                     "Down migration failed - version not updated from {:}",
                     current_version
-                )),
+                ),
             ));
         }
         current_version = new_version;

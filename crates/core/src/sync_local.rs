@@ -1,6 +1,6 @@
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
 
@@ -504,15 +504,12 @@ impl<'a> PreparedPendingStatement<'a> {
     ) -> Result<Self, SQLiteError> {
         let stmt = db.prepare_v2(&pending.sql)?;
         if stmt.bind_parameter_count() as usize != pending.params.len() {
-            return Err(SQLiteError(
-                ResultCode::MISUSE,
-                Some(format!(
-                    "Statement {} has {} parameters, but {} values were provided as sources.",
-                    &pending.sql,
-                    stmt.bind_parameter_count(),
-                    pending.params.len(),
-                )),
-            ));
+            return Err(SQLiteError::misuse(format!(
+                "Statement {} has {} parameters, but {} values were provided as sources.",
+                &pending.sql,
+                stmt.bind_parameter_count(),
+                pending.params.len(),
+            )));
         }
 
         // TODO: Compare number of variables / other validity checks?
@@ -534,9 +531,9 @@ impl<'a> PreparedPendingStatement<'a> {
                 }
                 PendingStatementValue::Column(column) => {
                     let parsed = json_data.as_object().ok_or_else(|| {
-                        SQLiteError(
+                        SQLiteError::with_description(
                             ResultCode::CONSTRAINT_DATATYPE,
-                            Some("expected oplog data to be an object".to_string()),
+                            "expected oplog data to be an object",
                         )
                     })?;
 
@@ -571,9 +568,8 @@ impl<'a> PreparedPendingStatement<'a> {
                 self.stmt
                     .bind_text((i + 1) as i32, id, Destructor::STATIC)?;
             } else {
-                return Err(SQLiteError(
-                    ResultCode::MISUSE,
-                    Some("Raw delete statement parameters must only reference id".to_string()),
+                return Err(SQLiteError::misuse(
+                    "Raw delete statement parameters must only reference id",
                 ));
             }
         }
