@@ -23,7 +23,7 @@ const_format = "0.2.34"
 futures-lite = { version = "2.6.0", default-features = false, features = ["alloc"] }
 rustc-hash = { version = "2.1", default-features = false }
 streaming-iterator = { version = "0.1.9", default-features = false, features = ["alloc"] }
-zstd-safe = { version = "7.2.4" }
+zstd-safe = { version = "7.2.4", default-features = false }
 
 [dependencies.uuid]
 version = "1.4.1"
