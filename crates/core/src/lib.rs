@@ -34,6 +34,7 @@ mod version;
 mod view_admin;
 mod views;
 mod vtab_util;
+mod zstd;
 
 #[no_mangle]
 pub extern "C" fn sqlite3_powersync_init(
@@ -62,6 +63,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     crate::view_admin::register(db)?;
     crate::checkpoint::register(db)?;
     crate::kv::register(db)?;
+    crate::zstd::register(db)?;
     sync::register(db)?;
 
     crate::schema::register(db)?;
