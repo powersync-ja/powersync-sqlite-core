@@ -12,7 +12,7 @@ use crate::error::{PSResult, SQLiteError};
 use crate::fix_data::apply_v035_fix;
 use crate::sync::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 10;
+pub const LATEST_VERSION: i32 = 11;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -384,6 +384,35 @@ INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
         ",
             )
             .into_db_result(local_db)?;
+    }
+
+    if current_version < 11 && target_version >= 11 {
+        let stmt = "\
+CREATE TABLE ps_oplog_new(
+  bucket INTEGER NOT NULL,
+  op_id INTEGER NOT NULL,
+  row_type TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  subkey TEXT NOT NULL,
+  data TEXT,
+  hash INTEGER NOT NULL) STRICT;
+
+INSERT INTO ps_oplog_new (bucket, op_id, row_type, row_id, subkey, data, hash)
+SELECT bucket, op_id, row_type, row_id, null, data, hash FROM ps_oplog;
+
+DROP TABLE ps_oplog;
+ALTER TABLE ps_oplog_new RENAME TO ps_oplog;
+
+CREATE INDEX ps_oplog_row ON ps_oplog (row_type, row_id);
+CREATE INDEX ps_oplog_opid ON ps_oplog (bucket, op_id);
+CREATE INDEX ps_oplog_key ON ps_oplog (bucket, row_type, row_id, subkey);
+
+INSERT INTO ps_migration(id, down_migrations) VALUES(11, json_array(
+  json_object('sql', 'DELETE FROM ps_migration WHERE id >= 11')
+));
+";
+
+        local_db.exec_safe(stmt).into_db_result(local_db)?;
     }
 
     Ok(())

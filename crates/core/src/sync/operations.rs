@@ -38,14 +38,16 @@ pub fn insert_bucket_operations(
         "\
 DELETE FROM ps_oplog
     WHERE unlikely(ps_oplog.bucket = ?1)
-    AND ps_oplog.key = ?2
+    AND ps_oplog.row_type = ?2
+    AND ps_oplog.row_id = ?3
+    AND ps_oplog.subkey = ?4
 RETURNING op_id, hash",
     )?;
     supersede_statement.bind_int64(1, bucket_id)?;
 
     // language=SQLite
     let insert_statement = db.prepare_v2("\
-INSERT INTO ps_oplog(bucket, op_id, key, row_type, row_id, data, hash) VALUES (?, ?, ?, ?, ?, ?, ?)")?;
+INSERT INTO ps_oplog(bucket, op_id, subkey, row_type, row_id, data, hash) VALUES (?, ?, ?, ?, ?, ?, ?)")?;
     insert_statement.bind_int64(1, bucket_id)?;
 
     let updated_row_statement = db.prepare_v2(
@@ -70,15 +72,25 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
         added_ops += 1;
 
         if op == OpType::PUT || op == OpType::REMOVE {
-            let key: String;
-            if let (Some(object_type), Some(object_id)) = (object_type, object_id) {
-                let subkey = line.subkey.as_ref().map(|i| &**i).unwrap_or("null");
-                key = format!("{}/{}/{}", &object_type, &object_id, subkey);
+            let subkey = line.subkey.as_ref().map(|i| &**i);
+
+            if let Some(subkey) = subkey {
+                supersede_statement.bind_text(4, &subkey, sqlite::Destructor::STATIC)?;
             } else {
-                key = String::from("");
+                supersede_statement.bind_text(4, "", sqlite::Destructor::STATIC)?;
             }
 
-            supersede_statement.bind_text(2, &key, sqlite::Destructor::STATIC)?;
+            if let Some(object_type) = object_type {
+                supersede_statement.bind_text(2, &object_type, sqlite::Destructor::STATIC)?;
+            } else {
+                supersede_statement.bind_text(2, "", sqlite::Destructor::STATIC)?;
+            }
+
+            if let Some(object_id) = object_id {
+                supersede_statement.bind_text(3, &object_id, sqlite::Destructor::STATIC)?;
+            } else {
+                supersede_statement.bind_text(3, "", sqlite::Destructor::STATIC)?;
+            }
 
             let mut superseded = false;
 
@@ -124,10 +136,10 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
             }
 
             insert_statement.bind_int64(2, op_id)?;
-            if key != "" {
-                insert_statement.bind_text(3, &key, sqlite::Destructor::STATIC)?;
+            if let Some(subkey) = subkey {
+                insert_statement.bind_text(3, &subkey, sqlite::Destructor::STATIC)?;
             } else {
-                insert_statement.bind_null(3)?;
+                insert_statement.bind_text(3, "", sqlite::Destructor::STATIC)?;
             }
 
             if let (Some(object_type), Some(object_id)) = (object_type, object_id) {
