@@ -17,7 +17,7 @@ use futures_lite::FutureExt;
 
 use crate::{
     bson,
-    error::PowerSyncError,
+    error::{PowerSyncError, RawPowerSyncError},
     kv::client_id,
     state::DatabaseState,
     sync::{checkpoint::OwnedBucketChecksum, interface::StartSyncStream},
@@ -249,8 +249,18 @@ impl StreamingSyncIteration {
                         .update(|s| s.disconnect(), &mut event.instructions);
                     break;
                 }
-                SyncEvent::TextLine { data } => serde_json::from_str(data)?,
-                SyncEvent::BinaryLine { data } => bson::from_bytes(data)?,
+                SyncEvent::TextLine { data } => serde_json::from_str(data).map_err(|e| {
+                    PowerSyncError::from(RawPowerSyncError::SyncProtocolError {
+                        desc: "invalid text line",
+                        cause: e.into(),
+                    })
+                })?,
+                SyncEvent::BinaryLine { data } => bson::from_bytes(data).map_err(|e| {
+                    PowerSyncError::from(RawPowerSyncError::SyncProtocolError {
+                        desc: "invalid binary line",
+                        cause: e.into(),
+                    })
+                })?,
                 SyncEvent::UploadFinished => {
                     if let Some(checkpoint) = validated_but_not_applied.take() {
                         let result = self.adapter.sync_local(

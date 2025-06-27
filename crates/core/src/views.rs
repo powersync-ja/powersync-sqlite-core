@@ -11,7 +11,7 @@ use sqlite::{Connection, Context, ResultCode, Value};
 use sqlite_nostd::{self as sqlite};
 
 use crate::create_sqlite_text_fn;
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 use crate::schema::{DiffIncludeOld, Table};
 use crate::util::*;
 
@@ -19,7 +19,8 @@ fn powersync_view_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let table_info = Table::from_json(args[0].text())?;
+    let table_info =
+        Table::from_json(args[0].text()).map_err(PowerSyncError::json_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -72,7 +73,8 @@ fn powersync_trigger_delete_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let table_info = Table::from_json(args[0].text())?;
+    let table_info =
+        Table::from_json(args[0].text()).map_err(PowerSyncError::json_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -162,7 +164,8 @@ fn powersync_trigger_insert_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let table_info = Table::from_json(args[0].text())?;
+    let table_info =
+        Table::from_json(args[0].text()).map_err(PowerSyncError::json_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -235,7 +238,8 @@ fn powersync_trigger_update_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let table_info = Table::from_json(args[0].text())?;
+    let table_info =
+        Table::from_json(args[0].text()).map_err(PowerSyncError::json_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -421,7 +425,9 @@ fn json_object_fragment<'a>(
 
     // SQLITE_MAX_COLUMN - 1 (because of the id column)
     if column_names_quoted.len() > 1999 {
-        return Err(RawPowerSyncError::JsonObjectTooBig.into());
+        return Err(PowerSyncError::argument_error(
+            "too many parameters to json_object_fragment",
+        ));
     } else if column_names_quoted.len() <= MAX_ARG_COUNT {
         // Small number of columns - use json_object() directly.
         let json_fragment = column_names_quoted.join(", ");

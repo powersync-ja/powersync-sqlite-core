@@ -8,7 +8,7 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 use crate::fix_data::apply_v035_fix;
 use crate::sync::BucketPriority;
 
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         local_db.prepare_v2("SELECT ifnull(max(id), 0) as version FROM ps_migration")?;
     let rc = current_version_stmt.step()?;
     if rc != ResultCode::ROW {
-        return Err(PowerSyncError::from(RawPowerSyncError::Internal));
+        return Err(PowerSyncError::unknown_internal());
     }
 
     let mut current_version = current_version_stmt.column_int(0);

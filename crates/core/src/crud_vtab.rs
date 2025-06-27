@@ -12,7 +12,7 @@ use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd::ManagedStmt;
 use sqlite_nostd::{self as sqlite, ColumnType};
 
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
 use crate::state::DatabaseState;
@@ -85,7 +85,7 @@ impl VirtualTable {
         let current_tx = self
             .current_tx
             .as_mut()
-            .ok_or_else(|| PowerSyncError::from(RawPowerSyncError::CrudVtabOutsideOfTransaction))?;
+            .ok_or_else(|| PowerSyncError::state_error("Not in tx"))?;
         let db = self.db;
 
         if self.state.is_in_sync_local.load(Ordering::Relaxed) {
@@ -162,7 +162,8 @@ impl VirtualTable {
                     } else {
                         None
                     },
-                })?;
+                })
+                .map_err(PowerSyncError::internal)?;
                 stmt.bind_text(2, &serialized, sqlite::Destructor::STATIC)?;
                 stmt.exec()?;
 
@@ -187,7 +188,7 @@ impl VirtualTable {
         let tx_id = if statement.step()? == ResultCode::ROW {
             statement.column_int64(0) - 1
         } else {
-            return Err(PowerSyncError::from(RawPowerSyncError::Internal));
+            return Err(PowerSyncError::unknown_internal());
         };
 
         self.current_tx = Some(ActiveCrudTransaction {

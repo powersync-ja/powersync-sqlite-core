@@ -10,7 +10,7 @@ use sqlite_nostd::{Connection, Context, Value};
 use serde_json as json;
 
 use crate::create_sqlite_text_fn;
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 
 fn powersync_diff_impl(
     _ctx: *mut sqlite::context,
@@ -23,8 +23,10 @@ fn powersync_diff_impl(
 }
 
 pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, PowerSyncError> {
-    let v_new: json::Value = json::from_str(data_new)?;
-    let v_old: json::Value = json::from_str(data_old)?;
+    let v_new: json::Value =
+        json::from_str(data_new).map_err(PowerSyncError::json_argument_error)?;
+    let v_old: json::Value =
+        json::from_str(data_old).map_err(PowerSyncError::json_argument_error)?;
 
     if let (json::Value::Object(mut left), json::Value::Object(mut right)) = (v_new, v_old) {
         // Remove all null values
@@ -56,7 +58,7 @@ pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, PowerSyncE
 
         Ok(json::Value::Object(left).to_string())
     } else {
-        Err(RawPowerSyncError::ExpectedJsonObject.into())
+        return Err(PowerSyncError::argument_error("expected two JSON objects"));
     }
 }
 

@@ -192,7 +192,8 @@ impl StorageAdapter {
                 };
 
                 // TODO: Avoid this serialization, it's currently used to bind JSON SQL parameters.
-                let serialized_args = serde_json::to_string(&args)?;
+                let serialized_args =
+                    serde_json::to_string(&args).map_err(PowerSyncError::internal)?;
                 let mut sync = SyncOperation::new(
                     state,
                     self.db,

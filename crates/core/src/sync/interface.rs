@@ -11,7 +11,7 @@ use sqlite::{ResultCode, Value};
 use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
 
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
 
@@ -132,12 +132,12 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
             debug_assert!(!ctx.db_handle().get_autocommit());
 
             let controller = unsafe { ctx.user_data().cast::<SqlController>().as_mut() }
-                .ok_or_else(|| PowerSyncError::from(RawPowerSyncError::Internal))?;
+                .ok_or_else(|| PowerSyncError::unknown_internal())?;
 
             let args = sqlite::args!(argc, argv);
             let [op, payload] = args else {
                 // This should be unreachable, we register the function with two arguments.
-                return Err(PowerSyncError::from(RawPowerSyncError::Internal));
+                return Err(PowerSyncError::unknown_internal());
             };
 
             if op.value_type() != ColumnType::Text {
@@ -150,7 +150,8 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
             let event = match op {
                 "start" => SyncControlRequest::StartSyncStream({
                     if payload.value_type() == ColumnType::Text {
-                        serde_json::from_str(payload.text())?
+                        serde_json::from_str(payload.text())
+                            .map_err(PowerSyncError::json_argument_error)?
                     } else {
                         StartSyncStream::default()
                     }
@@ -182,7 +183,8 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
             };
 
             let instructions = controller.client.push_event(event)?;
-            let formatted = serde_json::to_string(&instructions)?;
+            let formatted =
+                serde_json::to_string(&instructions).map_err(PowerSyncError::internal)?;
             ctx.result_text_transient(&formatted);
 
             Ok(())
