@@ -26,7 +26,8 @@ fn powersync_validate_checkpoint_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let data = args[0].text();
-    let checkpoint: Checkpoint = serde_json::from_str(data)?;
+    let checkpoint: Checkpoint =
+        serde_json::from_str(data).map_err(PowerSyncError::json_argument_error)?;
     let db = ctx.db_handle();
     let buckets: Vec<OwnedBucketChecksum> = checkpoint
         .buckets
@@ -45,7 +46,7 @@ fn powersync_validate_checkpoint_impl(
         failed_buckets: failed_buckets,
     };
 
-    Ok(json::to_string(&result)?)
+    Ok(json::to_string(&result).map_err(PowerSyncError::internal)?)
 }
 
 create_sqlite_text_fn!(

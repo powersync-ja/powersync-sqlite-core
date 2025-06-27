@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
@@ -19,7 +19,8 @@ pub fn sync_local<V: Value>(
     db: *mut sqlite::sqlite3,
     data: &V,
 ) -> Result<i64, PowerSyncError> {
-    let mut operation: SyncOperation<'_> = SyncOperation::from_args(state, db, data)?;
+    let mut operation: SyncOperation<'_> =
+        SyncOperation::from_args(state, db, data).map_err(PowerSyncError::json_argument_error)?;
     operation.apply()
 }
 
@@ -108,7 +109,7 @@ impl<'a> SyncOperation<'a> {
             )?;
 
             if statement.step()? != ResultCode::ROW {
-                return Err(RawPowerSyncError::Internal.into());
+                return Err(PowerSyncError::unknown_internal());
             }
 
             if statement.column_type(0)? == ColumnType::Text {
@@ -154,7 +155,8 @@ impl<'a> SyncOperation<'a> {
                     match data {
                         Ok(data) => {
                             let stmt = raw.put_statement(self.db)?;
-                            let parsed: serde_json::Value = serde_json::from_str(data)?;
+                            let parsed: serde_json::Value = serde_json::from_str(data)
+                                .map_err(PowerSyncError::json_local_error)?;
                             stmt.bind_for_put(id, &parsed)?;
                             stmt.stmt.exec()?;
                         }
@@ -480,16 +482,12 @@ impl<'a> PreparedPendingStatement<'a> {
     ) -> Result<Self, PowerSyncError> {
         let stmt = db.prepare_v2(&pending.sql)?;
         if stmt.bind_parameter_count() as usize != pending.params.len() {
-            return Err(RawPowerSyncError::InvalidPendingStatement {
-                description: format!(
-                    "Statement {} has {} parameters, but {} values were provided as sources.",
-                    &pending.sql,
-                    stmt.bind_parameter_count(),
-                    pending.params.len(),
-                )
-                .into(),
-            }
-            .into());
+            return Err(PowerSyncError::argument_error(format!(
+                "Statement {} has {} parameters, but {} values were provided as sources.",
+                &pending.sql,
+                stmt.bind_parameter_count(),
+                pending.params.len(),
+            )));
         }
 
         // TODO: other validity checks?
@@ -549,10 +547,9 @@ impl<'a> PreparedPendingStatement<'a> {
                 self.stmt
                     .bind_text((i + 1) as i32, id, Destructor::STATIC)?;
             } else {
-                return Err(RawPowerSyncError::InvalidPendingStatement {
-                    description: "Raw delete statement parameters must only reference id".into(),
-                }
-                .into());
+                return Err(PowerSyncError::argument_error(
+                    "Raw delete statement parameters must only reference id",
+                ));
             }
         }
 

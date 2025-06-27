@@ -8,7 +8,7 @@ use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context, Value};
 
 use crate::create_sqlite_text_fn;
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 
 /// Given any number of JSON TEXT arguments, merge them into a single JSON object.
 ///
@@ -25,7 +25,7 @@ fn powersync_json_merge_impl(
     for arg in args {
         let chunk = arg.text();
         if chunk.is_empty() || !chunk.starts_with('{') || !chunk.ends_with('}') {
-            return Err(RawPowerSyncError::ExpectedJsonObject.into());
+            return Err(PowerSyncError::argument_error("Expected json object"));
         }
 
         // Strip outer braces
