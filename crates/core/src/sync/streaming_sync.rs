@@ -17,7 +17,7 @@ use futures_lite::FutureExt;
 
 use crate::{
     bson,
-    error::SQLiteError,
+    error::PowerSyncError,
     kv::client_id,
     state::DatabaseState,
     sync::{checkpoint::OwnedBucketChecksum, interface::StartSyncStream},
@@ -56,7 +56,7 @@ impl SyncClient {
     pub fn push_event<'a>(
         &mut self,
         event: SyncControlRequest<'a>,
-    ) -> Result<Vec<Instruction>, SQLiteError> {
+    ) -> Result<Vec<Instruction>, PowerSyncError> {
         match event {
             SyncControlRequest::StartSyncStream(options) => {
                 self.state.tear_down()?;
@@ -71,7 +71,7 @@ impl SyncClient {
                 let mut active = ActiveEvent::new(sync_event);
 
                 let ClientState::IterationActive(handle) = &mut self.state else {
-                    return Err(SQLiteError::misuse("No iteration is active"));
+                    return Err(PowerSyncError::state_error("No iteration is active"));
                 };
 
                 match handle.run(&mut active) {
@@ -101,7 +101,7 @@ enum ClientState {
 }
 
 impl ClientState {
-    fn tear_down(&mut self) -> Result<Vec<Instruction>, SQLiteError> {
+    fn tear_down(&mut self) -> Result<Vec<Instruction>, PowerSyncError> {
         let mut event = ActiveEvent::new(SyncEvent::TearDown);
 
         if let ClientState::IterationActive(old) = self {
@@ -120,7 +120,7 @@ impl ClientState {
 /// At each invocation, the future is polled once (and gets access to context that allows it to
 /// render [Instruction]s to return from the function).
 struct SyncIterationHandle {
-    future: Pin<Box<dyn Future<Output = Result<(), SQLiteError>>>>,
+    future: Pin<Box<dyn Future<Output = Result<(), PowerSyncError>>>>,
 }
 
 impl SyncIterationHandle {
@@ -145,7 +145,7 @@ impl SyncIterationHandle {
 
     /// Forwards a [SyncEvent::Initialize] to the current sync iteration, returning the initial
     /// instructions generated.
-    fn initialize(&mut self) -> Result<Vec<Instruction>, SQLiteError> {
+    fn initialize(&mut self) -> Result<Vec<Instruction>, PowerSyncError> {
         let mut event = ActiveEvent::new(SyncEvent::Initialize);
         let result = self.run(&mut event)?;
         assert!(!result, "Stream client aborted initialization");
@@ -153,7 +153,7 @@ impl SyncIterationHandle {
         Ok(event.instructions)
     }
 
-    fn run(&mut self, active: &mut ActiveEvent) -> Result<bool, SQLiteError> {
+    fn run(&mut self, active: &mut ActiveEvent) -> Result<bool, PowerSyncError> {
         // Using a noop waker because the only event thing StreamingSyncIteration::run polls on is
         // the next incoming sync event.
         let waker = unsafe {
@@ -229,7 +229,7 @@ impl StreamingSyncIteration {
         Wait { a: PhantomData }
     }
 
-    async fn run(mut self) -> Result<(), SQLiteError> {
+    async fn run(mut self) -> Result<(), PowerSyncError> {
         let mut target = SyncTarget::BeforeCheckpoint(self.prepare_request().await?);
 
         // A checkpoint that has been fully received and validated, but couldn't be applied due to
@@ -305,8 +305,7 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointDiff(diff) => {
                     let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(SQLiteError::with_description(
-                            ResultCode::ABORT,
+                        return Err(PowerSyncError::argument_error(
                             "Received checkpoint_diff without previous checkpoint",
                         ));
                     };
@@ -324,8 +323,7 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointComplete(_) => {
                     let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(SQLiteError::with_description(
-                            ResultCode::ABORT,
+                        return Err(PowerSyncError::argument_error(
                             "Received checkpoint complete without previous checkpoint",
                         ));
                     };
@@ -366,8 +364,7 @@ impl StreamingSyncIteration {
                 SyncLine::CheckpointPartiallyComplete(complete) => {
                     let priority = complete.priority;
                     let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(SQLiteError::with_description(
-                            ResultCode::ABORT,
+                        return Err(PowerSyncError::state_error(
                             "Received checkpoint complete without previous checkpoint",
                         ));
                     };
@@ -437,7 +434,7 @@ impl StreamingSyncIteration {
     fn load_progress(
         &self,
         checkpoint: &OwnedCheckpoint,
-    ) -> Result<SyncDownloadProgress, SQLiteError> {
+    ) -> Result<SyncDownloadProgress, PowerSyncError> {
         let SyncProgressFromCheckpoint {
             progress,
             needs_counter_reset,
@@ -454,10 +451,12 @@ impl StreamingSyncIteration {
     ///
     /// This prepares a [StreamingSyncRequest] by fetching local sync state and the requested bucket
     /// parameters.
-    async fn prepare_request(&mut self) -> Result<Vec<String>, SQLiteError> {
+    async fn prepare_request(&mut self) -> Result<Vec<String>, PowerSyncError> {
         let event = Self::receive_event().await;
         let SyncEvent::Initialize = event.event else {
-            return Err(SQLiteError::from(ResultCode::MISUSE));
+            return Err(PowerSyncError::argument_error(
+                "first event must initialize",
+            ));
         };
 
         self.status

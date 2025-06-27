@@ -11,7 +11,7 @@ use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context, Value};
 
 use crate::create_sqlite_text_fn;
-use crate::error::SQLiteError;
+use crate::error::PowerSyncError;
 use crate::sync::checkpoint::{validate_checkpoint, OwnedBucketChecksum};
 use crate::sync::line::Checkpoint;
 
@@ -24,7 +24,7 @@ struct CheckpointResult {
 fn powersync_validate_checkpoint_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     let data = args[0].text();
     let checkpoint: Checkpoint = serde_json::from_str(data)?;
     let db = ctx.db_handle();

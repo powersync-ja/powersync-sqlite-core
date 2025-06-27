@@ -1,7 +1,6 @@
 use serde::{de::Visitor, Deserialize, Serialize};
-use sqlite_nostd::ResultCode;
 
-use crate::error::SQLiteError;
+use crate::error::{PowerSyncError, RawPowerSyncError};
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -23,14 +22,11 @@ impl BucketPriority {
 }
 
 impl TryFrom<i32> for BucketPriority {
-    type Error = SQLiteError;
+    type Error = PowerSyncError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         if value < BucketPriority::HIGHEST.number || value == Self::SENTINEL.number {
-            return Err(SQLiteError(
-                ResultCode::MISUSE,
-                Some("Invalid bucket priority".into()),
-            ));
+            return Err(RawPowerSyncError::InvalidBucketPriority.into());
         }
 
         return Ok(BucketPriority { number: value });
@@ -72,7 +68,7 @@ impl<'de> Deserialize<'de> for BucketPriority {
             where
                 E: serde::de::Error,
             {
-                BucketPriority::try_from(v).map_err(|e| E::custom(e.1.unwrap_or_default()))
+                BucketPriority::try_from(v).map_err(|e| E::custom(e))
             }
 
             fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>

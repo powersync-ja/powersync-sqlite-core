@@ -9,7 +9,7 @@ use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
 use crate::create_sqlite_text_fn;
-use crate::error::SQLiteError;
+use crate::error::PowerSyncError;
 use crate::util::*;
 
 fn uuid_v4_impl(

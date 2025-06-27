@@ -1,10 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use num_traits::Zero;
 
-use crate::{
-    error::SQLiteError,
-    sync::{line::BucketChecksum, BucketPriority, Checksum},
-};
+use crate::sync::{line::BucketChecksum, BucketPriority, Checksum};
 use sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
 /// A structure cloned from [BucketChecksum]s with an owned bucket name instead of one borrowed from
@@ -48,7 +45,7 @@ pub fn validate_checkpoint<'a>(
     buckets: impl Iterator<Item = &'a OwnedBucketChecksum>,
     priority: Option<BucketPriority>,
     db: *mut sqlite::sqlite3,
-) -> Result<Vec<ChecksumMismatch>, SQLiteError> {
+) -> Result<Vec<ChecksumMismatch>, ResultCode> {
     // language=SQLite
     let statement = db.prepare_v2(
         "

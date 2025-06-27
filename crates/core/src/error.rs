@@ -1,97 +1,145 @@
+use core::fmt::Display;
+
 use alloc::{
     borrow::Cow,
+    boxed::Box,
     format,
     string::{String, ToString},
 };
-use core::error::Error;
 use sqlite_nostd::{context, sqlite3, Connection, Context, ResultCode};
+use thiserror::Error;
 
 use crate::bson::BsonError;
 
-#[derive(Debug)]
-pub struct SQLiteError(pub ResultCode, pub Option<Cow<'static, str>>);
-
-impl SQLiteError {
-    pub fn with_description(code: ResultCode, message: impl Into<Cow<'static, str>>) -> Self {
-        Self(code, Some(message.into()))
-    }
-
-    pub fn misuse(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::with_description(ResultCode::MISUSE, message)
-    }
+/// A [RawPowerSyncError], but boxed.
+///
+/// We allocate errors in boxes to avoid large [Result] types returning these.
+pub struct PowerSyncError {
+    inner: Box<RawPowerSyncError>,
 }
 
-impl core::fmt::Display for SQLiteError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "SQLiteError: {:?}", self.0)?;
-        if let Some(desc) = &self.1 {
-            write!(f, ", desc: {}", desc)?;
+impl PowerSyncError {
+    pub fn from_sqlite(code: ResultCode, context: impl Into<Cow<'static, str>>) -> Self {
+        RawPowerSyncError::Sqlite {
+            code,
+            context: Some(context.into()),
         }
-        Ok(())
+        .into()
     }
-}
 
-impl SQLiteError {
+    pub fn argument_error(desc: &'static str) -> Self {
+        RawPowerSyncError::ArgumentError { desc }.into()
+    }
+
+    pub fn state_error(desc: &'static str) -> Self {
+        RawPowerSyncError::StateError { desc }.into()
+    }
+
     pub fn apply_to_ctx(self, description: &str, ctx: *mut context) {
-        let SQLiteError(code, message) = self;
+        let mut desc = self.description(ctx.db_handle());
+        desc.insert_str(0, description);
+        desc.insert_str(description.len(), ": ");
 
-        if let Some(msg) = message {
-            ctx.result_error(&format!("{:} {:}", description, msg));
-        } else {
-            let error = ctx.db_handle().errmsg().unwrap();
-            if error == "not an error" {
-                ctx.result_error(&format!("{:}", description));
-            } else {
-                ctx.result_error(&format!("{:} {:}", description, error));
-            }
-        }
-        ctx.result_error_code(code);
+        ctx.result_error(&desc);
+        ctx.result_error_code(self.sqlite_error_code());
     }
-}
 
-impl Error for SQLiteError {}
-
-pub trait PSResult<T> {
-    fn into_db_result(self, db: *mut sqlite3) -> Result<T, SQLiteError>;
-}
-
-impl<T> PSResult<T> for Result<T, ResultCode> {
-    fn into_db_result(self, db: *mut sqlite3) -> Result<T, SQLiteError> {
-        if let Err(code) = self {
+    /// Obtains a description of this error, fetching it from SQLite if necessary.
+    pub fn description(&self, db: *mut sqlite3) -> String {
+        if let RawPowerSyncError::Sqlite { .. } = &*self.inner {
             let message = db.errmsg().unwrap_or(String::from("Conversion error"));
-            if message == "not an error" {
-                Err(SQLiteError(code, None))
-            } else {
-                Err(SQLiteError(code, Some(message.into())))
+            if message != "not an error" {
+                return format!("{}, caused by: {message}", self.inner);
             }
-        } else if let Ok(r) = self {
-            Ok(r)
-        } else {
-            Err(SQLiteError(ResultCode::ABORT, None))
+        }
+
+        self.inner.to_string()
+    }
+
+    pub fn sqlite_error_code(&self) -> ResultCode {
+        use RawPowerSyncError::*;
+
+        match self.inner.as_ref() {
+            Sqlite { code, .. } => *code,
+            InvalidPendingStatement { .. }
+            | InvalidBucketPriority
+            | ExpectedJsonObject
+            | ArgumentError { .. }
+            | StateError { .. }
+            | JsonObjectTooBig
+            | CrudVtabOutsideOfTransaction => ResultCode::MISUSE,
+            MissingClientId | Internal => ResultCode::ABORT,
+            JsonError { .. } | BsonError { .. } => ResultCode::CONSTRAINT_DATATYPE,
         }
     }
 }
 
-impl From<ResultCode> for SQLiteError {
+impl Display for PowerSyncError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl From<RawPowerSyncError> for PowerSyncError {
+    fn from(value: RawPowerSyncError) -> Self {
+        return PowerSyncError {
+            inner: Box::new(value),
+        };
+    }
+}
+
+impl From<ResultCode> for PowerSyncError {
     fn from(value: ResultCode) -> Self {
-        SQLiteError(value, None)
+        return RawPowerSyncError::Sqlite {
+            code: value,
+            context: None,
+        }
+        .into();
     }
 }
 
-impl From<serde_json::Error> for SQLiteError {
+impl From<serde_json::Error> for PowerSyncError {
     fn from(value: serde_json::Error) -> Self {
-        SQLiteError::with_description(ResultCode::ABORT, value.to_string())
+        RawPowerSyncError::JsonError(value).into()
     }
 }
 
-impl From<core::fmt::Error> for SQLiteError {
-    fn from(value: core::fmt::Error) -> Self {
-        SQLiteError::with_description(ResultCode::INTERNAL, format!("{}", value))
-    }
-}
-
-impl From<BsonError> for SQLiteError {
+impl From<BsonError> for PowerSyncError {
     fn from(value: BsonError) -> Self {
-        SQLiteError::with_description(ResultCode::ERROR, value.to_string())
+        RawPowerSyncError::from(value).into()
     }
+}
+
+#[derive(Error, Debug)]
+pub enum RawPowerSyncError {
+    #[error("internal SQLite call returned {code}")]
+    Sqlite {
+        code: ResultCode,
+        context: Option<Cow<'static, str>>,
+    },
+    #[error("invalid argument: {desc}")]
+    ArgumentError { desc: &'static str },
+    #[error("invalid state: {desc}")]
+    StateError { desc: &'static str },
+    #[error("Function required a JSON object, but got another type of JSON value")]
+    ExpectedJsonObject,
+    #[error("No client_id found in ps_kv")]
+    MissingClientId,
+    #[error("Invalid pending statement for raw table: {description}")]
+    InvalidPendingStatement { description: Cow<'static, str> },
+    #[error("Invalid bucket priority value")]
+    InvalidBucketPriority,
+    #[error("Internal PowerSync error")]
+    Internal,
+    #[error("Error decoding JSON: {0}")]
+    JsonError(serde_json::Error),
+    #[error("Error decoding BSON")]
+    BsonError {
+        #[from]
+        source: BsonError,
+    },
+    #[error("Too many arguments passed to json_object_fragment")]
+    JsonObjectTooBig,
+    #[error("No tx_id")]
+    CrudVtabOutsideOfTransaction,
 }
