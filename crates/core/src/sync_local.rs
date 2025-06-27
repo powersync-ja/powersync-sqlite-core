@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::error::{PSResult, SQLiteError};
+use crate::error::{PowerSyncError, RawPowerSyncError};
 use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
@@ -18,7 +18,7 @@ pub fn sync_local<V: Value>(
     state: &DatabaseState,
     db: *mut sqlite::sqlite3,
     data: &V,
-) -> Result<i64, SQLiteError> {
+) -> Result<i64, PowerSyncError> {
     let mut operation: SyncOperation<'_> = SyncOperation::from_args(state, db, data)?;
     operation.apply()
 }
@@ -43,7 +43,7 @@ impl<'a> SyncOperation<'a> {
         state: &'a DatabaseState,
         db: *mut sqlite::sqlite3,
         data: &'a V,
-    ) -> Result<Self, SQLiteError> {
+    ) -> Result<Self, serde_json::Error> {
         Ok(Self::new(
             state,
             db,
@@ -89,7 +89,7 @@ impl<'a> SyncOperation<'a> {
         self.schema.add_from_schema(schema);
     }
 
-    fn can_apply_sync_changes(&self) -> Result<bool, SQLiteError> {
+    fn can_apply_sync_changes(&self) -> Result<bool, PowerSyncError> {
         // Don't publish downloaded data until the upload queue is empty (except for downloaded data
         // in priority 0, which is published earlier).
 
@@ -108,7 +108,7 @@ impl<'a> SyncOperation<'a> {
             )?;
 
             if statement.step()? != ResultCode::ROW {
-                return Err(SQLiteError::from(ResultCode::ABORT));
+                return Err(RawPowerSyncError::Internal.into());
             }
 
             if statement.column_type(0)? == ColumnType::Text {
@@ -124,7 +124,7 @@ impl<'a> SyncOperation<'a> {
         Ok(true)
     }
 
-    pub fn apply(&mut self) -> Result<i64, SQLiteError> {
+    pub fn apply(&mut self) -> Result<i64, PowerSyncError> {
         let guard = self.state.sync_local_guard();
 
         if !self.can_apply_sync_changes()? {
@@ -144,7 +144,7 @@ impl<'a> SyncOperation<'a> {
         let mut untyped_delete_statement: Option<ManagedStmt> = None;
         let mut untyped_insert_statement: Option<ManagedStmt> = None;
 
-        while statement.step().into_db_result(self.db)? == ResultCode::ROW {
+        while statement.step()? == ResultCode::ROW {
             let type_name = statement.column_text(0)?;
             let id = statement.column_text(1)?;
             let data = statement.column_text(2);
@@ -175,8 +175,7 @@ impl<'a> SyncOperation<'a> {
                             // Prepare statement when the table changed
                             last_delete_statement = Some(
                                 self.db
-                                    .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
-                                    .into_db_result(self.db)?,
+                                    .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))?,
                             );
                             last_delete_table = Some(quoted.clone());
                         }
@@ -189,14 +188,10 @@ impl<'a> SyncOperation<'a> {
                         // INSERT/UPDATE
                         if last_insert_table.as_deref() != Some(&quoted) {
                             // Prepare statement when the table changed
-                            last_insert_statement = Some(
-                                self.db
-                                    .prepare_v2(&format!(
-                                        "REPLACE INTO {}(id, data) VALUES(?, ?)",
-                                        quoted
-                                    ))
-                                    .into_db_result(self.db)?,
-                            );
+                            last_insert_statement = Some(self.db.prepare_v2(&format!(
+                                "REPLACE INTO {}(id, data) VALUES(?, ?)",
+                                quoted
+                            ))?);
                             last_insert_table = Some(quoted.clone());
                         }
                         let insert_statement = last_insert_statement.as_mut().unwrap();
@@ -213,8 +208,7 @@ impl<'a> SyncOperation<'a> {
                         // Prepare statement on first use
                         untyped_delete_statement = Some(
                             self.db
-                                .prepare_v2("DELETE FROM ps_untyped WHERE type = ? AND id = ?")
-                                .into_db_result(self.db)?,
+                                .prepare_v2("DELETE FROM ps_untyped WHERE type = ? AND id = ?")?,
                         );
                     }
                     let delete_statement = untyped_delete_statement.as_mut().unwrap();
@@ -226,13 +220,9 @@ impl<'a> SyncOperation<'a> {
                     // INSERT/UPDATE
                     if untyped_insert_statement.is_none() {
                         // Prepare statement on first use
-                        untyped_insert_statement = Some(
-                            self.db
-                                .prepare_v2(
-                                    "REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)",
-                                )
-                                .into_db_result(self.db)?,
-                        );
+                        untyped_insert_statement = Some(self.db.prepare_v2(
+                            "REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)",
+                        )?);
                     }
                     let insert_statement = untyped_insert_statement.as_mut().unwrap();
                     insert_statement.reset()?;
@@ -251,18 +241,17 @@ impl<'a> SyncOperation<'a> {
         Ok(1)
     }
 
-    fn collect_tables(&mut self) -> Result<(), SQLiteError> {
+    fn collect_tables(&mut self) -> Result<(), ResultCode> {
         self.schema.add_from_db(self.db)
     }
 
-    fn collect_full_operations(&self) -> Result<ManagedStmt, SQLiteError> {
+    fn collect_full_operations(&self) -> Result<ManagedStmt, ResultCode> {
         Ok(match &self.partial {
             None => {
                 // Complete sync
                 // See dart/test/sync_local_performance_test.dart for an annotated version of this query.
-                self.db
-                    .prepare_v2(
-                        "\
+                self.db.prepare_v2(
+                    "\
 WITH updated_rows AS (
     SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
         CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
@@ -282,14 +271,11 @@ SELECT
     ) as data
     FROM updated_rows b
     GROUP BY b.row_type, b.row_id;",
-                    )
-                    .into_db_result(self.db)?
+                )?
             }
             Some(partial) => {
-                let stmt = self
-                    .db
-                    .prepare_v2(
-                        "\
+                let stmt = self.db.prepare_v2(
+                    "\
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
 --    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
 --    We filter out duplicates using the GROUP BY below.
@@ -323,8 +309,7 @@ SELECT
     FROM updated_rows b
     -- Group for (2)
     GROUP BY b.row_type, b.row_id;",
-                    )
-                    .into_db_result(self.db)?;
+                )?;
                 stmt.bind_text(1, partial.args, Destructor::STATIC)?;
 
                 stmt
@@ -332,7 +317,7 @@ SELECT
         })
     }
 
-    fn set_last_applied_op(&self) -> Result<(), SQLiteError> {
+    fn set_last_applied_op(&self) -> Result<(), ResultCode> {
         match &self.partial {
             Some(partial) => {
                 // language=SQLite
@@ -343,33 +328,28 @@ SELECT
                             SET last_applied_op = last_op
                             WHERE last_applied_op != last_op AND
                                 name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))",
-                    )
-                    .into_db_result(self.db)?;
+                    )?;
                 updated.bind_text(1, partial.args, Destructor::STATIC)?;
                 updated.exec()?;
             }
             None => {
                 // language=SQLite
-                self.db
-                    .exec_safe(
-                        "UPDATE ps_buckets
+                self.db.exec_safe(
+                    "UPDATE ps_buckets
                                 SET last_applied_op = last_op
                                 WHERE last_applied_op != last_op",
-                    )
-                    .into_db_result(self.db)?;
+                )?;
             }
         }
 
         Ok(())
     }
 
-    fn mark_completed(&self) -> Result<(), SQLiteError> {
+    fn mark_completed(&self) -> Result<(), ResultCode> {
         let priority_code: i32 = match &self.partial {
             None => {
                 // language=SQLite
-                self.db
-                    .exec_safe("DELETE FROM ps_updated_rows")
-                    .into_db_result(self.db)?;
+                self.db.exec_safe("DELETE FROM ps_updated_rows")?;
                 BucketPriority::SENTINEL
             }
             Some(partial) => partial.priority,
@@ -382,16 +362,14 @@ SELECT
         // language=SQLite
         let stmt = self
             .db
-            .prepare_v2("DELETE FROM ps_sync_state WHERE priority < ?1;")
-            .into_db_result(self.db)?;
+            .prepare_v2("DELETE FROM ps_sync_state WHERE priority < ?1;")?;
         stmt.bind_int(1, priority_code)?;
         stmt.exec()?;
 
         // language=SQLite
         let stmt = self
             .db
-            .prepare_v2("INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, datetime());")
-            .into_db_result(self.db)?;
+            .prepare_v2("INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, datetime());")?;
         stmt.bind_int(1, priority_code)?;
         stmt.exec()?;
 
@@ -417,13 +395,11 @@ impl<'a> ParsedDatabaseSchema<'a> {
         }
     }
 
-    fn add_from_db(&mut self, db: *mut sqlite::sqlite3) -> Result<(), SQLiteError> {
+    fn add_from_db(&mut self, db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         // language=SQLite
-        let statement = db
-            .prepare_v2(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data_*'",
-            )
-            .into_db_result(db)?;
+        let statement = db.prepare_v2(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data_*'",
+        )?;
 
         while statement.step()? == ResultCode::ROW {
             let name = statement.column_text(0)?;
@@ -452,7 +428,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
     fn put_statement(
         &mut self,
         db: *mut sqlite::sqlite3,
-    ) -> Result<&PreparedPendingStatement, SQLiteError> {
+    ) -> Result<&PreparedPendingStatement, PowerSyncError> {
         let cache_slot = &mut self.cached_put;
         if let None = cache_slot {
             let stmt = PreparedPendingStatement::prepare(db, &self.definition.put)?;
@@ -465,7 +441,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
     fn delete_statement(
         &mut self,
         db: *mut sqlite::sqlite3,
-    ) -> Result<&PreparedPendingStatement, SQLiteError> {
+    ) -> Result<&PreparedPendingStatement, PowerSyncError> {
         let cache_slot = &mut self.cached_delete;
         if let None = cache_slot {
             let stmt = PreparedPendingStatement::prepare(db, &self.definition.delete)?;
@@ -501,18 +477,22 @@ impl<'a> PreparedPendingStatement<'a> {
     pub fn prepare(
         db: *mut sqlite::sqlite3,
         pending: &'a PendingStatement,
-    ) -> Result<Self, SQLiteError> {
+    ) -> Result<Self, PowerSyncError> {
         let stmt = db.prepare_v2(&pending.sql)?;
         if stmt.bind_parameter_count() as usize != pending.params.len() {
-            return Err(SQLiteError::misuse(format!(
-                "Statement {} has {} parameters, but {} values were provided as sources.",
-                &pending.sql,
-                stmt.bind_parameter_count(),
-                pending.params.len(),
-            )));
+            return Err(RawPowerSyncError::InvalidPendingStatement {
+                description: format!(
+                    "Statement {} has {} parameters, but {} values were provided as sources.",
+                    &pending.sql,
+                    stmt.bind_parameter_count(),
+                    pending.params.len(),
+                )
+                .into(),
+            }
+            .into());
         }
 
-        // TODO: Compare number of variables / other validity checks?
+        // TODO: other validity checks?
 
         Ok(Self {
             stmt,
@@ -520,7 +500,11 @@ impl<'a> PreparedPendingStatement<'a> {
         })
     }
 
-    pub fn bind_for_put(&self, id: &str, json_data: &serde_json::Value) -> Result<(), SQLiteError> {
+    pub fn bind_for_put(
+        &self,
+        id: &str,
+        json_data: &serde_json::Value,
+    ) -> Result<(), PowerSyncError> {
         use serde_json::Value;
         for (i, source) in self.params.iter().enumerate() {
             let i = (i + 1) as i32;
@@ -531,10 +515,7 @@ impl<'a> PreparedPendingStatement<'a> {
                 }
                 PendingStatementValue::Column(column) => {
                     let parsed = json_data.as_object().ok_or_else(|| {
-                        SQLiteError::with_description(
-                            ResultCode::CONSTRAINT_DATATYPE,
-                            "expected oplog data to be an object",
-                        )
+                        PowerSyncError::argument_error("expected oplog data to be an object")
                     })?;
 
                     match parsed.get(column) {
@@ -562,15 +543,16 @@ impl<'a> PreparedPendingStatement<'a> {
         Ok(())
     }
 
-    pub fn bind_for_delete(&self, id: &str) -> Result<(), SQLiteError> {
+    pub fn bind_for_delete(&self, id: &str) -> Result<(), PowerSyncError> {
         for (i, source) in self.params.iter().enumerate() {
             if let PendingStatementValue::Id = source {
                 self.stmt
                     .bind_text((i + 1) as i32, id, Destructor::STATIC)?;
             } else {
-                return Err(SQLiteError::misuse(
-                    "Raw delete statement parameters must only reference id",
-                ));
+                return Err(RawPowerSyncError::InvalidPendingStatement {
+                    description: "Raw delete statement parameters must only reference id".into(),
+                }
+                .into());
             }
         }
 

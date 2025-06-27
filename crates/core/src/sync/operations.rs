@@ -4,10 +4,7 @@ use num_traits::Zero;
 use sqlite_nostd::Connection;
 use sqlite_nostd::{self as sqlite, ResultCode};
 
-use crate::{
-    error::{PSResult, SQLiteError},
-    ext::SafeManagedStmt,
-};
+use crate::ext::SafeManagedStmt;
 
 use super::line::OplogData;
 use super::Checksum;
@@ -19,7 +16,7 @@ use super::{
 pub fn insert_bucket_operations(
     adapter: &StorageAdapter,
     data: &DataLine,
-) -> Result<(), SQLiteError> {
+) -> Result<(), ResultCode> {
     let db = adapter.db;
     let BucketInfo {
         id: bucket_id,
@@ -154,20 +151,16 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
         } else if op == OpType::CLEAR {
             // Any remaining PUT operations should get an implicit REMOVE
             // language=SQLite
-            let clear_statement1 = db
-                .prepare_v2(
-                    "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
+            let clear_statement1 = db.prepare_v2(
+                "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
 SELECT row_type, row_id
 FROM ps_oplog
 WHERE bucket = ?1",
-                )
-                .into_db_result(db)?;
+            )?;
             clear_statement1.bind_int64(1, bucket_id)?;
             clear_statement1.exec()?;
 
-            let clear_statement2 = db
-                .prepare_v2("DELETE FROM ps_oplog WHERE bucket = ?1")
-                .into_db_result(db)?;
+            let clear_statement2 = db.prepare_v2("DELETE FROM ps_oplog WHERE bucket = ?1")?;
             clear_statement2.bind_int64(1, bucket_id)?;
             clear_statement2.exec()?;
 

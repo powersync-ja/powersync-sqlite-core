@@ -9,19 +9,19 @@ use sqlite_nostd::{Connection, Context};
 
 use crate::create_sqlite_optional_text_fn;
 use crate::create_sqlite_text_fn;
-use crate::error::SQLiteError;
+use crate::error::{PowerSyncError, RawPowerSyncError};
 use crate::sync::BucketPriority;
 
 fn powersync_client_id_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     let db = ctx.db_handle();
 
     client_id(db)
 }
 
-pub fn client_id(db: *mut sqlite::sqlite3) -> Result<String, SQLiteError> {
+pub fn client_id(db: *mut sqlite::sqlite3) -> Result<String, PowerSyncError> {
     // language=SQLite
     let statement = db.prepare_v2("select value from ps_kv where key = 'client_id'")?;
 
@@ -29,10 +29,7 @@ pub fn client_id(db: *mut sqlite::sqlite3) -> Result<String, SQLiteError> {
         let client_id = statement.column_text(0)?;
         Ok(client_id.to_string())
     } else {
-        Err(SQLiteError::with_description(
-            ResultCode::ABORT,
-            "No client_id found in ps_kv",
-        ))
+        Err(RawPowerSyncError::MissingClientId.into())
     }
 }
 
@@ -45,7 +42,7 @@ create_sqlite_text_fn!(
 fn powersync_last_synced_at_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
-) -> Result<Option<String>, SQLiteError> {
+) -> Result<Option<String>, ResultCode> {
     let db = ctx.db_handle();
 
     // language=SQLite

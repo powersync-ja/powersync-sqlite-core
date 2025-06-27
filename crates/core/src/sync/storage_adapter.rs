@@ -5,7 +5,7 @@ use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 
 use crate::{
-    error::SQLiteError,
+    error::PowerSyncError,
     ext::SafeManagedStmt,
     operations::delete_bucket,
     schema::Schema,
@@ -46,7 +46,7 @@ impl StorageAdapter {
         })
     }
 
-    pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>, SQLiteError> {
+    pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>, ResultCode> {
         // language=SQLite
         let statement = self.db.prepare_v2(
             "SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0 AND name != '$local'",
@@ -70,7 +70,7 @@ impl StorageAdapter {
     pub fn delete_buckets<'a>(
         &self,
         buckets: impl IntoIterator<Item = &'a str>,
-    ) -> Result<(), SQLiteError> {
+    ) -> Result<(), ResultCode> {
         for bucket in buckets {
             // TODO: This is a neat opportunity to create the statements here and cache them
             delete_bucket(self.db, bucket)?;
@@ -133,7 +133,7 @@ impl StorageAdapter {
         checkpoint: &OwnedCheckpoint,
         priority: Option<BucketPriority>,
         schema: &Schema,
-    ) -> Result<SyncLocalResult, SQLiteError> {
+    ) -> Result<SyncLocalResult, PowerSyncError> {
         let mismatched_checksums =
             validate_checkpoint(checkpoint.buckets.values(), priority, self.db)?;
 

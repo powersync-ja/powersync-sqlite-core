@@ -47,6 +47,8 @@ impl BsonError {
     }
 }
 
+impl core::error::Error for BsonError {}
+
 impl Display for BsonError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.err.fmt(f)

@@ -11,7 +11,7 @@ macro_rules! create_sqlite_text_fn {
             let result = $fn_impl_name(ctx, args);
 
             if let Err(err) = result {
-                SQLiteError::from(err).apply_to_ctx($description, ctx);
+                PowerSyncError::from(err).apply_to_ctx($description, ctx);
             } else if let Ok(r) = result {
                 ctx.result_text_transient(&r);
             }
@@ -32,7 +32,7 @@ macro_rules! create_sqlite_optional_text_fn {
             let result = $fn_impl_name(ctx, args);
 
             if let Err(err) = result {
-                SQLiteError::from(err).apply_to_ctx($description, ctx);
+                PowerSyncError::from(err).apply_to_ctx($description, ctx);
             } else if let Ok(r) = result {
                 if let Some(s) = r {
                     ctx.result_text_transient(&s);
@@ -54,7 +54,7 @@ macro_rules! create_auto_tx_function {
         fn $fn_name(
             ctx: *mut sqlite::context,
             args: &[*mut sqlite::value],
-        ) -> Result<String, SQLiteError> {
+        ) -> Result<String, PowerSyncError> {
             let db = ctx.db_handle();
 
             // Auto-start a transaction if we're not in a transaction

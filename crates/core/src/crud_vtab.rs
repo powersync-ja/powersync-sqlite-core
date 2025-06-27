@@ -12,7 +12,7 @@ use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd::ManagedStmt;
 use sqlite_nostd::{self as sqlite, ColumnType};
 
-use crate::error::SQLiteError;
+use crate::error::{PowerSyncError, RawPowerSyncError};
 use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
 use crate::state::DatabaseState;
@@ -81,11 +81,11 @@ impl VirtualTable {
         }
     }
 
-    fn handle_insert(&mut self, args: &[*mut sqlite::value]) -> Result<(), SQLiteError> {
+    fn handle_insert(&mut self, args: &[*mut sqlite::value]) -> Result<(), PowerSyncError> {
         let current_tx = self
             .current_tx
             .as_mut()
-            .ok_or_else(|| SQLiteError::misuse("No tx_id"))?;
+            .ok_or_else(|| PowerSyncError::from(RawPowerSyncError::CrudVtabOutsideOfTransaction))?;
         let db = self.db;
 
         if self.state.is_in_sync_local.load(Ordering::Relaxed) {
@@ -178,7 +178,7 @@ impl VirtualTable {
         Ok(())
     }
 
-    fn begin(&mut self) -> Result<(), SQLiteError> {
+    fn begin(&mut self) -> Result<(), PowerSyncError> {
         let db = self.db;
 
         // language=SQLite
@@ -187,7 +187,7 @@ impl VirtualTable {
         let tx_id = if statement.step()? == ResultCode::ROW {
             statement.column_int64(0) - 1
         } else {
-            return Err(SQLiteError::from(ResultCode::ABORT));
+            return Err(PowerSyncError::from(RawPowerSyncError::Internal));
         };
 
         self.current_tx = Some(ActiveCrudTransaction {
@@ -328,7 +328,7 @@ extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
 extern "C" fn begin(vtab: *mut sqlite::vtab) -> c_int {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
     let result = tab.begin();
-    vtab_result(vtab, result)
+    vtab_result(vtab, tab.db, result)
 }
 
 extern "C" fn commit(vtab: *mut sqlite::vtab) -> c_int {
@@ -361,7 +361,7 @@ extern "C" fn update(
         // INSERT
         let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
         let result = tab.handle_insert(&args[2..]);
-        vtab_result(vtab, result)
+        vtab_result(vtab, tab.db, result)
     } else {
         // UPDATE - not supported
         ResultCode::MISUSE as c_int
