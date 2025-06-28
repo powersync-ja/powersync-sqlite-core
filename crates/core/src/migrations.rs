@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
             let rs = local_db.exec_safe(&sql);
             if let Err(code) = rs {
                 return Err(PowerSyncError::from_sqlite(
+                    local_db,
                     code,
                     format!(
                         "Down migration failed for {:} {:} {:}",
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         let rc = current_version_stmt.step()?;
         if rc != ResultCode::ROW {
             return Err(PowerSyncError::from_sqlite(
+                local_db,
                 rc,
                 "Down migration failed - could not get version",
             ));

@@ -1,5 +1,6 @@
 extern crate alloc;
 
+use alloc::string::ToString;
 use core::ffi::{c_char, c_int};
 
 use sqlite::ResultCode;
@@ -65,13 +66,12 @@ pub extern "C" fn vtab_no_close(_cursor: *mut sqlite::vtab_cursor) -> c_int {
 
 pub fn vtab_result<T, E: Into<PowerSyncError>>(
     vtab: *mut sqlite::vtab,
-    db: *mut sqlite::sqlite3,
     result: Result<T, E>,
 ) -> c_int {
     if let Err(error) = result {
         let error = error.into();
 
-        vtab.set_err(&error.description(db));
+        vtab.set_err(&error.to_string());
         error.sqlite_error_code() as c_int
     } else {
         ResultCode::OK as c_int
