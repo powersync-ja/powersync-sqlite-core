@@ -86,6 +86,10 @@ impl PowerSyncError {
         RawPowerSyncError::MissingClientId.into()
     }
 
+    pub fn down_migration_did_not_update_version(current_version: i32) -> Self {
+        return RawPowerSyncError::DownMigrationDidNotUpdateVersion { current_version }.into();
+    }
+
     /// Applies this error to a function result context, setting the error code and a descriptive
     /// text.
     pub fn apply_to_ctx(self, description: &str, ctx: *mut context) {
@@ -115,7 +119,9 @@ impl PowerSyncError {
         match self.inner.as_ref() {
             Sqlite { code, .. } => *code,
             ArgumentError { .. } | StateError { .. } => ResultCode::MISUSE,
-            MissingClientId | SyncProtocolError { .. } => ResultCode::ABORT,
+            MissingClientId
+            | SyncProtocolError { .. }
+            | DownMigrationDidNotUpdateVersion { .. } => ResultCode::ABORT,
             LocalDataError { .. } => ResultCode::CORRUPT,
             Internal { .. } => ResultCode::INTERNAL,
         }
@@ -192,6 +198,8 @@ enum RawPowerSyncError {
     LocalDataError { cause: PowerSyncErrorCause },
     #[error("No client_id found in ps_kv")]
     MissingClientId,
+    #[error("Down migration failed - version not updated from {current_version}")]
+    DownMigrationDidNotUpdateVersion { current_version: i32 },
     /// A catch-all for remaining internal errors that are very unlikely to happen.
     #[error("Internal PowerSync error. {cause}")]
     Internal { cause: PowerSyncErrorCause },
