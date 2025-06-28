@@ -151,7 +151,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
                 "start" => SyncControlRequest::StartSyncStream({
                     if payload.value_type() == ColumnType::Text {
                         serde_json::from_str(payload.text())
-                            .map_err(PowerSyncError::json_argument_error)?
+                            .map_err(PowerSyncError::as_argument_error)?
                     } else {
                         StartSyncStream::default()
                     }

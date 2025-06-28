@@ -1,6 +1,6 @@
 use serde::{de::Visitor, Deserialize, Serialize};
 
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -26,7 +26,9 @@ impl TryFrom<i32> for BucketPriority {
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         if value < BucketPriority::HIGHEST.number || value == Self::SENTINEL.number {
-            return Err(RawPowerSyncError::InvalidBucketPriority.into());
+            return Err(PowerSyncError::argument_error(
+                "Invalid bucket priority value",
+            ));
         }
 
         return Ok(BucketPriority { number: value });

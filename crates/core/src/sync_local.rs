@@ -20,7 +20,7 @@ pub fn sync_local<V: Value>(
     data: &V,
 ) -> Result<i64, PowerSyncError> {
     let mut operation: SyncOperation<'_> =
-        SyncOperation::from_args(state, db, data).map_err(PowerSyncError::json_argument_error)?;
+        SyncOperation::from_args(state, db, data).map_err(PowerSyncError::as_argument_error)?;
     operation.apply()
 }
 

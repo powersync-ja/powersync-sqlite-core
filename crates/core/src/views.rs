@@ -19,8 +19,7 @@ fn powersync_view_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let table_info =
-        Table::from_json(args[0].text()).map_err(PowerSyncError::json_argument_error)?;
+    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -73,8 +72,7 @@ fn powersync_trigger_delete_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let table_info =
-        Table::from_json(args[0].text()).map_err(PowerSyncError::json_argument_error)?;
+    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -164,8 +162,7 @@ fn powersync_trigger_insert_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let table_info =
-        Table::from_json(args[0].text()).map_err(PowerSyncError::json_argument_error)?;
+    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -238,8 +235,7 @@ fn powersync_trigger_update_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let table_info =
-        Table::from_json(args[0].text()).map_err(PowerSyncError::json_argument_error)?;
+    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();

@@ -9,7 +9,7 @@ use sqlite_nostd::{Connection, Context};
 
 use crate::create_sqlite_optional_text_fn;
 use crate::create_sqlite_text_fn;
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::error::PowerSyncError;
 use crate::sync::BucketPriority;
 
 fn powersync_client_id_impl(
@@ -29,7 +29,7 @@ pub fn client_id(db: *mut sqlite::sqlite3) -> Result<String, PowerSyncError> {
         let client_id = statement.column_text(0)?;
         Ok(client_id.to_string())
     } else {
-        Err(RawPowerSyncError::MissingClientId.into())
+        Err(PowerSyncError::missing_client_id())
     }
 }
 

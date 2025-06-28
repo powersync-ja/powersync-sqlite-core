@@ -13,7 +13,8 @@ use crate::bson::BsonError;
 
 /// A [RawPowerSyncError], but boxed.
 ///
-/// We allocate errors in boxes to avoid large [Result] types returning these.
+/// We allocate errors in boxes to avoid large [Result] types (given the large size of the
+/// [RawPowerSyncError] enum type).
 pub struct PowerSyncError {
     inner: Box<RawPowerSyncError>,
 }
@@ -35,10 +36,14 @@ impl PowerSyncError {
         .into()
     }
 
-    pub fn json_argument_error(cause: serde_json::Error) -> Self {
+    /// Converts something that can be a [PowerSyncErrorCause] into an argument error.
+    ///
+    /// This can be used to represent e.g. JSON parsing errors as argument errors, e.g. with
+    /// ` serde_json::from_str(payload.text()).map_err(PowerSyncError::as_argument_error)`.
+    pub fn as_argument_error(cause: impl Into<PowerSyncErrorCause>) -> Self {
         RawPowerSyncError::ArgumentError {
             desc: "".into(),
-            cause: PowerSyncErrorCause::Json(cause),
+            cause: cause.into(),
         }
         .into()
     }
@@ -54,10 +59,22 @@ impl PowerSyncError {
         RawPowerSyncError::StateError { desc }.into()
     }
 
+    pub fn sync_protocol_error(desc: &'static str, cause: impl Into<PowerSyncErrorCause>) -> Self {
+        RawPowerSyncError::SyncProtocolError {
+            desc,
+            cause: cause.into(),
+        }
+        .into()
+    }
+
+    /// A generic internal error.
+    ///
+    /// This should only be used rarely since this error provides no further details.
     pub fn unknown_internal() -> Self {
         Self::internal(PowerSyncErrorCause::Unknown)
     }
 
+    /// A generic internal error with an associated cause.
     pub fn internal(cause: impl Into<PowerSyncErrorCause>) -> Self {
         RawPowerSyncError::Internal {
             cause: cause.into(),
@@ -65,6 +82,12 @@ impl PowerSyncError {
         .into()
     }
 
+    pub fn missing_client_id() -> Self {
+        RawPowerSyncError::MissingClientId.into()
+    }
+
+    /// Applies this error to a function result context, setting the error code and a descriptive
+    /// text.
     pub fn apply_to_ctx(self, description: &str, ctx: *mut context) {
         let mut desc = self.description(ctx.db_handle());
         desc.insert_str(0, description);
@@ -91,7 +114,7 @@ impl PowerSyncError {
 
         match self.inner.as_ref() {
             Sqlite { code, .. } => *code,
-            InvalidBucketPriority | ArgumentError { .. } | StateError { .. } => ResultCode::MISUSE,
+            ArgumentError { .. } | StateError { .. } => ResultCode::MISUSE,
             MissingClientId | SyncProtocolError { .. } => ResultCode::ABORT,
             LocalDataError { .. } => ResultCode::CORRUPT,
             Internal { .. } => ResultCode::INTERNAL,
@@ -125,7 +148,7 @@ impl From<ResultCode> for PowerSyncError {
 
 /// A structured enumeration of possible errors that can occur in the core extension.
 #[derive(Error, Debug)]
-pub enum RawPowerSyncError {
+enum RawPowerSyncError {
     /// An internal call to SQLite made by the core extension has failed. We store the original
     /// result code and an optional context describing what the core extension was trying to do when
     /// the error occurred.
@@ -158,19 +181,18 @@ pub enum RawPowerSyncError {
     /// (e.g. a checkpoint diff before we've ever received a checkpoint).
     ///
     /// This interrupts a sync iteration as we cannot reasonably continue afterwards (the client and
-    /// server are necessarily in different states).
+    /// server are necessarily in diverged states).
     #[error("Sync protocol error: {desc}. {cause}")]
     SyncProtocolError {
         desc: &'static str,
         cause: PowerSyncErrorCause,
     },
     /// There's invalid local data in the database (like malformed JSON in the oplog table).
-    #[error("invalid local data")]
+    #[error("invalid local data: {cause}")]
     LocalDataError { cause: PowerSyncErrorCause },
     #[error("No client_id found in ps_kv")]
     MissingClientId,
-    #[error("Invalid bucket priority value")]
-    InvalidBucketPriority,
+    /// A catch-all for remaining internal errors that are very unlikely to happen.
     #[error("Internal PowerSync error. {cause}")]
     Internal { cause: PowerSyncErrorCause },
 }

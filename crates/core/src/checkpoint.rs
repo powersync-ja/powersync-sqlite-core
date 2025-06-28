@@ -27,7 +27,7 @@ fn powersync_validate_checkpoint_impl(
 ) -> Result<String, PowerSyncError> {
     let data = args[0].text();
     let checkpoint: Checkpoint =
-        serde_json::from_str(data).map_err(PowerSyncError::json_argument_error)?;
+        serde_json::from_str(data).map_err(PowerSyncError::as_argument_error)?;
     let db = ctx.db_handle();
     let buckets: Vec<OwnedBucketChecksum> = checkpoint
         .buckets
