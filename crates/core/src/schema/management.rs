@@ -133,7 +133,7 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
 fn update_indexes(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
     let mut statements: Vec<String> = alloc::vec![];
     let schema =
-        serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::json_argument_error)?;
+        serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::as_argument_error)?;
     let mut expected_index_names: Vec<String> = vec![];
 
     {

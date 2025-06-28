@@ -23,10 +23,8 @@ fn powersync_diff_impl(
 }
 
 pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, PowerSyncError> {
-    let v_new: json::Value =
-        json::from_str(data_new).map_err(PowerSyncError::json_argument_error)?;
-    let v_old: json::Value =
-        json::from_str(data_old).map_err(PowerSyncError::json_argument_error)?;
+    let v_new: json::Value = json::from_str(data_new).map_err(PowerSyncError::as_argument_error)?;
+    let v_old: json::Value = json::from_str(data_old).map_err(PowerSyncError::as_argument_error)?;
 
     if let (json::Value::Object(mut left), json::Value::Object(mut right)) = (v_new, v_old) {
         // Remove all null values
