@@ -81,12 +81,8 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         let new_version = current_version_stmt.column_int(0);
         if new_version >= current_version {
             // Database down from version $currentVersion to $version failed - version not updated after dow migration
-            return Err(PowerSyncError::from_sqlite(
-                ResultCode::ABORT,
-                format!(
-                    "Down migration failed - version not updated from {:}",
-                    current_version
-                ),
+            return Err(PowerSyncError::down_migration_did_not_update_version(
+                current_version,
             ));
         }
         current_version = new_version;
