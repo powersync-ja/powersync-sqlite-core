@@ -329,7 +329,7 @@ extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
 extern "C" fn begin(vtab: *mut sqlite::vtab) -> c_int {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
     let result = tab.begin();
-    vtab_result(vtab, tab.db, result)
+    vtab_result(vtab, result)
 }
 
 extern "C" fn commit(vtab: *mut sqlite::vtab) -> c_int {
@@ -362,7 +362,7 @@ extern "C" fn update(
         // INSERT
         let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
         let result = tab.handle_insert(&args[2..]);
-        vtab_result(vtab, tab.db, result)
+        vtab_result(vtab, result)
     } else {
         // UPDATE - not supported
         ResultCode::MISUSE as c_int

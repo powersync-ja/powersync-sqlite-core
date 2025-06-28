@@ -1,9 +1,8 @@
-use core::fmt::Display;
+use core::{error::Error, fmt::Display};
 
 use alloc::{
     borrow::Cow,
     boxed::Box,
-    format,
     string::{String, ToString},
 };
 use sqlite_nostd::{context, sqlite3, Connection, Context, ResultCode};
@@ -15,16 +14,31 @@ use crate::bson::BsonError;
 ///
 /// We allocate errors in boxes to avoid large [Result] types (given the large size of the
 /// [RawPowerSyncError] enum type).
+#[derive(Debug)]
 pub struct PowerSyncError {
     inner: Box<RawPowerSyncError>,
 }
 
 impl PowerSyncError {
-    pub fn from_sqlite(code: ResultCode, context: impl Into<Cow<'static, str>>) -> Self {
-        RawPowerSyncError::Sqlite {
-            code,
-            context: Some(context.into()),
+    fn errstr(db: *mut sqlite3) -> Option<String> {
+        let message = db.errmsg().unwrap_or(String::from("Conversion error"));
+        if message != "not an error" {
+            Some(message)
+        } else {
+            None
         }
+    }
+
+    pub fn from_sqlite(
+        db: *mut sqlite3,
+        code: ResultCode,
+        context: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        RawPowerSyncError::Sqlite(SqliteError {
+            code,
+            errstr: Self::errstr(db),
+            context: Some(context.into()),
+        })
         .into()
     }
 
@@ -93,7 +107,7 @@ impl PowerSyncError {
     /// Applies this error to a function result context, setting the error code and a descriptive
     /// text.
     pub fn apply_to_ctx(self, description: &str, ctx: *mut context) {
-        let mut desc = self.description(ctx.db_handle());
+        let mut desc = self.to_string();
         desc.insert_str(0, description);
         desc.insert_str(description.len(), ": ");
 
@@ -101,24 +115,13 @@ impl PowerSyncError {
         ctx.result_error_code(self.sqlite_error_code());
     }
 
-    /// Obtains a description of this error, fetching it from SQLite if necessary.
-    pub fn description(&self, db: *mut sqlite3) -> String {
-        if let RawPowerSyncError::Sqlite { .. } = &*self.inner {
-            let message = db.errmsg().unwrap_or(String::from("Conversion error"));
-            if message != "not an error" {
-                return format!("{}, caused by: {message}", self.inner);
-            }
-        }
-
-        self.inner.to_string()
-    }
-
     pub fn sqlite_error_code(&self) -> ResultCode {
         use RawPowerSyncError::*;
 
         match self.inner.as_ref() {
-            Sqlite { code, .. } => *code,
-            ArgumentError { .. } | StateError { .. } => ResultCode::MISUSE,
+            Sqlite(desc) => desc.code,
+            ArgumentError { .. } => ResultCode::CONSTRAINT_DATATYPE,
+            StateError { .. } => ResultCode::MISUSE,
             MissingClientId
             | SyncProtocolError { .. }
             | DownMigrationDidNotUpdateVersion { .. } => ResultCode::ABORT,
@@ -134,6 +137,8 @@ impl Display for PowerSyncError {
     }
 }
 
+impl Error for PowerSyncError {}
+
 impl From<RawPowerSyncError> for PowerSyncError {
     fn from(value: RawPowerSyncError) -> Self {
         return PowerSyncError {
@@ -144,10 +149,11 @@ impl From<RawPowerSyncError> for PowerSyncError {
 
 impl From<ResultCode> for PowerSyncError {
     fn from(value: ResultCode) -> Self {
-        return RawPowerSyncError::Sqlite {
+        return RawPowerSyncError::Sqlite(SqliteError {
             code: value,
+            errstr: None,
             context: None,
-        }
+        })
         .into();
     }
 }
@@ -164,11 +170,8 @@ enum RawPowerSyncError {
     /// [PowerSyncError::description] to create a detailed error message.
     ///
     /// This error should _never_ be created for anything but rethrowing underlying SQLite errors.
-    #[error("internal SQLite call returned {code}")]
-    Sqlite {
-        code: ResultCode,
-        context: Option<Cow<'static, str>>,
-    },
+    #[error("{0}")]
+    Sqlite(SqliteError),
     /// A user (e.g. the one calling a PowerSync function, likely an SDK) has provided invalid
     /// arguments.
     ///
@@ -203,6 +206,45 @@ enum RawPowerSyncError {
     /// A catch-all for remaining internal errors that are very unlikely to happen.
     #[error("Internal PowerSync error. {cause}")]
     Internal { cause: PowerSyncErrorCause },
+}
+
+#[derive(Debug)]
+struct SqliteError {
+    code: ResultCode,
+    errstr: Option<String>,
+    context: Option<Cow<'static, str>>,
+}
+
+impl Display for SqliteError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(context) = &self.context {
+            write!(f, "{}: ", context)?;
+        }
+
+        write!(f, "internal SQLite call returned {}", self.code)?;
+        if let Some(desc) = &self.errstr {
+            write!(f, ": {}", desc)?
+        }
+
+        Ok(())
+    }
+}
+
+pub trait PSResult<T> {
+    fn into_db_result(self, db: *mut sqlite3) -> Result<T, PowerSyncError>;
+}
+
+impl<T> PSResult<T> for Result<T, ResultCode> {
+    fn into_db_result(self, db: *mut sqlite3) -> Result<T, PowerSyncError> {
+        self.map_err(|code| {
+            RawPowerSyncError::Sqlite(SqliteError {
+                code,
+                errstr: PowerSyncError::errstr(db),
+                context: None,
+            })
+            .into()
+        })
+    }
 }
 
 #[derive(Debug)]

@@ -92,7 +92,7 @@ extern "C" fn update(
 
         if op == "save" {
             let result = insert_operation(db, args[3].text());
-            vtab_result(vtab, db, result)
+            vtab_result(vtab, result)
         } else if op == "sync_local" {
             let result = sync_local(&tab.state, db, &args[3]);
             if let Ok(result_row) = result {
@@ -100,16 +100,16 @@ extern "C" fn update(
                     *p_row_id = result_row;
                 }
             }
-            vtab_result(vtab, db, result)
+            vtab_result(vtab, result)
         } else if op == "clear_remove_ops" {
             let result = clear_remove_ops(db, args[3].text());
-            vtab_result(vtab, db, result)
+            vtab_result(vtab, result)
         } else if op == "delete_pending_buckets" {
             let result = delete_pending_buckets(db, args[3].text());
-            vtab_result(vtab, db, result)
+            vtab_result(vtab, result)
         } else if op == "delete_bucket" {
             let result: Result<(), ResultCode> = delete_bucket(db, args[3].text());
-            vtab_result(vtab, db, result)
+            vtab_result(vtab, result)
         } else {
             ResultCode::MISUSE as c_int
         }
