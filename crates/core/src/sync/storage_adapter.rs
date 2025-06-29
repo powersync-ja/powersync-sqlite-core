@@ -5,7 +5,7 @@ use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 
 use crate::{
-    error::PowerSyncError,
+    error::{PSResult, PowerSyncError},
     ext::SafeManagedStmt,
     operations::delete_bucket,
     schema::Schema,
@@ -31,10 +31,11 @@ pub struct StorageAdapter {
 }
 
 impl StorageAdapter {
-    pub fn new(db: *mut sqlite::sqlite3) -> Result<Self, ResultCode> {
+    pub fn new(db: *mut sqlite::sqlite3) -> Result<Self, PowerSyncError> {
         // language=SQLite
-        let progress =
-            db.prepare_v2("SELECT name, count_at_last, count_since_last FROM ps_buckets")?;
+        let progress = db
+            .prepare_v2("SELECT name, count_at_last, count_since_last FROM ps_buckets")
+            .into_db_result(db)?;
 
         // language=SQLite
         let time = db.prepare_v2("SELECT unixepoch()")?;
@@ -46,11 +47,11 @@ impl StorageAdapter {
         })
     }
 
-    pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>, ResultCode> {
+    pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>, PowerSyncError> {
         // language=SQLite
         let statement = self.db.prepare_v2(
             "SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0 AND name != '$local'",
-        )?;
+        ).into_db_result(self.db)?;
 
         let mut requests = Vec::<BucketRequest>::new();
 
@@ -97,23 +98,27 @@ impl StorageAdapter {
         }
     }
 
-    pub fn reset_progress(&self) -> Result<(), ResultCode> {
+    pub fn reset_progress(&self) -> Result<(), PowerSyncError> {
         self.db
-            .exec_safe("UPDATE ps_buckets SET count_since_last = 0, count_at_last = 0;")?;
+            .exec_safe("UPDATE ps_buckets SET count_since_last = 0, count_at_last = 0;")
+            .into_db_result(self.db)?;
         Ok(())
     }
 
-    pub fn lookup_bucket(&self, bucket: &str) -> Result<BucketInfo, ResultCode> {
+    pub fn lookup_bucket(&self, bucket: &str) -> Result<BucketInfo, PowerSyncError> {
         // We do an ON CONFLICT UPDATE simply so that the RETURNING bit works for existing rows.
         // We can consider splitting this into separate SELECT and INSERT statements.
         // language=SQLite
-        let bucket_statement = self.db.prepare_v2(
-            "INSERT INTO ps_buckets(name)
+        let bucket_statement = self
+            .db
+            .prepare_v2(
+                "INSERT INTO ps_buckets(name)
                             VALUES(?)
                         ON CONFLICT DO UPDATE
                             SET last_applied_op = last_applied_op
                         RETURNING id, last_applied_op",
-        )?;
+            )
+            .into_db_result(self.db)?;
         bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
         let res = bucket_statement.step()?;
         debug_assert_matches!(res, ResultCode::ROW);
@@ -147,7 +152,8 @@ impl StorageAdapter {
 
         let update_bucket = self
             .db
-            .prepare_v2("UPDATE ps_buckets SET last_op = ? WHERE name = ?")?;
+            .prepare_v2("UPDATE ps_buckets SET last_op = ? WHERE name = ?")
+            .into_db_result(self.db)?;
 
         for bucket in checkpoint.buckets.values() {
             if bucket.is_in_priority(priority) {
@@ -214,7 +220,7 @@ impl StorageAdapter {
                 // partial completions.
                 let update = self.db.prepare_v2(
                     "UPDATE ps_buckets SET count_since_last = 0, count_at_last = ? WHERE name = ?",
-                )?;
+                ).into_db_result(self.db)?;
 
                 for bucket in checkpoint.buckets.values() {
                     if let Some(count) = bucket.count {
