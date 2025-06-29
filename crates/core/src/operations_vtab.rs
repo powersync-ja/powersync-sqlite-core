@@ -108,7 +108,7 @@ extern "C" fn update(
             let result = delete_pending_buckets(db, args[3].text());
             vtab_result(vtab, result)
         } else if op == "delete_bucket" {
-            let result: Result<(), ResultCode> = delete_bucket(db, args[3].text());
+            let result = delete_bucket(db, args[3].text());
             vtab_result(vtab, result)
         } else {
             ResultCode::MISUSE as c_int

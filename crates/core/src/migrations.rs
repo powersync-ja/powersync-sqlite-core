@@ -8,7 +8,7 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::error::PowerSyncError;
+use crate::error::{PSResult, PowerSyncError};
 use crate::fix_data::apply_v035_fix;
 use crate::sync::BucketPriority;
 
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         }
         let new_version = current_version_stmt.column_int(0);
         if new_version >= current_version {
-            // Database down from version $currentVersion to $version failed - version not updated after dow migration
+            // Database down from version $currentVersion to $version failed - version not updated after down migration
             return Err(PowerSyncError::down_migration_did_not_update_version(
                 current_version,
             ));
@@ -93,8 +93,9 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
 
     if current_version < 1 {
         // language=SQLite
-        local_db.exec_safe(
-            "
+        local_db
+            .exec_safe(
+                "
 CREATE TABLE ps_oplog(
 bucket TEXT NOT NULL,
 op_id INTEGER NOT NULL,
@@ -125,7 +126,8 @@ CREATE TABLE ps_crud (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT);
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(1, NULL);
 ",
-        )?;
+            )
+            .into_db_result(local_db)?;
     }
 
     if current_version < 2 && target_version >= 2 {
@@ -137,7 +139,7 @@ INSERT INTO ps_tx(id, current_tx, next_tx) VALUES(1, NULL, 1);
 ALTER TABLE ps_crud ADD COLUMN tx_id INTEGER;
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(2, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 2', 'params', json_array()), json_object('sql', 'DROP TABLE ps_tx', 'params', json_array()), json_object('sql', 'ALTER TABLE ps_crud DROP COLUMN tx_id', 'params', json_array())));
-")?;
+").into_db_result(local_db)?;
     }
 
     if current_version < 3 && target_version >= 3 {
@@ -147,7 +149,7 @@ CREATE TABLE ps_kv(key TEXT PRIMARY KEY NOT NULL, value BLOB);
 INSERT INTO ps_kv(key, value) values('client_id', uuid());
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(3, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 3'), json_object('sql', 'DROP TABLE ps_kv')));
-  ")?;
+  ").into_db_result(local_db)?;
     }
 
     if current_version < 4 && target_version >= 4 {
@@ -167,7 +169,7 @@ VALUES(4,
     json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN op_checksum'),
     json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN remove_operations')
   ));
-  ")?;
+  ").into_db_result(local_db)?;
     }
 
     if current_version < 5 && target_version >= 5 {
@@ -286,7 +288,8 @@ VALUES(5,
     json_object('sql', 'DELETE FROM ps_migration WHERE id >= 5')
   ));
   ",
-          )?;
+          )
+          .into_db_result(local_db)?;
     }
 
     if current_version < 6 && target_version >= 6 {
@@ -295,15 +298,17 @@ VALUES(5,
             apply_v035_fix(local_db)?;
         }
 
-        local_db.exec_safe(
-            "\
+        local_db
+            .exec_safe(
+                "\
 INSERT INTO ps_migration(id, down_migrations)
 VALUES(6,
 json_array(
   json_object('sql', 'DELETE FROM ps_migration WHERE id >= 6')
 ));
 ",
-        )?;
+            )
+            .into_db_result(local_db)?;
     }
 
     if current_version < 7 && target_version >= 7 {
@@ -325,7 +330,7 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 7')
 ));
 ", SENTINEL_PRIORITY, SENTINEL_PRIORITY);
 
-        local_db.exec_safe(&stmt)?;
+        local_db.exec_safe(&stmt).into_db_result(local_db)?;
     }
 
     if current_version < 8 && target_version >= 8 {
@@ -346,7 +351,7 @@ json_object('sql', 'DROP TABLE ps_sync_state_new'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 8')
 ));
 ";
-        local_db.exec_safe(&stmt)?;
+        local_db.exec_safe(&stmt).into_db_result(local_db)?;
     }
 
     if current_version < 9 && target_version >= 9 {
@@ -360,7 +365,7 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 9')
 ));
 ";
 
-        local_db.exec_safe(stmt)?;
+        local_db.exec_safe(stmt).into_db_result(local_db)?;
     }
 
     if current_version < 10 && target_version >= 10 {
@@ -375,7 +380,8 @@ INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
   json_object('sql', 'DELETE FROM ps_migration WHERE id >= 10')
 ));
         ",
-            )?;
+            )
+            .into_db_result(local_db)?;
     }
 
     Ok(())

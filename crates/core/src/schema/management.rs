@@ -9,29 +9,31 @@ use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::Context;
 
-use crate::error::PowerSyncError;
+use crate::error::{PSResult, PowerSyncError};
 use crate::ext::ExtendedDatabase;
 use crate::util::{quote_identifier, quote_json_path};
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 use super::Schema;
 
-fn update_tables(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), ResultCode> {
+fn update_tables(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
     {
         // In a block so that the statement is finalized before dropping tables
         // language=SQLite
-        let statement = db.prepare_v2(
-            "\
+        let statement = db
+            .prepare_v2(
+                "\
 SELECT
         json_extract(json_each.value, '$.name') as name,
         powersync_internal_table_name(json_each.value) as internal_name,
         ifnull(json_extract(json_each.value, '$.local_only'), 0) as local_only
       FROM json_each(json_extract(?, '$.tables'))
         WHERE name NOT IN (SELECT name FROM powersync_tables)",
-        )?;
+            )
+            .into_db_result(db)?;
         statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
 
-        while statement.step()? == ResultCode::ROW {
+        while statement.step().into_db_result(db)? == ResultCode::ROW {
             let name = statement.column_text(0)?;
             let internal_name = statement.column_text(1)?;
             let local_only = statement.column_int(2) != 0;
@@ -39,7 +41,8 @@ SELECT
             db.exec_safe(&format!(
                 "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
                 quote_identifier(internal_name)
-            ))?;
+            ))
+            .into_db_result(db)?;
 
             if !local_only {
                 // MOVE data if any
@@ -52,7 +55,8 @@ SELECT
                         quote_identifier(internal_name)
                     ),
                     name,
-                )?;
+                )
+                .into_db_result(db)?;
 
                 // language=SQLite
                 db.exec_text(
@@ -74,7 +78,8 @@ SELECT
                         quote_identifier(internal_name)
                     ),
                     name,
-                )?;
+                )
+                .into_db_result(db)?;
 
                 // language=SQLite
                 db.exec_text(
@@ -92,13 +97,15 @@ SELECT
     {
         // In a block so that the statement is finalized before dropping tables
         // language=SQLite
-        let statement = db.prepare_v2(
-            "\
+        let statement = db
+            .prepare_v2(
+                "\
 SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
     SELECT json_extract(json_each.value, '$.name')
     FROM json_each(json_extract(?, '$.tables'))
   )",
-        )?;
+            )
+            .into_db_result(db)?;
         statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
 
         while statement.step()? == ResultCode::ROW {
@@ -115,7 +122,8 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
                         quote_identifier(internal_name)
                     ),
                     name,
-                )?;
+                )
+                .into_db_result(db)?;
             }
         }
     }
@@ -124,7 +132,7 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
     // we get "table is locked" errors.
     for internal_name in tables_to_drop {
         let q = format!("DROP TABLE {:}", quote_identifier(&internal_name));
-        db.exec_safe(&q)?;
+        db.exec_safe(&q).into_db_result(db)?;
     }
 
     Ok(())
@@ -196,8 +204,9 @@ fn update_indexes(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyn
 
         // In a block so that the statement is finalized before dropping indexes
         // language=SQLite
-        let statement = db.prepare_v2(
-            "\
+        let statement = db
+            .prepare_v2(
+                "\
 SELECT
     sqlite_master.name as index_name
       FROM sqlite_master
@@ -205,9 +214,10 @@ SELECT
             AND sqlite_master.name GLOB 'ps_data_*'
             AND sqlite_master.name NOT IN (SELECT value FROM json_each(?))
 ",
-        )?;
-        let json_names =
-            serde_json::to_string(&expected_index_names).map_err(PowerSyncError::internal)?;
+            )
+            .into_db_result(db)?;
+        let json_names = serde_json::to_string(&expected_index_names)
+            .map_err(PowerSyncError::as_argument_error)?;
         statement.bind_text(1, &json_names, sqlite::Destructor::STATIC)?;
 
         while statement.step()? == ResultCode::ROW {
@@ -220,13 +230,13 @@ SELECT
     // We cannot have any open queries on sqlite_master at the point that we drop indexes, otherwise
     // we get "database table is locked (code 6)" errors.
     for statement in statements {
-        db.exec_safe(&statement)?;
+        db.exec_safe(&statement).into_db_result(db)?;
     }
 
     Ok(())
 }
 
-fn update_views(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), ResultCode> {
+fn update_views(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
     // Update existing views if modified
     // language=SQLite
     db.exec_text("\
@@ -247,7 +257,7 @@ FROM (SELECT
                         powersync_views.delete_trigger_sql IS NOT gen.delete_trigger_sql OR
                         powersync_views.insert_trigger_sql IS NOT gen.insert_trigger_sql OR
                         powersync_views.update_trigger_sql IS NOT gen.update_trigger_sql)
-    ", schema)?;
+    ", schema).into_db_result(db)?;
 
     // Create new views
     // language=SQLite
@@ -266,7 +276,7 @@ ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.valu
              powersync_trigger_insert_sql(json_each.value) as insert_trigger_sql,
              powersync_trigger_update_sql(json_each.value) as update_trigger_sql
              FROM json_each(json_extract(?, '$.tables'))
-                            WHERE name NOT IN (SELECT name FROM powersync_views)", schema)?;
+                            WHERE name NOT IN (SELECT name FROM powersync_views)", schema).into_db_result(db)?;
 
     // Delete old views
     // language=SQLite
@@ -274,7 +284,7 @@ ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.valu
 DELETE FROM powersync_views WHERE name NOT IN (
     SELECT ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.value, '$.name'))
                         FROM json_each(json_extract(?, '$.tables'))
-            )", schema)?;
+            )", schema).into_db_result(db)?;
 
     Ok(())
 }
@@ -291,7 +301,7 @@ fn powersync_replace_schema_impl(
     let db = ctx.db_handle();
 
     // language=SQLite
-    db.exec_safe("SELECT powersync_init()")?;
+    db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
 
     update_tables(db, schema)?;
     update_indexes(db, schema)?;
