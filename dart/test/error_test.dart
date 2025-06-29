@@ -28,14 +28,47 @@ void main() {
         ]),
         throwsA(isSqliteException(
           1,
-          'powersync_replace_schema: internal SQLite call returned ERROR',
+          'powersync_replace_schema: internal SQLite call returned ERROR: malformed JSON',
         )),
       );
+    });
+
+    test('missing client id', () {
+      db
+        ..execute('SELECT powersync_init()')
+        ..execute('DELETE FROM ps_kv;');
+
+      expect(
+        () => db.execute('SELECT powersync_client_id()'),
+        throwsA(isSqliteException(
+          4,
+          'powersync_client_id: No client_id found in ps_kv',
+        )),
+      );
+    });
+
+    group('sync protocol', () {
+      setUp(() => db.execute('SELECT powersync_init()'));
+
+      test('invalid json', () {
+        const stmt = 'SELECT powersync_control(?,?)';
+        db.execute('BEGIN');
+        final control = db.prepare(stmt);
+
+        control.execute(['start', null]);
+        expect(
+          () => control.execute(['line_text', 'invalid sync line']),
+          throwsA(isSqliteException(
+            4,
+            'powersync_control: Sync protocol error: invalid text line. cause: expected value at line 1 column 1',
+          )),
+        );
+      });
     });
   });
 }
 
-Matcher isSqliteException(int code, String message) {
+Matcher isSqliteException(int code, dynamic message) {
   return isA<SqliteException>()
       .having((e) => e.extendedResultCode, 'extendedResultCode', code)
       .having((e) => e.message, 'message', message);

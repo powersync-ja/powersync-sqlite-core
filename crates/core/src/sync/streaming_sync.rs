@@ -17,7 +17,7 @@ use futures_lite::FutureExt;
 
 use crate::{
     bson,
-    error::PowerSyncError,
+    error::{PowerSyncError, PowerSyncErrorCause},
     kv::client_id,
     state::DatabaseState,
     sync::{checkpoint::OwnedBucketChecksum, interface::StartSyncStream},
@@ -130,7 +130,7 @@ impl SyncIterationHandle {
         db: *mut sqlite::sqlite3,
         options: StartSyncStream,
         state: Arc<DatabaseState>,
-    ) -> Result<Self, ResultCode> {
+    ) -> Result<Self, PowerSyncError> {
         let runner = StreamingSyncIteration {
             db,
             options,
@@ -307,8 +307,9 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointDiff(diff) => {
                     let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(PowerSyncError::argument_error(
+                        return Err(PowerSyncError::sync_protocol_error(
                             "Received checkpoint_diff without previous checkpoint",
+                            PowerSyncErrorCause::Unknown,
                         ));
                     };
 
@@ -325,8 +326,9 @@ impl StreamingSyncIteration {
                 }
                 SyncLine::CheckpointComplete(_) => {
                     let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(PowerSyncError::argument_error(
+                        return Err(PowerSyncError::sync_protocol_error(
                             "Received checkpoint complete without previous checkpoint",
+                            PowerSyncErrorCause::Unknown,
                         ));
                     };
                     let result =
