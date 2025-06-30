@@ -462,7 +462,9 @@ impl StreamingSyncIteration {
                         ()
                     }
                 }
-                Err(e) if e.can_retry() => {}
+                Err(e) if e.can_retry() => {
+                    event.recoverable_error = Some(e);
+                }
                 Err(e) => return Err(e),
             };
 
