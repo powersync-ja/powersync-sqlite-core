@@ -10,8 +10,10 @@ import 'package:sqlite3/common.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:sqlite3_test/sqlite3_test.dart';
 import 'package:test/test.dart';
+import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:path/path.dart';
 
+import 'utils/matchers.dart';
 import 'utils/native_test_utils.dart';
 
 @isTest
@@ -50,17 +52,24 @@ void _syncTests<T>({
 
   List<Object?> invokeControlRaw(String operation, Object? data) {
     db.execute('begin');
-    final [row] =
-        db.select('SELECT powersync_control(?, ?)', [operation, data]);
+    ResultSet result;
 
-    // Make sure that powersync_control doesn't leave any busy statements
-    // behind.
-    // TODO: Re-enable after we can guarantee sqlite_stmt being available
-    // const statement = 'SELECT * FROM sqlite_stmt WHERE busy AND sql != ?;';
-    // final busy = db.select(statement, [statement]);
-    // expect(busy, isEmpty);
+    try {
+      result = db.select('SELECT powersync_control(?, ?)', [operation, data]);
+
+      // Make sure that powersync_control doesn't leave any busy statements
+      // behind.
+      // TODO: Re-enable after we can guarantee sqlite_stmt being available
+      // const statement = 'SELECT * FROM sqlite_stmt WHERE busy AND sql != ?;';
+      // final busy = db.select(statement, [statement]);
+      // expect(busy, isEmpty);
+    } catch (e) {
+      db.execute('rollback');
+      rethrow;
+    }
 
     db.execute('commit');
+    final [row] = result;
     return jsonDecode(row.columnAt(0));
   }
 
@@ -682,6 +691,118 @@ void _syncTests<T>({
 
       // Should delete bucket with checksum mismatch
       expect(db.select('SELECT * FROM ps_buckets'), isEmpty);
+    });
+
+    group('recoverable', () {
+      late CommonDatabase secondary;
+      final checkpoint = {
+        'checkpoint': {
+          'last_op_id': '1',
+          'write_checkpoint': null,
+          'buckets': [
+            {
+              'bucket': 'a',
+              'checksum': 0,
+              'priority': 3,
+              'count': 1,
+            }
+          ],
+        },
+      };
+
+      setUp(() {
+        final fileName = d.path('test.db');
+
+        db = openTestDatabase(fileName: fileName)
+          ..select('select powersync_init();')
+          ..select('select powersync_replace_schema(?)', [json.encode(_schema)])
+          ..execute('update ps_kv set value = ?2 where key = ?1',
+              ['client_id', 'test-test-test-test']);
+
+        secondary = openTestDatabase(fileName: fileName);
+      });
+
+      test('starting checkpoints', () {
+        db.execute('INSERT INTO ps_buckets (name) VALUES (?)', ['unrelated']);
+        invokeControl('start', null);
+
+        // Lock the db so that the checkpoint line can't delete the unrelated
+        // bucket.
+        secondary.execute('begin exclusive');
+        expect(
+          () => syncLine(checkpoint),
+          throwsA(
+            isSqliteException(
+                5, 'powersync_control: internal SQLite call returned BUSY'),
+          ),
+        );
+        secondary.execute('commit');
+        expect(db.select('SELECT name FROM ps_buckets'), [
+          {'name': 'unrelated'}
+        ]);
+
+        syncLine(checkpoint);
+        expect(db.select('SELECT name FROM ps_buckets'), isEmpty);
+      });
+
+      test('saving oplog data', () {
+        invokeControl('start', null);
+        syncLine(checkpoint);
+
+        // Lock the database before the data line
+        secondary.execute('begin exclusive');
+
+        // This should make powersync_control unable to save oplog data.
+        expect(
+          () => pushSyncData('a', '1', '1', 'PUT', {'col': 'hi'}),
+          throwsA(isSqliteException(
+              5, 'powersync_control: internal SQLite call returned BUSY')),
+        );
+
+        // But we should be able to retry
+        secondary.execute('commit');
+
+        expect(pushSyncData('a', '1', '1', 'PUT', {'col': 'hi'}), [
+          containsPair(
+            'UpdateSyncStatus',
+            containsPair(
+              'status',
+              containsPair(
+                'downloading',
+                {
+                  'buckets': {
+                    'a': {
+                      'priority': 3,
+                      'at_last': 0,
+                      'since_last': 1,
+                      'target_count': 1
+                    },
+                  }
+                },
+              ),
+            ),
+          )
+        ]);
+      });
+
+      test('applying local changes', () {
+        invokeControl('start', null);
+        syncLine(checkpoint);
+        pushSyncData('a', '1', '1', 'PUT', {'col': 'hi'});
+
+        secondary.execute('begin exclusive');
+        expect(
+          () => pushCheckpointComplete(),
+          throwsA(
+            isSqliteException(
+                5, 'powersync_control: internal SQLite call returned BUSY'),
+          ),
+        );
+        secondary.execute('commit');
+
+        pushCheckpointComplete();
+        expect(db.select('SELECT * FROM items'), hasLength(1));
+      });
     });
   });
 

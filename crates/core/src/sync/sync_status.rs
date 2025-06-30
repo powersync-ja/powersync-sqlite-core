@@ -205,10 +205,12 @@ impl SyncDownloadProgress {
             );
         }
 
+        // Ignore errors here - SQLite seems to report errors from an earlier statement iteration
+        // sometimes.
+        let _ = adapter.progress_stmt.reset();
+
         // Go through local bucket states to detect pending progress from previous sync iterations
         // that may have been interrupted.
-        adapter.progress_stmt.reset()?;
-
         while let Some(row) = adapter.step_progress()? {
             let Some(progress) = buckets.get_mut(row.bucket) else {
                 continue;

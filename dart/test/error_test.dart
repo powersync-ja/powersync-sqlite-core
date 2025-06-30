@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
+import 'utils/matchers.dart';
 import 'utils/native_test_utils.dart';
 
 void main() {
@@ -66,10 +67,4 @@ void main() {
       });
     });
   });
-}
-
-Matcher isSqliteException(int code, dynamic message) {
-  return isA<SqliteException>()
-      .having((e) => e.extendedResultCode, 'extendedResultCode', code)
-      .having((e) => e.message, 'message', message);
 }
