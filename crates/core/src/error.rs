@@ -5,6 +5,7 @@ use alloc::{
     boxed::Box,
     string::{String, ToString},
 };
+use num_traits::FromPrimitive;
 use sqlite_nostd::{context, sqlite3, Connection, Context, ResultCode};
 use thiserror::Error;
 
@@ -127,6 +128,20 @@ impl PowerSyncError {
             | DownMigrationDidNotUpdateVersion { .. } => ResultCode::ABORT,
             LocalDataError { .. } => ResultCode::CORRUPT,
             Internal { .. } => ResultCode::INTERNAL,
+        }
+    }
+
+    pub fn can_retry(&self) -> bool {
+        match self.inner.as_ref() {
+            RawPowerSyncError::Sqlite(cause) => {
+                let base_error = ResultCode::from_i32((cause.code as i32) & 0xFF);
+                if base_error == Some(ResultCode::BUSY) || base_error == Some(ResultCode::LOCKED) {
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 }
