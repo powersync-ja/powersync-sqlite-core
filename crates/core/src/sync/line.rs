@@ -1,5 +1,6 @@
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
+use serde::de::{IgnoredAny, VariantAccess, Visitor};
 use serde::Deserialize;
 
 use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64};
@@ -13,24 +14,63 @@ use super::Checksum;
 /// internal copy).
 type SyncLineStr<'a> = Cow<'a, str>;
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug)]
 
 pub enum SyncLine<'a> {
-    #[serde(rename = "checkpoint", borrow)]
     Checkpoint(Checkpoint<'a>),
-    #[serde(rename = "checkpoint_diff", borrow)]
     CheckpointDiff(CheckpointDiff<'a>),
-
-    #[serde(rename = "checkpoint_complete")]
     CheckpointComplete(CheckpointComplete),
-    #[serde(rename = "partial_checkpoint_complete")]
     CheckpointPartiallyComplete(CheckpointPartiallyComplete),
-
-    #[serde(rename = "data", borrow)]
     Data(DataLine<'a>),
-
-    #[serde(rename = "token_expires_in")]
     KeepAlive(TokenExpiresIn),
+    UnknownSyncLine,
+}
+
+impl<'de> Deserialize<'de> for SyncLine<'de> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SyncLineVisitor;
+
+        impl<'de> Visitor<'de> for SyncLineVisitor {
+            type Value = SyncLine<'de>;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                write!(formatter, "a sync line")
+            }
+
+            fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::EnumAccess<'de>,
+            {
+                let (name, payload) = data.variant::<&'de str>()?;
+                Ok(match name {
+                    "checkpoint" => SyncLine::Checkpoint(payload.newtype_variant::<Checkpoint>()?),
+                    "checkpoint_diff" => {
+                        SyncLine::CheckpointDiff(payload.newtype_variant::<CheckpointDiff>()?)
+                    }
+                    "checkpoint_complete" => SyncLine::CheckpointComplete(
+                        payload.newtype_variant::<CheckpointComplete>()?,
+                    ),
+                    "partial_checkpoint_complete" => SyncLine::CheckpointPartiallyComplete(
+                        payload.newtype_variant::<CheckpointPartiallyComplete>()?,
+                    ),
+                    "data" => SyncLine::Data(payload.newtype_variant::<DataLine>()?),
+                    "token_expires_in" => {
+                        SyncLine::KeepAlive(payload.newtype_variant::<TokenExpiresIn>()?)
+                    }
+                    _ => {
+                        payload.newtype_variant::<IgnoredAny>()?;
+
+                        SyncLine::UnknownSyncLine
+                    }
+                })
+            }
+        }
+
+        deserializer.deserialize_enum("SyncLine", &[], SyncLineVisitor)
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -159,6 +199,8 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
 #[cfg(test)]
 mod tests {
     use core::assert_matches::assert_matches;
+
+    use alloc::string::ToString;
 
     use super::*;
 
@@ -304,5 +346,17 @@ mod tests {
                 data: _,
             }
         );
+    }
+
+    #[test]
+    fn parse_unknown() {
+        assert_matches!(deserialize("{\"foo\": {}}"), SyncLine::UnknownSyncLine);
+        assert_matches!(deserialize("{\"foo\": 123}"), SyncLine::UnknownSyncLine);
+    }
+
+    #[test]
+    fn parse_invalid_duplicate_key() {
+        let e = serde_json::from_str::<SyncLine>(r#"{"foo": {}, "bar": {}}"#).unwrap_err();
+        assert_eq!(e.to_string(), "expected value at line 1 column 10");
     }
 }
