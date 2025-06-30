@@ -398,6 +398,13 @@ impl StreamingSyncIteration {
                     SyncStateMachineTransition::Empty
                 }
             }
+            SyncLine::UnknownSyncLine => {
+                event.instructions.push(Instruction::LogLine {
+                    severity: LogSeverity::DEBUG,
+                    line: "Unknown sync line".into(),
+                });
+                SyncStateMachineTransition::Empty
+            }
         })
     }
 
