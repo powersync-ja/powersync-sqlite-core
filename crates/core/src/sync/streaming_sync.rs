@@ -20,9 +20,12 @@ use crate::{
     error::{PowerSyncError, PowerSyncErrorCause},
     kv::client_id,
     state::DatabaseState,
-    sync::{checkpoint::OwnedBucketChecksum, interface::StartSyncStream},
+    sync::{
+        checkpoint::OwnedBucketChecksum, interface::StartSyncStream, line::DataLine,
+        sync_status::Timestamp, BucketPriority,
+    },
 };
-use sqlite_nostd::{self as sqlite, ResultCode};
+use sqlite_nostd::{self as sqlite};
 
 use super::{
     interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},
@@ -245,50 +248,50 @@ impl StreamingSyncIteration {
         Wait { a: PhantomData }
     }
 
-    /// Handles a single sync line.
+    /// Starts handling a single sync line without altering any in-memory state of the state
+    /// machine.
     ///
-    /// When it returns `Ok(true)`, the sync iteration should be stopped. For errors, the type of
-    /// error determines whether the iteration can continue.
-    fn handle_line(
-        &mut self,
-        target: &mut SyncTarget,
+    /// After this call succeeds, the returned value can be used to update the state. For a
+    /// discussion on why this split is necessary, see [SyncStateMachineTransition].
+    fn prepare_handling_sync_line<'a>(
+        &self,
+        target: &SyncTarget,
         event: &mut ActiveEvent,
-        line: &SyncLine,
-    ) -> Result<bool, PowerSyncError> {
-        match line {
+        line: &'a SyncLine<'a>,
+    ) -> Result<SyncStateMachineTransition<'a>, PowerSyncError> {
+        Ok(match line {
             SyncLine::Checkpoint(checkpoint) => {
-                self.validated_but_not_applied = None;
-                let to_delete = target.track_checkpoint(&checkpoint);
+                let (to_delete, updated_target) = target.track_checkpoint(&checkpoint);
 
                 self.adapter
                     .delete_buckets(to_delete.iter().map(|b| b.as_str()))?;
-                let progress = self.load_progress(target.target_checkpoint().unwrap())?;
-                self.status.update(
-                    |s| s.start_tracking_checkpoint(progress),
-                    &mut event.instructions,
-                );
+                let progress = self.load_progress(updated_target.target_checkpoint().unwrap())?;
+                SyncStateMachineTransition::StartTrackingCheckpoint {
+                    progress,
+                    updated_target,
+                }
             }
             SyncLine::CheckpointDiff(diff) => {
-                let Some(target) = target.target_checkpoint_mut() else {
+                let Some(target) = target.target_checkpoint() else {
                     return Err(PowerSyncError::sync_protocol_error(
                         "Received checkpoint_diff without previous checkpoint",
                         PowerSyncErrorCause::Unknown,
                     ));
                 };
 
+                let mut target = target.clone();
                 target.apply_diff(&diff);
-                self.validated_but_not_applied = None;
                 self.adapter
                     .delete_buckets(diff.removed_buckets.iter().map(|i| &**i))?;
 
-                let progress = self.load_progress(target)?;
-                self.status.update(
-                    |s| s.start_tracking_checkpoint(progress),
-                    &mut event.instructions,
-                );
+                let progress = self.load_progress(&target)?;
+                SyncStateMachineTransition::StartTrackingCheckpoint {
+                    progress,
+                    updated_target: SyncTarget::Tracking(target),
+                }
             }
             SyncLine::CheckpointComplete(_) => {
-                let Some(target) = target.target_checkpoint_mut() else {
+                let Some(target) = target.target_checkpoint() else {
                     return Err(PowerSyncError::sync_protocol_error(
                         "Received checkpoint complete without previous checkpoint",
                         PowerSyncErrorCause::Unknown,
@@ -307,7 +310,7 @@ impl StreamingSyncIteration {
                             severity: LogSeverity::WARNING,
                             line: format!("Could not apply checkpoint, {checkpoint_result}").into(),
                         });
-                        return Ok(true);
+                        SyncStateMachineTransition::CloseIteration
                     }
                     SyncLocalResult::PendingLocalChanges => {
                         event.instructions.push(Instruction::LogLine {
@@ -315,7 +318,9 @@ impl StreamingSyncIteration {
                                     line: "Could not apply checkpoint due to local data. Will retry at completed upload or next checkpoint.".into(),
                                 });
 
-                        self.validated_but_not_applied = Some(target.clone());
+                        SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
+                            validated_but_not_applied: target.clone(),
+                        }
                     }
                     SyncLocalResult::ChangesApplied => {
                         event.instructions.push(Instruction::LogLine {
@@ -323,13 +328,16 @@ impl StreamingSyncIteration {
                             line: "Validated and applied checkpoint".into(),
                         });
                         event.instructions.push(Instruction::FlushFileSystem {});
-                        self.handle_checkpoint_applied(event)?;
+                        SyncStateMachineTransition::SyncLocalChangesApplied {
+                            partial: None,
+                            timestamp: self.adapter.now()?,
+                        }
                     }
                 }
             }
             SyncLine::CheckpointPartiallyComplete(complete) => {
                 let priority = complete.priority;
-                let Some(target) = target.target_checkpoint_mut() else {
+                let Some(target) = target.target_checkpoint() else {
                     return Err(PowerSyncError::state_error(
                         "Received checkpoint complete without previous checkpoint",
                     ));
@@ -353,28 +361,25 @@ impl StreamingSyncIteration {
                             )
                             .into(),
                         });
-                        return Ok(true);
+                        SyncStateMachineTransition::CloseIteration
                     }
                     SyncLocalResult::PendingLocalChanges => {
                         // If we have pending uploads, we can't complete new checkpoints outside
                         // of priority 0. We'll resolve this for a complete checkpoint later.
+                        SyncStateMachineTransition::Empty
                     }
                     SyncLocalResult::ChangesApplied => {
                         let now = self.adapter.now()?;
-                        event.instructions.push(Instruction::FlushFileSystem {});
-                        self.status.update(
-                            |status| {
-                                status.partial_checkpoint_complete(priority, now);
-                            },
-                            &mut event.instructions,
-                        );
+                        SyncStateMachineTransition::SyncLocalChangesApplied {
+                            partial: Some(priority),
+                            timestamp: now,
+                        }
                     }
                 }
             }
             SyncLine::Data(data_line) => {
-                self.status
-                    .update(|s| s.track_line(&data_line), &mut event.instructions);
                 insert_bucket_operations(&self.adapter, &data_line)?;
+                SyncStateMachineTransition::DataLineSaved { line: data_line }
             }
             SyncLine::KeepAlive(token) => {
                 if token.is_expired() {
@@ -382,16 +387,79 @@ impl StreamingSyncIteration {
                     event
                         .instructions
                         .push(Instruction::FetchCredentials { did_expire: true });
-                    return Ok(true);
+
+                    SyncStateMachineTransition::CloseIteration
                 } else if token.should_prefetch() {
                     event
                         .instructions
                         .push(Instruction::FetchCredentials { did_expire: false });
+                    SyncStateMachineTransition::Empty
+                } else {
+                    SyncStateMachineTransition::Empty
                 }
             }
-        }
+        })
+    }
 
-        Ok(false)
+    /// Applies a sync state transition, returning whether the iteration should be stopped.
+    fn apply_transition(
+        &mut self,
+        target: &mut SyncTarget,
+        event: &mut ActiveEvent,
+        transition: SyncStateMachineTransition,
+    ) -> bool {
+        match transition {
+            SyncStateMachineTransition::StartTrackingCheckpoint {
+                progress,
+                updated_target,
+            } => {
+                self.status.update(
+                    |s| s.start_tracking_checkpoint(progress),
+                    &mut event.instructions,
+                );
+                self.validated_but_not_applied = None;
+                *target = updated_target;
+            }
+            SyncStateMachineTransition::DataLineSaved { line } => {
+                self.status
+                    .update(|s| s.track_line(&line), &mut event.instructions);
+            }
+            SyncStateMachineTransition::CloseIteration => return true,
+            SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
+                validated_but_not_applied,
+            } => {
+                self.validated_but_not_applied = Some(validated_but_not_applied);
+            }
+            SyncStateMachineTransition::SyncLocalChangesApplied { partial, timestamp } => {
+                if let Some(priority) = partial {
+                    self.status.update(
+                        |status| {
+                            status.partial_checkpoint_complete(priority, timestamp);
+                        },
+                        &mut event.instructions,
+                    );
+                } else {
+                    self.handle_checkpoint_applied(event, timestamp);
+                }
+            }
+            SyncStateMachineTransition::Empty => {}
+        };
+
+        false
+    }
+
+    /// Handles a single sync line.
+    ///
+    /// When it returns `Ok(true)`, the sync iteration should be stopped. For errors, the type of
+    /// error determines whether the iteration can continue.
+    fn handle_line(
+        &mut self,
+        target: &mut SyncTarget,
+        event: &mut ActiveEvent,
+        line: &SyncLine,
+    ) -> Result<bool, PowerSyncError> {
+        let transition = self.prepare_handling_sync_line(target, event, line)?;
+        Ok(self.apply_transition(target, event, transition))
     }
 
     /// Runs a full sync iteration, returning nothing when it completes regularly or an error when
@@ -432,7 +500,7 @@ impl StreamingSyncIteration {
                                         .into(),
                                 });
 
-                                self.handle_checkpoint_applied(event)?;
+                                self.handle_checkpoint_applied(event, self.adapter.now()?);
                             }
                             _ => {
                                 event.instructions.push(Instruction::LogLine {
@@ -522,16 +590,13 @@ impl StreamingSyncIteration {
         Ok(local_bucket_names)
     }
 
-    fn handle_checkpoint_applied(&mut self, event: &mut ActiveEvent) -> Result<(), ResultCode> {
+    fn handle_checkpoint_applied(&mut self, event: &mut ActiveEvent, timestamp: Timestamp) {
         event.instructions.push(Instruction::DidCompleteSync {});
 
-        let now = self.adapter.now()?;
         self.status.update(
-            |status| status.applied_checkpoint(now),
+            |status| status.applied_checkpoint(timestamp),
             &mut event.instructions,
         );
-
-        Ok(())
     }
 }
 
@@ -553,18 +618,16 @@ impl SyncTarget {
         }
     }
 
-    fn target_checkpoint_mut(&mut self) -> Option<&mut OwnedCheckpoint> {
-        match self {
-            Self::Tracking(cp) => Some(cp),
-            _ => None,
-        }
-    }
-
     /// Starts tracking the received `Checkpoint`.
     ///
-    /// This updates the internal state and returns a set of buckets to delete because they've been
-    /// tracked locally but not in the new checkpoint.
-    fn track_checkpoint<'a>(&mut self, checkpoint: &Checkpoint<'a>) -> BTreeSet<String> {
+    /// This returns a set of buckets to delete because they've been tracked locally but not in the
+    /// checkpoint, as well as the updated state of the [SyncTarget] to apply after deleting those
+    /// buckets.
+    ///
+    /// The new state is not applied automatically - the old state should be kept in-memory until
+    /// the buckets have actually been deleted so that the operation can be retried if deleting
+    /// buckets fails.
+    fn track_checkpoint<'a>(&self, checkpoint: &Checkpoint<'a>) -> (BTreeSet<String>, Self) {
         let mut to_delete: BTreeSet<String> = match &self {
             SyncTarget::Tracking(checkpoint) => checkpoint.buckets.keys().cloned().collect(),
             SyncTarget::BeforeCheckpoint(buckets) => buckets.iter().cloned().collect(),
@@ -576,8 +639,10 @@ impl SyncTarget {
             to_delete.remove(&*bucket.bucket);
         }
 
-        *self = SyncTarget::Tracking(OwnedCheckpoint::from_checkpoint(checkpoint, buckets));
-        to_delete
+        (
+            to_delete,
+            SyncTarget::Tracking(OwnedCheckpoint::from_checkpoint(checkpoint, buckets)),
+        )
     }
 }
 
@@ -613,4 +678,33 @@ impl OwnedCheckpoint {
         self.last_op_id = diff.last_op_id;
         self.write_checkpoint = diff.write_checkpoint;
     }
+}
+
+/// A transition representing pending changes between [StreamingSyncIteration::prepare_handling_sync_line]
+/// and [StreamingSyncIteration::apply_transition].
+///
+/// This split allows the main logic handling sync lines to take a non-mutable reference to internal
+/// client state, guaranteeing that it does not mutate state until changes have been written to the
+/// database. Only after those writes have succeeded are the internal state changes applied.
+///
+/// This split ensures that `powersync_control` calls are idempotent when running into temporary
+/// SQLite errors, a property we need for compatibility with e.g. WA-sqlite, where the VFS can
+/// return `BUSY` errors and the SQLite library automatically retries running statements.
+enum SyncStateMachineTransition<'a> {
+    StartTrackingCheckpoint {
+        progress: SyncDownloadProgress,
+        updated_target: SyncTarget,
+    },
+    DataLineSaved {
+        line: &'a DataLine<'a>,
+    },
+    SyncLocalFailedDueToPendingCrud {
+        validated_but_not_applied: OwnedCheckpoint,
+    },
+    SyncLocalChangesApplied {
+        partial: Option<BucketPriority>,
+        timestamp: Timestamp,
+    },
+    CloseIteration,
+    Empty,
 }
