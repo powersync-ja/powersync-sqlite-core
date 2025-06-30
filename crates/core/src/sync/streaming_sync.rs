@@ -86,7 +86,11 @@ impl SyncClient {
                     }
                 };
 
-                Ok(active.instructions)
+                if let Some(recoverable) = active.recoverable_error.take() {
+                    Err(recoverable)
+                } else {
+                    Ok(active.instructions)
+                }
             }
             SyncControlRequest::StopSyncStream => self.state.tear_down(),
         }
@@ -137,6 +141,7 @@ impl SyncIterationHandle {
             state,
             adapter: StorageAdapter::new(db)?,
             status: SyncStatusContainer::new(),
+            validated_but_not_applied: None,
         };
         let future = runner.run().boxed_local();
 
@@ -182,6 +187,12 @@ struct ActiveEvent<'a> {
     handled: bool,
     /// The event to handle
     event: SyncEvent<'a>,
+    /// An error to return to the client for a `powersync_control` invocation when that error
+    /// shouldn't interrupt the sync iteration.
+    ///
+    /// For errors that do close the iteration, we report a result by having [SyncIterationHandle::run]
+    /// returning the error.
+    recoverable_error: Option<PowerSyncError>,
     /// Instructions to forward to the client when the `powersync_control` invocation completes.
     instructions: Vec<Instruction>,
 }
@@ -191,6 +202,7 @@ impl<'a> ActiveEvent<'a> {
         Self {
             handled: false,
             event,
+            recoverable_error: None,
             instructions: Vec::new(),
         }
     }
@@ -202,6 +214,10 @@ struct StreamingSyncIteration {
     adapter: StorageAdapter,
     options: StartSyncStream,
     status: SyncStatusContainer,
+    // A checkpoint that has been fully received and validated, but couldn't be applied due to
+    // pending local data. We will retry applying this checkpoint when the client SDK informs us
+    // that it has finished uploading changes.
+    validated_but_not_applied: Option<OwnedCheckpoint>,
 }
 
 impl StreamingSyncIteration {
@@ -229,13 +245,159 @@ impl StreamingSyncIteration {
         Wait { a: PhantomData }
     }
 
+    /// Handles a single sync line.
+    ///
+    /// When it returns `Ok(true)`, the sync iteration should be stopped. For errors, the type of
+    /// error determines whether the iteration can continue.
+    fn handle_line(
+        &mut self,
+        target: &mut SyncTarget,
+        event: &mut ActiveEvent,
+        line: &SyncLine,
+    ) -> Result<bool, PowerSyncError> {
+        match line {
+            SyncLine::Checkpoint(checkpoint) => {
+                self.validated_but_not_applied = None;
+                let to_delete = target.track_checkpoint(&checkpoint);
+
+                self.adapter
+                    .delete_buckets(to_delete.iter().map(|b| b.as_str()))?;
+                let progress = self.load_progress(target.target_checkpoint().unwrap())?;
+                self.status.update(
+                    |s| s.start_tracking_checkpoint(progress),
+                    &mut event.instructions,
+                );
+            }
+            SyncLine::CheckpointDiff(diff) => {
+                let Some(target) = target.target_checkpoint_mut() else {
+                    return Err(PowerSyncError::sync_protocol_error(
+                        "Received checkpoint_diff without previous checkpoint",
+                        PowerSyncErrorCause::Unknown,
+                    ));
+                };
+
+                target.apply_diff(&diff);
+                self.validated_but_not_applied = None;
+                self.adapter
+                    .delete_buckets(diff.removed_buckets.iter().map(|i| &**i))?;
+
+                let progress = self.load_progress(target)?;
+                self.status.update(
+                    |s| s.start_tracking_checkpoint(progress),
+                    &mut event.instructions,
+                );
+            }
+            SyncLine::CheckpointComplete(_) => {
+                let Some(target) = target.target_checkpoint_mut() else {
+                    return Err(PowerSyncError::sync_protocol_error(
+                        "Received checkpoint complete without previous checkpoint",
+                        PowerSyncErrorCause::Unknown,
+                    ));
+                };
+                let result =
+                    self.adapter
+                        .sync_local(&self.state, target, None, &self.options.schema)?;
+
+                match result {
+                    SyncLocalResult::ChecksumFailure(checkpoint_result) => {
+                        // This means checksums failed. Start again with a new checkpoint.
+                        // TODO: better back-off
+                        // await new Promise((resolve) => setTimeout(resolve, 50));
+                        event.instructions.push(Instruction::LogLine {
+                            severity: LogSeverity::WARNING,
+                            line: format!("Could not apply checkpoint, {checkpoint_result}").into(),
+                        });
+                        return Ok(true);
+                    }
+                    SyncLocalResult::PendingLocalChanges => {
+                        event.instructions.push(Instruction::LogLine {
+                                    severity: LogSeverity::INFO,
+                                    line: "Could not apply checkpoint due to local data. Will retry at completed upload or next checkpoint.".into(),
+                                });
+
+                        self.validated_but_not_applied = Some(target.clone());
+                    }
+                    SyncLocalResult::ChangesApplied => {
+                        event.instructions.push(Instruction::LogLine {
+                            severity: LogSeverity::DEBUG,
+                            line: "Validated and applied checkpoint".into(),
+                        });
+                        event.instructions.push(Instruction::FlushFileSystem {});
+                        self.handle_checkpoint_applied(event)?;
+                    }
+                }
+            }
+            SyncLine::CheckpointPartiallyComplete(complete) => {
+                let priority = complete.priority;
+                let Some(target) = target.target_checkpoint_mut() else {
+                    return Err(PowerSyncError::state_error(
+                        "Received checkpoint complete without previous checkpoint",
+                    ));
+                };
+                let result = self.adapter.sync_local(
+                    &self.state,
+                    target,
+                    Some(priority),
+                    &self.options.schema,
+                )?;
+
+                match result {
+                    SyncLocalResult::ChecksumFailure(checkpoint_result) => {
+                        // This means checksums failed. Start again with a new checkpoint.
+                        // TODO: better back-off
+                        // await new Promise((resolve) => setTimeout(resolve, 50));
+                        event.instructions.push(Instruction::LogLine {
+                            severity: LogSeverity::WARNING,
+                            line: format!(
+                                "Could not apply partial checkpoint, {checkpoint_result}"
+                            )
+                            .into(),
+                        });
+                        return Ok(true);
+                    }
+                    SyncLocalResult::PendingLocalChanges => {
+                        // If we have pending uploads, we can't complete new checkpoints outside
+                        // of priority 0. We'll resolve this for a complete checkpoint later.
+                    }
+                    SyncLocalResult::ChangesApplied => {
+                        let now = self.adapter.now()?;
+                        event.instructions.push(Instruction::FlushFileSystem {});
+                        self.status.update(
+                            |status| {
+                                status.partial_checkpoint_complete(priority, now);
+                            },
+                            &mut event.instructions,
+                        );
+                    }
+                }
+            }
+            SyncLine::Data(data_line) => {
+                self.status
+                    .update(|s| s.track_line(&data_line), &mut event.instructions);
+                insert_bucket_operations(&self.adapter, &data_line)?;
+            }
+            SyncLine::KeepAlive(token) => {
+                if token.is_expired() {
+                    // Token expired already - stop the connection immediately.
+                    event
+                        .instructions
+                        .push(Instruction::FetchCredentials { did_expire: true });
+                    return Ok(true);
+                } else if token.should_prefetch() {
+                    event
+                        .instructions
+                        .push(Instruction::FetchCredentials { did_expire: false });
+                }
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Runs a full sync iteration, returning nothing when it completes regularly or an error when
+    /// the sync iteration should be interrupted.
     async fn run(mut self) -> Result<(), PowerSyncError> {
         let mut target = SyncTarget::BeforeCheckpoint(self.prepare_request().await?);
-
-        // A checkpoint that has been fully received and validated, but couldn't be applied due to
-        // pending local data. We will retry applying this checkpoint when the client SDK informs us
-        // that it has finished uploading changes.
-        let mut validated_but_not_applied = None::<OwnedCheckpoint>;
 
         loop {
             let event = Self::receive_event().await;
@@ -254,7 +416,7 @@ impl StreamingSyncIteration {
                 SyncEvent::BinaryLine { data } => bson::from_bytes(data)
                     .map_err(|e| PowerSyncError::sync_protocol_error("invalid binary line", e))?,
                 SyncEvent::UploadFinished => {
-                    if let Some(checkpoint) = validated_but_not_applied.take() {
+                    if let Some(checkpoint) = self.validated_but_not_applied.take() {
                         let result = self.adapter.sync_local(
                             &self.state,
                             &checkpoint,
@@ -292,142 +454,17 @@ impl StreamingSyncIteration {
 
             self.status.update_only(|s| s.mark_connected());
 
-            match line {
-                SyncLine::Checkpoint(checkpoint) => {
-                    validated_but_not_applied = None;
-                    let to_delete = target.track_checkpoint(&checkpoint);
-
-                    self.adapter
-                        .delete_buckets(to_delete.iter().map(|b| b.as_str()))?;
-                    let progress = self.load_progress(target.target_checkpoint().unwrap())?;
-                    self.status.update(
-                        |s| s.start_tracking_checkpoint(progress),
-                        &mut event.instructions,
-                    );
-                }
-                SyncLine::CheckpointDiff(diff) => {
-                    let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(PowerSyncError::sync_protocol_error(
-                            "Received checkpoint_diff without previous checkpoint",
-                            PowerSyncErrorCause::Unknown,
-                        ));
-                    };
-
-                    target.apply_diff(&diff);
-                    validated_but_not_applied = None;
-                    self.adapter
-                        .delete_buckets(diff.removed_buckets.iter().map(|i| &**i))?;
-
-                    let progress = self.load_progress(target)?;
-                    self.status.update(
-                        |s| s.start_tracking_checkpoint(progress),
-                        &mut event.instructions,
-                    );
-                }
-                SyncLine::CheckpointComplete(_) => {
-                    let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(PowerSyncError::sync_protocol_error(
-                            "Received checkpoint complete without previous checkpoint",
-                            PowerSyncErrorCause::Unknown,
-                        ));
-                    };
-                    let result =
-                        self.adapter
-                            .sync_local(&self.state, target, None, &self.options.schema)?;
-
-                    match result {
-                        SyncLocalResult::ChecksumFailure(checkpoint_result) => {
-                            // This means checksums failed. Start again with a new checkpoint.
-                            // TODO: better back-off
-                            // await new Promise((resolve) => setTimeout(resolve, 50));
-                            event.instructions.push(Instruction::LogLine {
-                                severity: LogSeverity::WARNING,
-                                line: format!("Could not apply checkpoint, {checkpoint_result}")
-                                    .into(),
-                            });
-                            break;
-                        }
-                        SyncLocalResult::PendingLocalChanges => {
-                            event.instructions.push(Instruction::LogLine {
-                                    severity: LogSeverity::INFO,
-                                    line: "Could not apply checkpoint due to local data. Will retry at completed upload or next checkpoint.".into(),
-                                });
-
-                            validated_but_not_applied = Some(target.clone());
-                        }
-                        SyncLocalResult::ChangesApplied => {
-                            event.instructions.push(Instruction::LogLine {
-                                severity: LogSeverity::DEBUG,
-                                line: "Validated and applied checkpoint".into(),
-                            });
-                            event.instructions.push(Instruction::FlushFileSystem {});
-                            self.handle_checkpoint_applied(event)?;
-                        }
-                    }
-                }
-                SyncLine::CheckpointPartiallyComplete(complete) => {
-                    let priority = complete.priority;
-                    let Some(target) = target.target_checkpoint_mut() else {
-                        return Err(PowerSyncError::state_error(
-                            "Received checkpoint complete without previous checkpoint",
-                        ));
-                    };
-                    let result = self.adapter.sync_local(
-                        &self.state,
-                        target,
-                        Some(priority),
-                        &self.options.schema,
-                    )?;
-
-                    match result {
-                        SyncLocalResult::ChecksumFailure(checkpoint_result) => {
-                            // This means checksums failed. Start again with a new checkpoint.
-                            // TODO: better back-off
-                            // await new Promise((resolve) => setTimeout(resolve, 50));
-                            event.instructions.push(Instruction::LogLine {
-                                severity: LogSeverity::WARNING,
-                                line: format!(
-                                    "Could not apply partial checkpoint, {checkpoint_result}"
-                                )
-                                .into(),
-                            });
-                            break;
-                        }
-                        SyncLocalResult::PendingLocalChanges => {
-                            // If we have pending uploads, we can't complete new checkpoints outside
-                            // of priority 0. We'll resolve this for a complete checkpoint later.
-                        }
-                        SyncLocalResult::ChangesApplied => {
-                            let now = self.adapter.now()?;
-                            event.instructions.push(Instruction::FlushFileSystem {});
-                            self.status.update(
-                                |status| {
-                                    status.partial_checkpoint_complete(priority, now);
-                                },
-                                &mut event.instructions,
-                            );
-                        }
-                    }
-                }
-                SyncLine::Data(data_line) => {
-                    self.status
-                        .update(|s| s.track_line(&data_line), &mut event.instructions);
-                    insert_bucket_operations(&self.adapter, &data_line)?;
-                }
-                SyncLine::KeepAlive(token) => {
-                    if token.is_expired() {
-                        // Token expired already - stop the connection immediately.
-                        event
-                            .instructions
-                            .push(Instruction::FetchCredentials { did_expire: true });
+            match self.handle_line(&mut target, event, &line) {
+                Ok(end_iteration) => {
+                    if end_iteration {
                         break;
-                    } else if token.should_prefetch() {
-                        event
-                            .instructions
-                            .push(Instruction::FetchCredentials { did_expire: false });
+                    } else {
+                        ()
                     }
                 }
-            }
+                Err(e) if e.can_retry() => {}
+                Err(e) => return Err(e),
+            };
 
             self.status.emit_changes(&mut event.instructions);
         }
