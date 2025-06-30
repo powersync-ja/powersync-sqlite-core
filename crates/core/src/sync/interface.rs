@@ -11,7 +11,7 @@ use sqlite::{ResultCode, Value};
 use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
 
-use crate::error::SQLiteError;
+use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
 
@@ -128,26 +128,30 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
         argc: c_int,
         argv: *mut *mut sqlite::value,
     ) -> () {
-        let result = (|| -> Result<(), SQLiteError> {
+        let result = (|| -> Result<(), PowerSyncError> {
             debug_assert!(!ctx.db_handle().get_autocommit());
 
             let controller = unsafe { ctx.user_data().cast::<SqlController>().as_mut() }
-                .ok_or_else(|| SQLiteError::from(ResultCode::INTERNAL))?;
+                .ok_or_else(|| PowerSyncError::unknown_internal())?;
 
             let args = sqlite::args!(argc, argv);
             let [op, payload] = args else {
-                return Err(ResultCode::MISUSE.into());
+                // This should be unreachable, we register the function with two arguments.
+                return Err(PowerSyncError::unknown_internal());
             };
 
             if op.value_type() != ColumnType::Text {
-                return Err(SQLiteError::misuse("First argument must be a string"));
+                return Err(PowerSyncError::argument_error(
+                    "First argument must be a string",
+                ));
             }
 
             let op = op.text();
             let event = match op {
                 "start" => SyncControlRequest::StartSyncStream({
                     if payload.value_type() == ColumnType::Text {
-                        serde_json::from_str(payload.text())?
+                        serde_json::from_str(payload.text())
+                            .map_err(PowerSyncError::as_argument_error)?
                     } else {
                         StartSyncStream::default()
                     }
@@ -157,25 +161,30 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
                     data: if payload.value_type() == ColumnType::Text {
                         payload.text()
                     } else {
-                        return Err(SQLiteError::misuse("Second argument must be a string"));
+                        return Err(PowerSyncError::argument_error(
+                            "Second argument must be a string",
+                        ));
                     },
                 }),
                 "line_binary" => SyncControlRequest::SyncEvent(SyncEvent::BinaryLine {
                     data: if payload.value_type() == ColumnType::Blob {
                         payload.blob()
                     } else {
-                        return Err(SQLiteError::misuse("Second argument must be a byte array"));
+                        return Err(PowerSyncError::argument_error(
+                            "Second argument must be a byte array",
+                        ));
                     },
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
                 "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
                 _ => {
-                    return Err(SQLiteError::misuse("Unknown operation"));
+                    return Err(PowerSyncError::argument_error("Unknown operation"));
                 }
             };
 
             let instructions = controller.client.push_event(event)?;
-            let formatted = serde_json::to_string(&instructions)?;
+            let formatted =
+                serde_json::to_string(&instructions).map_err(PowerSyncError::internal)?;
             ctx.result_text_transient(&formatted);
 
             Ok(())

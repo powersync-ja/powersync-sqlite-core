@@ -5,7 +5,7 @@ use sqlite_nostd::Connection;
 use sqlite_nostd::{self as sqlite, ResultCode};
 
 use crate::{
-    error::{PSResult, SQLiteError},
+    error::{PSResult, PowerSyncError},
     ext::SafeManagedStmt,
 };
 
@@ -19,7 +19,7 @@ use super::{
 pub fn insert_bucket_operations(
     adapter: &StorageAdapter,
     data: &DataLine,
-) -> Result<(), SQLiteError> {
+) -> Result<(), PowerSyncError> {
     let db = adapter.db;
     let BucketInfo {
         id: bucket_id,

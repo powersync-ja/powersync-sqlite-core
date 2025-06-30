@@ -1,4 +1,4 @@
-use crate::error::SQLiteError;
+use crate::error::PowerSyncError;
 use crate::sync::line::DataLine;
 use crate::sync::operations::insert_bucket_operations;
 use crate::sync::storage_adapter::StorageAdapter;
@@ -10,14 +10,15 @@ use sqlite_nostd::{Connection, ResultCode};
 use crate::ext::SafeManagedStmt;
 
 // Run inside a transaction
-pub fn insert_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), SQLiteError> {
+pub fn insert_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), PowerSyncError> {
     #[derive(Deserialize)]
     struct BucketBatch<'a> {
         #[serde(borrow)]
         buckets: Vec<DataLine<'a>>,
     }
 
-    let batch: BucketBatch = serde_json::from_str(data)?;
+    let batch: BucketBatch =
+        serde_json::from_str(data).map_err(PowerSyncError::as_argument_error)?;
     let adapter = StorageAdapter::new(db)?;
 
     for line in &batch.buckets {
@@ -27,19 +28,19 @@ pub fn insert_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), SQLi
     Ok(())
 }
 
-pub fn clear_remove_ops(_db: *mut sqlite::sqlite3, _data: &str) -> Result<(), SQLiteError> {
+pub fn clear_remove_ops(_db: *mut sqlite::sqlite3, _data: &str) -> Result<(), ResultCode> {
     // No-op
 
     Ok(())
 }
 
-pub fn delete_pending_buckets(_db: *mut sqlite::sqlite3, _data: &str) -> Result<(), SQLiteError> {
+pub fn delete_pending_buckets(_db: *mut sqlite::sqlite3, _data: &str) -> Result<(), ResultCode> {
     // No-op
 
     Ok(())
 }
 
-pub fn delete_bucket(db: *mut sqlite::sqlite3, name: &str) -> Result<(), SQLiteError> {
+pub fn delete_bucket(db: *mut sqlite::sqlite3, name: &str) -> Result<(), ResultCode> {
     // language=SQLite
     let statement = db.prepare_v2("DELETE FROM ps_buckets WHERE name = ?1 RETURNING id")?;
     statement.bind_text(1, name, sqlite::Destructor::STATIC)?;

@@ -10,21 +10,21 @@ use sqlite_nostd::{Connection, Context, Value};
 use serde_json as json;
 
 use crate::create_sqlite_text_fn;
-use crate::error::SQLiteError;
+use crate::error::PowerSyncError;
 
 fn powersync_diff_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     let data_old = args[0].text();
     let data_new = args[1].text();
 
     diff_objects(data_old, data_new)
 }
 
-pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, SQLiteError> {
-    let v_new: json::Value = json::from_str(data_new)?;
-    let v_old: json::Value = json::from_str(data_old)?;
+pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, PowerSyncError> {
+    let v_new: json::Value = json::from_str(data_new).map_err(PowerSyncError::as_argument_error)?;
+    let v_old: json::Value = json::from_str(data_old).map_err(PowerSyncError::as_argument_error)?;
 
     if let (json::Value::Object(mut left), json::Value::Object(mut right)) = (v_new, v_old) {
         // Remove all null values
@@ -56,7 +56,7 @@ pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, SQLiteErro
 
         Ok(json::Value::Object(left).to_string())
     } else {
-        Err(SQLiteError::from(ResultCode::MISMATCH))
+        return Err(PowerSyncError::argument_error("expected two JSON objects"));
     }
 }
 

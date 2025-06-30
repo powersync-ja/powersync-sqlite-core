@@ -9,14 +9,14 @@ use sqlite::{Connection, ResultCode, Value};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::Context;
 
-use crate::error::{PSResult, SQLiteError};
+use crate::error::{PSResult, PowerSyncError};
 use crate::ext::ExtendedDatabase;
 use crate::util::{quote_identifier, quote_json_path};
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 use super::Schema;
 
-fn update_tables(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), SQLiteError> {
+fn update_tables(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
     {
         // In a block so that the statement is finalized before dropping tables
         // language=SQLite
@@ -138,9 +138,10 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
     Ok(())
 }
 
-fn update_indexes(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), SQLiteError> {
+fn update_indexes(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
     let mut statements: Vec<String> = alloc::vec![];
-    let schema = serde_json::from_str::<Schema>(schema)?;
+    let schema =
+        serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::as_argument_error)?;
     let mut expected_index_names: Vec<String> = vec![];
 
     {
@@ -215,7 +216,8 @@ SELECT
 ",
             )
             .into_db_result(db)?;
-        let json_names = serde_json::to_string(&expected_index_names)?;
+        let json_names = serde_json::to_string(&expected_index_names)
+            .map_err(PowerSyncError::as_argument_error)?;
         statement.bind_text(1, &json_names, sqlite::Destructor::STATIC)?;
 
         while statement.step()? == ResultCode::ROW {
@@ -234,7 +236,7 @@ SELECT
     Ok(())
 }
 
-fn update_views(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), SQLiteError> {
+fn update_views(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
     // Update existing views if modified
     // language=SQLite
     db.exec_text("\
@@ -294,7 +296,7 @@ DELETE FROM powersync_views WHERE name NOT IN (
 fn powersync_replace_schema_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     let schema = args[0].text();
     let db = ctx.db_handle();
 

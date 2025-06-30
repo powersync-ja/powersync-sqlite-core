@@ -8,7 +8,7 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::error::{PSResult, SQLiteError};
+use crate::error::{PSResult, PowerSyncError};
 use crate::fix_data::apply_v035_fix;
 use crate::sync::BucketPriority;
 
@@ -17,7 +17,7 @@ pub const LATEST_VERSION: i32 = 10;
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
     target_version: i32,
-) -> Result<(), SQLiteError> {
+) -> Result<(), PowerSyncError> {
     let local_db = ctx.db_handle();
 
     // language=SQLite
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         local_db.prepare_v2("SELECT ifnull(max(id), 0) as version FROM ps_migration")?;
     let rc = current_version_stmt.step()?;
     if rc != ResultCode::ROW {
-        return Err(SQLiteError::from(ResultCode::ABORT));
+        return Err(PowerSyncError::unknown_internal());
     }
 
     let mut current_version = current_version_stmt.column_int(0);
@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         for sql in down_sql {
             let rs = local_db.exec_safe(&sql);
             if let Err(code) = rs {
-                return Err(SQLiteError::with_description(
+                return Err(PowerSyncError::from_sqlite(
+                    local_db,
                     code,
                     format!(
                         "Down migration failed for {:} {:} {:}",
@@ -73,20 +74,17 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
         current_version_stmt.reset()?;
         let rc = current_version_stmt.step()?;
         if rc != ResultCode::ROW {
-            return Err(SQLiteError::with_description(
+            return Err(PowerSyncError::from_sqlite(
+                local_db,
                 rc,
                 "Down migration failed - could not get version",
             ));
         }
         let new_version = current_version_stmt.column_int(0);
         if new_version >= current_version {
-            // Database down from version $currentVersion to $version failed - version not updated after dow migration
-            return Err(SQLiteError::with_description(
-                ResultCode::ABORT,
-                format!(
-                    "Down migration failed - version not updated from {:}",
-                    current_version
-                ),
+            // Database down from version $currentVersion to $version failed - version not updated after down migration
+            return Err(PowerSyncError::down_migration_did_not_update_version(
+                current_version,
             ));
         }
         current_version = new_version;

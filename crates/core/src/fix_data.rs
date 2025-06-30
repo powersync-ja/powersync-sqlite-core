@@ -4,7 +4,7 @@ use alloc::format;
 use alloc::string::String;
 
 use crate::create_sqlite_optional_text_fn;
-use crate::error::{PSResult, SQLiteError};
+use crate::error::{PSResult, PowerSyncError};
 use sqlite_nostd::{self as sqlite, ColumnType, Value};
 use sqlite_nostd::{Connection, Context, ResultCode};
 
@@ -20,7 +20,7 @@ use crate::util::quote_identifier;
 //
 // The fix here is to find these dangling rows, and add them to ps_updated_rows.
 // The next time the sync_local operation is run, these rows will be removed.
-pub fn apply_v035_fix(db: *mut sqlite::sqlite3) -> Result<i64, SQLiteError> {
+pub fn apply_v035_fix(db: *mut sqlite::sqlite3) -> Result<i64, PowerSyncError> {
     // language=SQLite
     let statement = db
       .prepare_v2("SELECT name, powersync_external_table_name(name) FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data__*'")
@@ -119,7 +119,7 @@ fn remove_duplicate_key_encoding(key: &str) -> Option<String> {
 fn powersync_remove_duplicate_key_encoding_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<Option<String>, SQLiteError> {
+) -> Result<Option<String>, PowerSyncError> {
     let arg = args.get(0).ok_or(ResultCode::MISUSE)?;
 
     if arg.value_type() != ColumnType::Text {

@@ -11,15 +11,15 @@ use sqlite::{Connection, Context, ResultCode, Value};
 use sqlite_nostd::{self as sqlite};
 
 use crate::create_sqlite_text_fn;
-use crate::error::SQLiteError;
+use crate::error::PowerSyncError;
 use crate::schema::{DiffIncludeOld, Table};
 use crate::util::*;
 
 fn powersync_view_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
-    let table_info = Table::from_json(args[0].text())?;
+) -> Result<String, PowerSyncError> {
+    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -71,8 +71,8 @@ create_sqlite_text_fn!(
 fn powersync_trigger_delete_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
-    let table_info = Table::from_json(args[0].text())?;
+) -> Result<String, PowerSyncError> {
+    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -148,7 +148,7 @@ END",
     } else if insert_only {
         Ok(String::from(""))
     } else {
-        Err(SQLiteError::from(ResultCode::MISUSE))
+        Err(PowerSyncError::argument_error("invalid flags for table"))
     };
 }
 
@@ -161,8 +161,8 @@ create_sqlite_text_fn!(
 fn powersync_trigger_insert_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
-    let table_info = Table::from_json(args[0].text())?;
+) -> Result<String, PowerSyncError> {
+    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -221,7 +221,7 @@ fn powersync_trigger_insert_sql_impl(
     END", type_string, json_fragment);
         Ok(trigger)
     } else {
-        Err(SQLiteError::from(ResultCode::MISUSE))
+        Err(PowerSyncError::argument_error("invalid flags for table"))
     };
 }
 
@@ -234,8 +234,8 @@ create_sqlite_text_fn!(
 fn powersync_trigger_update_sql_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
-    let table_info = Table::from_json(args[0].text())?;
+) -> Result<String, PowerSyncError> {
+    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
 
     let name = &table_info.name;
     let view_name = &table_info.view_name();
@@ -338,7 +338,7 @@ END"
     } else if insert_only {
         Ok(String::from(""))
     } else {
-        Err(SQLiteError::from(ResultCode::MISUSE))
+        Err(PowerSyncError::argument_error("invalid flags for table"))
     };
 }
 
@@ -402,7 +402,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 fn json_object_fragment<'a>(
     prefix: &str,
     name_results: &mut dyn Iterator<Item = &'a str>,
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     // floor(SQLITE_MAX_FUNCTION_ARG / 2).
     // To keep databases portable, we use the default limit of 100 args for this,
     // and don't try to query the limit dynamically.
@@ -421,7 +421,9 @@ fn json_object_fragment<'a>(
 
     // SQLITE_MAX_COLUMN - 1 (because of the id column)
     if column_names_quoted.len() > 1999 {
-        return Err(SQLiteError::from(ResultCode::TOOBIG));
+        return Err(PowerSyncError::argument_error(
+            "too many parameters to json_object_fragment",
+        ));
     } else if column_names_quoted.len() <= MAX_ARG_COUNT {
         // Small number of columns - use json_object() directly.
         let json_fragment = column_names_quoted.join(", ");

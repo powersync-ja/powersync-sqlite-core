@@ -4,7 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
 
-use crate::error::{PSResult, SQLiteError};
+use crate::error::{PSResult, PowerSyncError};
 use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
@@ -18,8 +18,9 @@ pub fn sync_local<V: Value>(
     state: &DatabaseState,
     db: *mut sqlite::sqlite3,
     data: &V,
-) -> Result<i64, SQLiteError> {
-    let mut operation: SyncOperation<'_> = SyncOperation::from_args(state, db, data)?;
+) -> Result<i64, PowerSyncError> {
+    let mut operation: SyncOperation<'_> =
+        SyncOperation::from_args(state, db, data).map_err(PowerSyncError::as_argument_error)?;
     operation.apply()
 }
 
@@ -43,7 +44,7 @@ impl<'a> SyncOperation<'a> {
         state: &'a DatabaseState,
         db: *mut sqlite::sqlite3,
         data: &'a V,
-    ) -> Result<Self, SQLiteError> {
+    ) -> Result<Self, serde_json::Error> {
         Ok(Self::new(
             state,
             db,
@@ -89,7 +90,7 @@ impl<'a> SyncOperation<'a> {
         self.schema.add_from_schema(schema);
     }
 
-    fn can_apply_sync_changes(&self) -> Result<bool, SQLiteError> {
+    fn can_apply_sync_changes(&self) -> Result<bool, PowerSyncError> {
         // Don't publish downloaded data until the upload queue is empty (except for downloaded data
         // in priority 0, which is published earlier).
 
@@ -108,7 +109,7 @@ impl<'a> SyncOperation<'a> {
             )?;
 
             if statement.step()? != ResultCode::ROW {
-                return Err(SQLiteError::from(ResultCode::ABORT));
+                return Err(PowerSyncError::unknown_internal());
             }
 
             if statement.column_type(0)? == ColumnType::Text {
@@ -124,7 +125,7 @@ impl<'a> SyncOperation<'a> {
         Ok(true)
     }
 
-    pub fn apply(&mut self) -> Result<i64, SQLiteError> {
+    pub fn apply(&mut self) -> Result<i64, PowerSyncError> {
         let guard = self.state.sync_local_guard();
 
         if !self.can_apply_sync_changes()? {
@@ -154,7 +155,8 @@ impl<'a> SyncOperation<'a> {
                     match data {
                         Ok(data) => {
                             let stmt = raw.put_statement(self.db)?;
-                            let parsed: serde_json::Value = serde_json::from_str(data)?;
+                            let parsed: serde_json::Value = serde_json::from_str(data)
+                                .map_err(PowerSyncError::json_local_error)?;
                             stmt.bind_for_put(id, &parsed)?;
                             stmt.stmt.exec()?;
                         }
@@ -251,11 +253,11 @@ impl<'a> SyncOperation<'a> {
         Ok(1)
     }
 
-    fn collect_tables(&mut self) -> Result<(), SQLiteError> {
+    fn collect_tables(&mut self) -> Result<(), PowerSyncError> {
         self.schema.add_from_db(self.db)
     }
 
-    fn collect_full_operations(&self) -> Result<ManagedStmt, SQLiteError> {
+    fn collect_full_operations(&self) -> Result<ManagedStmt, PowerSyncError> {
         Ok(match &self.partial {
             None => {
                 // Complete sync
@@ -332,7 +334,7 @@ SELECT
         })
     }
 
-    fn set_last_applied_op(&self) -> Result<(), SQLiteError> {
+    fn set_last_applied_op(&self) -> Result<(), PowerSyncError> {
         match &self.partial {
             Some(partial) => {
                 // language=SQLite
@@ -343,8 +345,7 @@ SELECT
                             SET last_applied_op = last_op
                             WHERE last_applied_op != last_op AND
                                 name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))",
-                    )
-                    .into_db_result(self.db)?;
+                    )                            .into_db_result(self.db)?;
                 updated.bind_text(1, partial.args, Destructor::STATIC)?;
                 updated.exec()?;
             }
@@ -363,7 +364,7 @@ SELECT
         Ok(())
     }
 
-    fn mark_completed(&self) -> Result<(), SQLiteError> {
+    fn mark_completed(&self) -> Result<(), PowerSyncError> {
         let priority_code: i32 = match &self.partial {
             None => {
                 // language=SQLite
@@ -390,8 +391,7 @@ SELECT
         // language=SQLite
         let stmt = self
             .db
-            .prepare_v2("INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, datetime());")
-            .into_db_result(self.db)?;
+            .prepare_v2("INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, datetime());")                            .into_db_result(self.db)?;
         stmt.bind_int(1, priority_code)?;
         stmt.exec()?;
 
@@ -417,7 +417,7 @@ impl<'a> ParsedDatabaseSchema<'a> {
         }
     }
 
-    fn add_from_db(&mut self, db: *mut sqlite::sqlite3) -> Result<(), SQLiteError> {
+    fn add_from_db(&mut self, db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
         // language=SQLite
         let statement = db
             .prepare_v2(
@@ -452,7 +452,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
     fn put_statement(
         &mut self,
         db: *mut sqlite::sqlite3,
-    ) -> Result<&PreparedPendingStatement, SQLiteError> {
+    ) -> Result<&PreparedPendingStatement, PowerSyncError> {
         let cache_slot = &mut self.cached_put;
         if let None = cache_slot {
             let stmt = PreparedPendingStatement::prepare(db, &self.definition.put)?;
@@ -465,7 +465,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
     fn delete_statement(
         &mut self,
         db: *mut sqlite::sqlite3,
-    ) -> Result<&PreparedPendingStatement, SQLiteError> {
+    ) -> Result<&PreparedPendingStatement, PowerSyncError> {
         let cache_slot = &mut self.cached_delete;
         if let None = cache_slot {
             let stmt = PreparedPendingStatement::prepare(db, &self.definition.delete)?;
@@ -501,10 +501,10 @@ impl<'a> PreparedPendingStatement<'a> {
     pub fn prepare(
         db: *mut sqlite::sqlite3,
         pending: &'a PendingStatement,
-    ) -> Result<Self, SQLiteError> {
-        let stmt = db.prepare_v2(&pending.sql)?;
+    ) -> Result<Self, PowerSyncError> {
+        let stmt = db.prepare_v2(&pending.sql).into_db_result(db)?;
         if stmt.bind_parameter_count() as usize != pending.params.len() {
-            return Err(SQLiteError::misuse(format!(
+            return Err(PowerSyncError::argument_error(format!(
                 "Statement {} has {} parameters, but {} values were provided as sources.",
                 &pending.sql,
                 stmt.bind_parameter_count(),
@@ -512,7 +512,7 @@ impl<'a> PreparedPendingStatement<'a> {
             )));
         }
 
-        // TODO: Compare number of variables / other validity checks?
+        // TODO: other validity checks?
 
         Ok(Self {
             stmt,
@@ -520,7 +520,11 @@ impl<'a> PreparedPendingStatement<'a> {
         })
     }
 
-    pub fn bind_for_put(&self, id: &str, json_data: &serde_json::Value) -> Result<(), SQLiteError> {
+    pub fn bind_for_put(
+        &self,
+        id: &str,
+        json_data: &serde_json::Value,
+    ) -> Result<(), PowerSyncError> {
         use serde_json::Value;
         for (i, source) in self.params.iter().enumerate() {
             let i = (i + 1) as i32;
@@ -531,10 +535,7 @@ impl<'a> PreparedPendingStatement<'a> {
                 }
                 PendingStatementValue::Column(column) => {
                     let parsed = json_data.as_object().ok_or_else(|| {
-                        SQLiteError::with_description(
-                            ResultCode::CONSTRAINT_DATATYPE,
-                            "expected oplog data to be an object",
-                        )
+                        PowerSyncError::argument_error("expected oplog data to be an object")
                     })?;
 
                     match parsed.get(column) {
@@ -562,13 +563,13 @@ impl<'a> PreparedPendingStatement<'a> {
         Ok(())
     }
 
-    pub fn bind_for_delete(&self, id: &str) -> Result<(), SQLiteError> {
+    pub fn bind_for_delete(&self, id: &str) -> Result<(), PowerSyncError> {
         for (i, source) in self.params.iter().enumerate() {
             if let PendingStatementValue::Id = source {
                 self.stmt
                     .bind_text((i + 1) as i32, id, Destructor::STATIC)?;
             } else {
-                return Err(SQLiteError::misuse(
+                return Err(PowerSyncError::argument_error(
                     "Raw delete statement parameters must only reference id",
                 ));
             }

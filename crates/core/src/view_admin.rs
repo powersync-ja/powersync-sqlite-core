@@ -9,7 +9,7 @@ use sqlite::{ResultCode, Value};
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::error::SQLiteError;
+use crate::error::PowerSyncError;
 use crate::migrations::{powersync_migrate, LATEST_VERSION};
 use crate::util::quote_identifier;
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
@@ -92,7 +92,7 @@ create_sqlite_text_fn!(
 fn powersync_external_table_name_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     // name: full table name
     let name = args[0].text();
 
@@ -101,7 +101,7 @@ fn powersync_external_table_name_impl(
     } else if name.starts_with("ps_data__") {
         Ok(String::from(&name[9..]))
     } else {
-        Err(SQLiteError::from(ResultCode::CONSTRAINT_DATATYPE))
+        Err(PowerSyncError::argument_error("not a powersync table"))
     }
 }
 
@@ -114,7 +114,7 @@ create_sqlite_text_fn!(
 fn powersync_init_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
 
     setup_internal_views(local_db)?;
@@ -130,7 +130,7 @@ create_sqlite_text_fn!(powersync_init, powersync_init_tx, "powersync_init");
 fn powersync_test_migration_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     let target_version = args[0].int();
     powersync_migrate(ctx, target_version)?;
 
@@ -147,7 +147,7 @@ create_sqlite_text_fn!(
 fn powersync_clear_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, SQLiteError> {
+) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
 
     let clear_local = args[0].int();
