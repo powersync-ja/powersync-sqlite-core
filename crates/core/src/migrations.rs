@@ -386,12 +386,13 @@ INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
 
     if current_version < 11 && target_version >= 11 {
         let stmt = "\
-CREATE TABLE ps_streams (
+CREATE TABLE ps_stream_subscriptions (
   id NOT NULL INTEGER PRIMARY KEY,
-  definition_name TEXT NOT NULL,
+  stream_name TEXT NOT NULL,
   is_default INTEGER NOT NULL,
   local_priority INTEGER,
-  local_params TEXT
+  local_params TEXT,
+  ttl INTEGER
 ) STRICT;
 ALTER TABLE ps_buckets ADD COLUMN derived_from INTEGER REFERENCES ps_streams (id);
 

@@ -7,6 +7,7 @@ use crate::constants::SUBTYPE_JSON;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
+use crate::util::serialize_i64_to_string;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -106,6 +107,22 @@ pub struct StreamingSyncRequest {
     pub binary_data: bool,
     pub client_id: String,
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Serialize)]
+pub struct StreamSubscriptionRequest {
+    pub include_defaults: bool,
+    pub subscriptions: Vec<RequestedStreamSubscription>,
+}
+
+#[derive(Serialize)]
+pub struct RequestedStreamSubscription {
+    /// The name of the sync stream to subscribe to.
+    pub stream: String,
+    /// Parameters to make available in the stream's definition.
+    pub parameters: Box<serde_json::value::RawValue>,
+    #[serde(serialize_with = "serialize_i64_to_string")]
+    pub client_id: i64,
 }
 
 #[derive(Serialize)]
