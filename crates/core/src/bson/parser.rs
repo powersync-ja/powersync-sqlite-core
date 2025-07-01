@@ -212,11 +212,11 @@ mod test {
         let neg_one_bytes = (-1i64).to_le_bytes();
         let mut parser = Parser::new(&neg_one_bytes);
         assert_eq!(parser.read_int64().unwrap(), -1);
-        
+
         let min_bytes = (i64::MIN).to_le_bytes();
         let mut parser = Parser::new(&min_bytes);
         assert_eq!(parser.read_int64().unwrap(), i64::MIN);
-        
+
         let neg_42_bytes = (-42i64).to_le_bytes();
         let mut parser = Parser::new(&neg_42_bytes);
         assert_eq!(parser.read_int64().unwrap(), -42);
@@ -227,11 +227,11 @@ mod test {
         let neg_one_bytes = (-1i32).to_le_bytes();
         let mut parser = Parser::new(&neg_one_bytes);
         assert_eq!(parser.read_int32().unwrap(), -1);
-        
+
         let min_bytes = (i32::MIN).to_le_bytes();
         let mut parser = Parser::new(&min_bytes);
         assert_eq!(parser.read_int32().unwrap(), i32::MIN);
-        
+
         let neg_42_bytes = (-42i32).to_le_bytes();
         let mut parser = Parser::new(&neg_42_bytes);
         assert_eq!(parser.read_int32().unwrap(), -42);
@@ -243,11 +243,11 @@ mod test {
         let mut parser = Parser::new(&neg_pi_bytes);
         let val = parser.read_double().unwrap();
         assert!((val - (-3.14159)).abs() < 0.00001);
-        
+
         let neg_inf_bytes = f64::NEG_INFINITY.to_le_bytes();
         let mut parser = Parser::new(&neg_inf_bytes);
         assert_eq!(parser.read_double().unwrap(), f64::NEG_INFINITY);
-        
+
         let nan_bytes = f64::NAN.to_le_bytes();
         let mut parser = Parser::new(&nan_bytes);
         assert!(parser.read_double().unwrap().is_nan());
@@ -257,13 +257,13 @@ mod test {
     fn test_read_bool_edge_cases() {
         let mut parser = Parser::new(&[0x00]);
         assert_eq!(parser.read_bool().unwrap(), false);
-        
+
         let mut parser = Parser::new(&[0x01]);
         assert_eq!(parser.read_bool().unwrap(), true);
-        
+
         let mut parser = Parser::new(&[0xFF]);
         assert_eq!(parser.read_bool().unwrap(), true);
-        
+
         let mut parser = Parser::new(&[0x7F]);
         assert_eq!(parser.read_bool().unwrap(), true);
     }
@@ -327,7 +327,7 @@ mod test {
     #[test]
     fn test_element_type_invalid() {
         let invalid_types = [0, 11, 12, 13, 14, 15, 19, 20, 99, 255];
-        
+
         for invalid_type in invalid_types {
             let data = [invalid_type];
             let mut parser = Parser::new(&data);
@@ -375,7 +375,9 @@ mod test {
 
     #[test]
     fn test_object_id_exact_size() {
-        let data = &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c];
+        let data = &[
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+        ];
         let mut parser = Parser::new(data);
         let oid = parser.read_object_id().unwrap();
         assert_eq!(oid, data);
@@ -385,11 +387,11 @@ mod test {
     fn test_advance_checked_boundary() {
         let data = &[0x01, 0x02, 0x03];
         let mut parser = Parser::new(data);
-        
+
         // Should succeed
         assert!(parser.advance_checked(3).is_ok());
         assert_eq!(parser.remaining().len(), 0);
-        
+
         // Should fail - no more data
         assert!(parser.advance_checked(1).is_err());
     }
