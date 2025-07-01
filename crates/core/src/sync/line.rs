@@ -119,9 +119,58 @@ pub struct BucketChecksum<'a> {
     pub priority: Option<BucketPriority>,
     #[serde(default)]
     pub count: Option<i64>,
+    #[serde(
+        default,
+        deserialize_with = "BucketChecksum::deserialize_subscriptions"
+    )]
+    pub subscriptions: Option<Vec<i64>>,
     //    #[serde(default)]
     //    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     //    pub last_op_id: Option<i64>,
+}
+
+impl BucketChecksum<'_> {
+    fn deserialize_subscriptions<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<Vec<i64>>, D::Error> {
+        struct MyVisitor;
+
+        impl<'de> Visitor<'de> for MyVisitor {
+            type Value = Option<Vec<i64>>;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                write!(formatter, "optional list of subscriptions")
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(None)
+            }
+
+            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                deserializer.deserialize_seq(self)
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut result: Vec<i64> = Vec::new();
+                while let Some(element) = seq.next_element::<&'de str>()? {
+                    result.push(element.parse::<i64>().map_err(serde::de::Error::custom)?);
+                }
+
+                Ok(Some(result))
+            }
+        }
+
+        deserializer.deserialize_option(MyVisitor)
+    }
 }
 
 #[derive(Deserialize, Debug)]
