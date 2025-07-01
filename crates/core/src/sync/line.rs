@@ -2,8 +2,7 @@ use alloc::borrow::Cow;
 use alloc::vec::Vec;
 use serde::Deserialize;
 use serde::de::{IgnoredAny, VariantAccess, Visitor};
-
-use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64};
+use serde_with::{DisplayFromStr, serde_as};
 
 use super::Checksum;
 use super::bucket_priority::BucketPriority;
@@ -73,27 +72,28 @@ impl<'de> Deserialize<'de> for SyncLine<'de> {
     }
 }
 
+#[serde_as]
 #[derive(Deserialize, Debug)]
 pub struct Checkpoint<'a> {
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
+    #[serde_as(as = "DisplayFromStr")]
     pub last_op_id: i64,
     #[serde(default)]
-    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub write_checkpoint: Option<i64>,
     #[serde(borrow)]
     pub buckets: Vec<BucketChecksum<'a>>,
 }
 
+#[serde_as]
 #[derive(Deserialize, Debug)]
 pub struct CheckpointDiff<'a> {
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
+    #[serde_as(as = "DisplayFromStr")]
     pub last_op_id: i64,
     #[serde(borrow)]
     pub updated_buckets: Vec<BucketChecksum<'a>>,
     #[serde(borrow)]
     pub removed_buckets: Vec<SyncLineStr<'a>>,
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub write_checkpoint: Option<i64>,
 }
 
@@ -110,6 +110,7 @@ pub struct CheckpointPartiallyComplete {
     pub priority: BucketPriority,
 }
 
+#[serde_as]
 #[derive(Deserialize, Debug)]
 pub struct BucketChecksum<'a> {
     #[serde(borrow)]
@@ -119,58 +120,12 @@ pub struct BucketChecksum<'a> {
     pub priority: Option<BucketPriority>,
     #[serde(default)]
     pub count: Option<i64>,
-    #[serde(
-        default,
-        deserialize_with = "BucketChecksum::deserialize_subscriptions"
-    )]
+    #[serde_as(as = "Option<Vec<DisplayFromStr>>")]
+    #[serde(default)]
     pub subscriptions: Option<Vec<i64>>,
     //    #[serde(default)]
     //    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     //    pub last_op_id: Option<i64>,
-}
-
-impl BucketChecksum<'_> {
-    fn deserialize_subscriptions<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Option<Vec<i64>>, D::Error> {
-        struct MyVisitor;
-
-        impl<'de> Visitor<'de> for MyVisitor {
-            type Value = Option<Vec<i64>>;
-
-            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-                write!(formatter, "optional list of subscriptions")
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(None)
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: serde::Deserializer<'de>,
-            {
-                deserializer.deserialize_seq(self)
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: serde::de::SeqAccess<'de>,
-            {
-                let mut result: Vec<i64> = Vec::new();
-                while let Some(element) = seq.next_element::<&'de str>()? {
-                    result.push(element.parse::<i64>().map_err(serde::de::Error::custom)?);
-                }
-
-                Ok(Some(result))
-            }
-        }
-
-        deserializer.deserialize_option(MyVisitor)
-    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -186,10 +141,11 @@ pub struct DataLine<'a> {
     //    pub next_after: Option<SyncLineStr<'a>>,
 }
 
+#[serde_as]
 #[derive(Deserialize, Debug)]
 pub struct OplogEntry<'a> {
     pub checksum: Checksum,
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
+    #[serde_as(as = "DisplayFromStr")]
     pub op_id: i64,
     pub op: OpType,
     #[serde(default, borrow)]
