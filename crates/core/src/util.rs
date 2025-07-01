@@ -7,7 +7,6 @@ use alloc::string::{String, ToString};
 
 #[cfg(not(feature = "getrandom"))]
 use crate::sqlite;
-use serde::de::Visitor;
 
 use uuid::Uuid;
 
@@ -58,52 +57,6 @@ impl<'a> Display for QuotedString<'a> {
 
 pub fn quote_identifier_prefixed(prefix: &str, name: &str) -> String {
     return format!("\"{:}{:}\"", prefix, name.replace("\"", "\"\""));
-}
-
-pub fn serialize_i64_to_string<'de, S: serde::Serializer>(
-    value: &i64,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.collect_str(value)
-}
-
-pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value: &'de str = serde::Deserialize::deserialize(deserializer)?;
-    value.parse::<i64>().map_err(serde::de::Error::custom)
-}
-
-pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    struct ValueVisitor;
-
-    impl<'de> Visitor<'de> for ValueVisitor {
-        type Value = Option<i64>;
-
-        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-            formatter.write_str("a string or null")
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            Ok(Some(deserialize_string_to_i64(deserializer)?))
-        }
-    }
-
-    deserializer.deserialize_option(ValueVisitor)
 }
 
 // Use getrandom crate to generate UUID.
