@@ -7,6 +7,7 @@ use alloc::rc::Rc;
 use alloc::sync::Arc;
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
 use sqlite::{ResultCode, Value};
 use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
@@ -14,7 +15,6 @@ use sqlite_nostd::{Connection, Context};
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
-use crate::util::serialize_i64_to_string;
 
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
@@ -115,13 +115,14 @@ pub struct StreamSubscriptionRequest {
     pub subscriptions: Vec<RequestedStreamSubscription>,
 }
 
+#[serde_as]
 #[derive(Serialize)]
 pub struct RequestedStreamSubscription {
     /// The name of the sync stream to subscribe to.
     pub stream: String,
     /// Parameters to make available in the stream's definition.
     pub parameters: Box<serde_json::value::RawValue>,
-    #[serde(serialize_with = "serialize_i64_to_string")]
+    #[serde_as(as = "DisplayFromStr")]
     pub client_id: i64,
 }
 
