@@ -30,7 +30,6 @@ jobs:
             x86_64-linux-android \
             i686-linux-android
           cargo install cargo-ndk
-          cargo ndk-env
 
       - name: Build for Android
         run: |

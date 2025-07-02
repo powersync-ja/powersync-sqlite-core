@@ -1,4 +1,11 @@
+import org.gradle.tooling.BuildException
 import java.util.Base64
+import java.util.Properties
+import kotlin.io.path.Path
+import kotlin.io.path.absolutePathString
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.name
 
 plugins {
     id("maven-publish")
@@ -14,7 +21,33 @@ repositories {
     google()
 }
 
+fun ndkPath(): String {
+    val properties = Properties()
+    properties.load(project.rootProject.file("local.properties").inputStream())
+
+    val androidHome = properties["sdk.dir"] ?: System.getenv("ANDROID_HOME")
+    check(androidHome != null) { "Could not find android SDK dir" }
+
+    val ndks = Path(androidHome.toString()).resolve("ndk")
+    check(ndks.exists()) { "Expected NDK installations at $ndks" }
+
+    for (entry in ndks.listDirectoryEntries()) {
+        val name = entry.name
+        val majorVersion = name.split('.').first().toInt()
+
+        // We want to use NDK 28 or newer to build with 16KB support by default.
+        if (majorVersion >= 28) {
+            return entry.absolutePathString()
+        }
+    }
+
+    error("Expected an NDK 28 or later installation in $ndks")
+}
+
 val buildRust = tasks.register<Exec>("buildRust") {
+    group = "build"
+    environment("ANDROID_NDK_HOME", ndkPath())
+
     workingDir("..")
     commandLine(
         "cargo",
