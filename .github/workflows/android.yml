@@ -36,3 +36,10 @@ jobs:
           cd android
           ./gradlew build
           ls -lh build/outputs/aar
+
+      - name: Upload Android library
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-library
+          path: |
+            android/build/outputs/aar/
