@@ -22,13 +22,21 @@ repositories {
 }
 
 fun ndkPath(): String {
-    val properties = Properties()
-    properties.load(project.rootProject.file("local.properties").inputStream())
+    val file = project.rootProject.file("local.properties")
+    var androidHome = System.getenv("ANDROID_HOME")
 
-    val androidHome = properties["sdk.dir"] ?: System.getenv("ANDROID_HOME")
+    if (file.exists()) {
+        val properties = Properties()
+        properties.load(project.rootProject.file("local.properties").inputStream())
+
+        properties["sdk.dir"]?.let {
+            androidHome = it as String
+        }
+    }
+
     check(androidHome != null) { "Could not find android SDK dir" }
 
-    val ndks = Path(androidHome.toString()).resolve("ndk")
+    val ndks = Path(androidHome).resolve("ndk")
     check(ndks.exists()) { "Expected NDK installations at $ndks" }
 
     for (entry in ndks.listDirectoryEntries()) {
