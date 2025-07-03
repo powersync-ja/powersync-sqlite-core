@@ -8,11 +8,11 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
 
-      - uses: actions/setup-java@v3
+      - uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "17"
@@ -36,3 +36,10 @@ jobs:
           cd android
           ./gradlew build
           ls -lh build/outputs/aar
+
+      - name: Upload Android library
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-library
+          path: |
+            android/build/outputs/aar/
