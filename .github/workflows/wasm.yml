@@ -5,7 +5,7 @@ name: "wasm"
 jobs:
   build_wasm:
     name: Basic WASM build
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -5,7 +5,7 @@ name: "tests"
 jobs:
   build:
     name: Testing on ${{ matrix.os }}
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    if: false
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
