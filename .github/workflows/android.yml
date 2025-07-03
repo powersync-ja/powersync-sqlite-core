@@ -34,6 +34,7 @@ jobs:
 
       - name: Publish to Maven Central
         run: |
+          ls -al
           curl --request POST \
             --header 'Authorization: Bearer ${{ secrets.CENTRAL_AUTH }}' \
             --form bundle=@powersync-android.zip \
