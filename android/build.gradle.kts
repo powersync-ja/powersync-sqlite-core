@@ -12,9 +12,11 @@ plugins {
     id("signing")
 }
 
-group = "co.powersync"
+group = "com.powersync"
 version = "0.4.1"
 description = "PowerSync Core SQLite Extension"
+
+val localRepo = uri("build/repository/")
 
 repositories {
     mavenCentral()
@@ -160,43 +162,40 @@ publishing {
     }
 
     repositories {
-        if (System.getenv("OSSRH_USERNAME") != null) {
-            maven {
-                name = "sonatype"
-                url = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
-                credentials {
-                    username = System.getenv("OSSRH_USERNAME")
-                    password = System.getenv("OSSRH_PASSWORD")
-                }
-            }
-        }
-
-        if (System.getenv("GITHUB_ACTOR") != null) {
-            maven {
-                name = "GitHubPackages"
-                url = uri("https://maven.pkg.github.com/powersync-ja/powersync-sqlite-core")
-                credentials {
-                    username = System.getenv("GITHUB_ACTOR")
-                    password = System.getenv("GITHUB_TOKEN")
-                }
-            }
+        maven {
+            name = "here"
+            url = localRepo
         }
     }
 }
 
 signing {
-    if (System.getenv("GPG_PRIVATE_KEY") == null) {
-        useGpgCmd()
-    } else {
-        var signingKey = String(Base64.getDecoder().decode(System.getenv("GPG_PRIVATE_KEY"))).trim()
-        var signingPassword = System.getenv("GPG_PASSWORD")
-        useInMemoryPgpKeys(signingKey, signingPassword)
+    val sign = providers.gradleProperty("signPublication").getOrElse("1")
+
+    if (sign != "0") {
+        val key = providers.gradleProperty("gpgKey")
+        val password = providers.gradleProperty("gpgPassword")
+
+        if (key.isPresent()) {
+            val signingKey = String(Base64.getDecoder().decode(key.get())).trim()
+            useInMemoryPgpKeys(signingKey, password.get())
+        } else {
+            useGpgCmd()
+        }
+
+        sign(publishing.publications)
     }
-    sign(publishing.publications)
 }
 
 tasks.withType<AbstractPublishToMaven>() {
     dependsOn(prefabAar)
+}
+
+val zipPublication by tasks.registering(Zip::class) {
+    dependsOn(tasks.named("publishAllPublicationsToHereRepository"))
+
+    archiveFileName.set("powersync_android.zip")
+    from(localRepo)
 }
 
 tasks.named("build") {
