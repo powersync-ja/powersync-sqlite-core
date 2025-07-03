@@ -59,14 +59,15 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/download-artifact@v4
-        name: android-library
+        with:
+          name: android-library
 
       - name: Publish to Maven Central
         if: ${{ inputs.publish }}
         run: |
           curl --request POST \
             --header 'Authorization: Bearer ${{ secrets.CENTRAL_AUTH }}' \
-            --form bundle=@powersync-android.zip \
+            --form bundle=@powersync_android.zip \
             https://central.sonatype.com/api/v1/publisher/upload
       
       - name: Upload binary
