@@ -10,7 +10,10 @@ use crate::{
     operations::delete_bucket,
     schema::Schema,
     state::DatabaseState,
-    sync::checkpoint::{validate_checkpoint, ChecksumMismatch},
+    sync::{
+        checkpoint::{validate_checkpoint, ChecksumMismatch},
+        interface::{RequestedStreamSubscription, StreamSubscriptionRequest},
+    },
     sync_local::{PartialSyncOperation, SyncOperation},
 };
 
@@ -237,6 +240,18 @@ impl StorageAdapter {
         } else {
             Ok(SyncLocalResult::PendingLocalChanges)
         }
+    }
+
+    pub fn collect_subscription_requests(
+        &self,
+        include_defaults: bool,
+    ) -> Result<StreamSubscriptionRequest, PowerSyncError> {
+        let mut subscriptions: Vec<RequestedStreamSubscription> = Vec::new();
+
+        Ok(StreamSubscriptionRequest {
+            include_defaults,
+            subscriptions,
+        })
     }
 
     pub fn now(&self) -> Result<Timestamp, ResultCode> {
