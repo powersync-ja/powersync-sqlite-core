@@ -14,14 +14,17 @@ jobs:
       - name: Build Android
         uses: ./.github/actions/android
         with:
-          sign-publication: '0'
+          sign-publication: '1'
 
   test_release:
     needs: [build]
     runs-on: ubuntu-latest
-    name: Building Android
+    name: Releasing Android for test
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     steps:
+      - uses: actions/download-artifact@v4
+        name: android-library
+
       - name: Publish to Maven Central
         run: |
           curl --request POST \
