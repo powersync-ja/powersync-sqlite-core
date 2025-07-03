@@ -20,13 +20,31 @@ use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
 
 /// Payload provided by SDKs when requesting a sync iteration.
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct StartSyncStream {
     /// Bucket parameters to include in the request when opening a sync stream.
     #[serde(default)]
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub schema: Schema,
+    #[serde(default = "StartSyncStream::include_defaults_by_default")]
+    pub include_defaults: bool,
+}
+
+impl StartSyncStream {
+    pub const fn include_defaults_by_default() -> bool {
+        true
+    }
+}
+
+impl Default for StartSyncStream {
+    fn default() -> Self {
+        Self {
+            parameters: Default::default(),
+            schema: Default::default(),
+            include_defaults: Self::include_defaults_by_default(),
+        }
+    }
 }
 
 /// A request sent from a client SDK to the [SyncClient] with a `powersync_control` invocation.
@@ -107,6 +125,7 @@ pub struct StreamingSyncRequest {
     pub binary_data: bool,
     pub client_id: String,
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
+    pub streams: StreamSubscriptionRequest,
 }
 
 #[derive(Serialize)]

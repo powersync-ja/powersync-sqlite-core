@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use alloc::string::String;
+use alloc::{boxed::Box, string::String};
 use serde::Deserialize;
 use serde_with::{serde_as, DurationSeconds};
 
@@ -16,7 +16,7 @@ pub enum SubscriptionChangeRequest {
 #[derive(Deserialize)]
 pub struct SubscribeToStream {
     pub stream: String,
-    pub params: Option<serde_json::value::RawValue>,
+    pub params: Option<Box<serde_json::value::RawValue>>,
     #[serde_as(as = "Option<DurationSeconds>")]
     pub ttl: Option<Duration>,
     pub priority: Option<BucketPriority>,
@@ -25,6 +25,6 @@ pub struct SubscribeToStream {
 #[derive(Deserialize)]
 pub struct UnsubscribeFromStream {
     pub stream: String,
-    pub params: Option<serde_json::value::RawValue>,
+    pub params: Option<Box<serde_json::value::RawValue>>,
     pub immediate: bool,
 }
