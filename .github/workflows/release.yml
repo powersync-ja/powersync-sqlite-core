@@ -59,7 +59,8 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/download-artifact@v4
-        name: android-library
+        with:
+          name: android-library
 
       - name: Publish to Maven Central
         if: ${{ inputs.publish }}

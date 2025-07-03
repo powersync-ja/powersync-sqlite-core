@@ -24,8 +24,13 @@ jobs:
     name: Releasing Android for test
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
-        name: android-library
+        with:
+          name: android-library
 
       - name: Publish to Maven Central
         run: |
