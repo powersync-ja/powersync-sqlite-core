@@ -12,8 +12,8 @@ plugins {
     id("signing")
 }
 
-group = "co.powersync"
-version = "0.4.1"
+group = "com.powersync"
+version = "0.0.1"
 description = "PowerSync Core SQLite Extension"
 
 val localRepo = uri("build/repository/")
