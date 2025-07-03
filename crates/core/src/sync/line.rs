@@ -120,9 +120,9 @@ pub struct BucketChecksum<'a> {
     pub priority: Option<BucketPriority>,
     #[serde(default)]
     pub count: Option<i64>,
-    #[serde_as(as = "Option<Vec<DisplayFromStr>>")]
+    #[serde_as(as = "Vec<Option<DisplayFromStr>>")]
     #[serde(default)]
-    pub subscriptions: Option<Vec<i64>>,
+    pub subscriptions: Vec<Option<i64>>,
     //    #[serde(default)]
     //    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     //    pub last_op_id: Option<i64>,

@@ -394,11 +394,11 @@ CREATE TABLE ps_stream_subscriptions (
   local_params TEXT,
   ttl INTEGER
 ) STRICT;
-ALTER TABLE ps_buckets ADD COLUMN derived_from INTEGER REFERENCES ps_streams (id);
+ALTER TABLE ps_buckets ADD COLUMN from_subscriptions TEXT NOT NULL DEFAULT '[null]';
 
-INSERT INTO ps_migration(id, down_migrations) VALUES(9, json_array(
+INSERT INTO ps_migration(id, down_migrations) VALUES(11, json_array(
 json_object('sql', 'todo down migration'),
-json_object('sql', 'DELETE FROM ps_migration WHERE id >= 10')
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 11')
 ));
 ";
         local_db.exec_safe(stmt)?;

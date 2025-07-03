@@ -592,6 +592,9 @@ impl StreamingSyncIteration {
             binary_data: true,
             client_id: client_id(self.db)?,
             parameters: self.options.parameters.take(),
+            streams: self
+                .adapter
+                .collect_subscription_requests(self.options.include_defaults)?,
         };
 
         event
