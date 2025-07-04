@@ -2,6 +2,7 @@ use core::{assert_matches::debug_assert_matches, fmt::Display};
 
 use alloc::{string::ToString, vec::Vec};
 use serde::Serialize;
+use serde_json::value::RawValue;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 
 use crate::{
@@ -13,9 +14,12 @@ use crate::{
     sync::{
         checkpoint::{ChecksumMismatch, validate_checkpoint},
         interface::{RequestedStreamSubscription, StreamSubscriptionRequest},
+        streaming_sync::OwnedStreamDefinition,
+        subscriptions::LocallyTrackedSubscription,
         sync_status::SyncPriorityStatus,
     },
     sync_local::{PartialSyncOperation, SyncOperation},
+    util::{JsonString, column_nullable},
 };
 
 use super::{
@@ -287,6 +291,55 @@ impl StorageAdapter {
         self.time_stmt.reset()?;
 
         Ok(res)
+    }
+
+    fn read_stream_subscription(
+        stmt: &ManagedStmt,
+    ) -> Result<LocallyTrackedSubscription, PowerSyncError> {
+        Ok(LocallyTrackedSubscription {
+            id: stmt.column_int64(0),
+            stream_name: stmt.column_text(1)?.to_string(),
+            active: stmt.column_int(2) != 0,
+            is_default: stmt.column_int(3) != 0,
+            local_priority: column_nullable(&stmt, 4, || {
+                BucketPriority::try_from(stmt.column_int(4))
+            })?,
+            local_params: column_nullable(&stmt, 5, || {
+                JsonString::from_string(stmt.column_text(5)?.to_string())
+            })?,
+            ttl: column_nullable(&stmt, 6, || Ok(stmt.column_int64(6)))?,
+            expires_at: column_nullable(&stmt, 7, || Ok(stmt.column_int64(7)))?,
+        })
+    }
+
+    pub fn iterate_local_subscriptions<F: FnMut(LocallyTrackedSubscription) -> ()>(
+        &self,
+        mut action: F,
+    ) -> Result<(), PowerSyncError> {
+        let stmt = self
+            .db
+            .prepare_v2("SELECT * FROM ps_stream_subscriptions ORDER BY id ASC")?;
+
+        while stmt.step()? == ResultCode::ROW {
+            action(Self::read_stream_subscription(&stmt)?);
+        }
+
+        stmt.finalize()?;
+        Ok(())
+    }
+
+    pub fn create_default_subscription(
+        &self,
+        stream: &OwnedStreamDefinition,
+    ) -> Result<LocallyTrackedSubscription, PowerSyncError> {
+        let stmt = self.db.prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, active, is_default) VALUES (?, TRUE, TRUE) RETURNING *;")?;
+        stmt.bind_text(1, &stream.name, sqlite_nostd::Destructor::STATIC)?;
+
+        if stmt.step()? == ResultCode::ROW {
+            Self::read_stream_subscription(&stmt)
+        } else {
+            Err(PowerSyncError::unknown_internal())
+        }
     }
 }
 

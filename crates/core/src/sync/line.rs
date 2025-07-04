@@ -1,7 +1,8 @@
 use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::Deserialize;
-use serde::de::{IgnoredAny, VariantAccess, Visitor};
+use serde::de::{Error, IgnoredAny, VariantAccess, Visitor};
 use serde_with::{DisplayFromStr, serde_as};
 
 use super::Checksum;
@@ -82,6 +83,14 @@ pub struct Checkpoint<'a> {
     pub write_checkpoint: Option<i64>,
     #[serde(borrow)]
     pub buckets: Vec<BucketChecksum<'a>>,
+    #[serde(default, borrow)]
+    pub streams: Vec<StreamDefinition<'a>>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct StreamDefinition<'a> {
+    pub name: SyncLineStr<'a>,
+    pub is_default: bool,
 }
 
 #[serde_as]
@@ -120,12 +129,65 @@ pub struct BucketChecksum<'a> {
     pub priority: Option<BucketPriority>,
     #[serde(default)]
     pub count: Option<i64>,
-    #[serde_as(as = "Vec<Option<DisplayFromStr>>")]
     #[serde(default)]
-    pub subscriptions: Vec<Option<i64>>,
+    pub subscriptions: BucketSubscriptionReason,
     //    #[serde(default)]
     //    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     //    pub last_op_id: Option<i64>,
+}
+
+/// The reason for why a bucket was included in a checkpoint.
+#[derive(Debug, Default, Clone)]
+pub enum BucketSubscriptionReason {
+    /// A bucket was created for all of the subscription ids we've explicitly requested in the sync
+    /// request.
+    ExplicitlySubscribed { subscriptions: Vec<i64> },
+    /// A bucket was created from a default stream.
+    IsDefault { stream_name: String },
+    /// We're talking to an older sync service not sending the reason.
+    #[default]
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for BucketSubscriptionReason {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct MyVisitor;
+
+        impl<'de> Visitor<'de> for MyVisitor {
+            type Value = BucketSubscriptionReason;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                write!(formatter, "a subscription reason")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut subscriptions = Vec::<i64>::new();
+
+                while let Some(item) = seq.next_element::<&'de str>()? {
+                    subscriptions.push(item.parse().map_err(|_| A::Error::custom("not an int"))?);
+                }
+
+                Ok(BucketSubscriptionReason::ExplicitlySubscribed { subscriptions })
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(BucketSubscriptionReason::IsDefault {
+                    stream_name: v.to_string(),
+                })
+            }
+        }
+
+        deserializer.deserialize_any(MyVisitor)
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -229,6 +291,7 @@ mod tests {
                 last_op_id: 10,
                 write_checkpoint: None,
                 buckets: _,
+                streams: _,
             })
         );
 
@@ -264,6 +327,7 @@ mod tests {
                 last_op_id: 1,
                 write_checkpoint: None,
                 buckets: _,
+                streams: _,
             })
         );
     }
