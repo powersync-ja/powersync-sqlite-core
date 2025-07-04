@@ -15,6 +15,7 @@ use sqlite_nostd::{Connection, Context};
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
+use crate::sync::BucketPriority;
 
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
@@ -141,6 +142,7 @@ pub struct RequestedStreamSubscription {
     pub stream: String,
     /// Parameters to make available in the stream's definition.
     pub parameters: Box<serde_json::value::RawValue>,
+    pub override_priority: Option<BucketPriority>,
     #[serde_as(as = "DisplayFromStr")]
     pub client_id: i64,
 }
