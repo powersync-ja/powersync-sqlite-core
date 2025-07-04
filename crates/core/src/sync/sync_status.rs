@@ -1,10 +1,16 @@
-use alloc::{collections::btree_map::BTreeMap, rc::Rc, string::String, vec::Vec};
-use core::{cell::RefCell, hash::BuildHasher};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, rc::Rc, string::String, vec::Vec};
+use core::{
+    cell::RefCell,
+    hash::{BuildHasher, Hash},
+};
 use rustc_hash::FxBuildHasher;
 use serde::Serialize;
 use sqlite_nostd::ResultCode;
 
-use crate::sync::storage_adapter::StorageAdapter;
+use crate::{
+    sync::{storage_adapter::StorageAdapter, subscriptions::LocallyTrackedSubscription},
+    util::JsonString,
+};
 
 use super::{
     bucket_priority::BucketPriority, interface::Instruction, line::DataLine,
@@ -31,6 +37,7 @@ pub struct DownloadSyncStatus {
     /// When a download is active (that is, a `checkpoint` or `checkpoint_diff` line has been
     /// received), information about how far the download has progressed.
     pub downloading: Option<SyncDownloadProgress>,
+    pub streams: Vec<ActiveStreamSubscription>,
 }
 
 impl DownloadSyncStatus {
@@ -63,10 +70,15 @@ impl DownloadSyncStatus {
     /// Transitions state after receiving a checkpoint line.
     ///
     /// This sets the [downloading] state to include [progress].
-    pub fn start_tracking_checkpoint<'a>(&mut self, progress: SyncDownloadProgress) {
+    pub fn start_tracking_checkpoint<'a>(
+        &mut self,
+        progress: SyncDownloadProgress,
+        subscriptions: Vec<ActiveStreamSubscription>,
+    ) {
         self.mark_connected();
 
         self.downloading = Some(progress);
+        self.streams = subscriptions;
     }
 
     /// Increments [SyncDownloadProgress] progress for the given [DataLine].
@@ -110,6 +122,7 @@ impl Default for DownloadSyncStatus {
             connecting: false,
             downloading: None,
             priority_status: Vec::new(),
+            streams: Vec::new(),
         }
     }
 }
@@ -246,6 +259,33 @@ impl SyncDownloadProgress {
     pub fn increment_download_count(&mut self, line: &DataLine) {
         if let Some(info) = self.buckets.get_mut(&*line.bucket) {
             info.since_last += line.data.len() as i64
+        }
+    }
+}
+
+#[derive(Serialize, Hash)]
+pub struct ActiveStreamSubscription {
+    pub name: String,
+    pub parameters: Option<Box<JsonString>>,
+    pub associated_buckets: Vec<String>,
+    pub active: bool,
+    pub is_default: bool,
+    pub expires_at: Option<Timestamp>,
+    pub has_synced: bool,
+    pub last_synced_at: Option<Timestamp>,
+}
+
+impl ActiveStreamSubscription {
+    pub fn from_local(local: &LocallyTrackedSubscription) -> Self {
+        Self {
+            name: local.stream_name.clone(),
+            parameters: local.local_params.clone(),
+            is_default: local.is_default,
+            associated_buckets: Vec::new(),
+            active: local.active,
+            expires_at: local.expires_at.clone().map(|e| Timestamp(e)),
+            has_synced: false,    // TODDO
+            last_synced_at: None, // TODO
         }
     }
 }

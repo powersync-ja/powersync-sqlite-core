@@ -21,8 +21,14 @@ use crate::{
     kv::client_id,
     state::DatabaseState,
     sync::{
-        BucketPriority, checkpoint::OwnedBucketChecksum, interface::StartSyncStream,
-        line::DataLine, sync_status::Timestamp,
+        BucketPriority,
+        checkpoint::OwnedBucketChecksum,
+        interface::StartSyncStream,
+        line::DataLine,
+        line::{BucketSubscriptionReason, StreamDefinition},
+        subscriptions::{LocallyTrackedSubscription, SubscriptionKey},
+        sync_status::ActiveStreamSubscription,
+        sync_status::Timestamp,
     },
 };
 use sqlite_nostd::{self as sqlite};
@@ -265,9 +271,11 @@ impl StreamingSyncIteration {
 
                 self.adapter
                     .delete_buckets(to_delete.iter().map(|b| b.as_str()))?;
-                let progress = self.load_progress(updated_target.target_checkpoint().unwrap())?;
+                let target = updated_target.target_checkpoint().unwrap();
+                let progress = self.load_progress(&target.checkpoint)?;
                 SyncStateMachineTransition::StartTrackingCheckpoint {
                     progress,
+                    subscription_state: self.resolve_subscription_state(&target)?,
                     updated_target,
                 }
             }
@@ -279,24 +287,26 @@ impl StreamingSyncIteration {
                     ));
                 };
 
-                let mut target = target.clone();
+                let mut target = (*target).clone();
                 target.apply_diff(&diff);
                 self.adapter
                     .delete_buckets(diff.removed_buckets.iter().map(|i| &**i))?;
 
-                let progress = self.load_progress(&target)?;
+                let progress = self.load_progress(&target.checkpoint)?;
                 SyncStateMachineTransition::StartTrackingCheckpoint {
                     progress,
+                    subscription_state: self.resolve_subscription_state(&target)?,
                     updated_target: SyncTarget::Tracking(target),
                 }
             }
             SyncLine::CheckpointComplete(_) => {
-                let Some(target) = target.target_checkpoint() else {
+                let Some(checkpoint) = target.target_checkpoint() else {
                     return Err(PowerSyncError::sync_protocol_error(
                         "Received checkpoint complete without previous checkpoint",
                         PowerSyncErrorCause::Unknown,
                     ));
                 };
+                let target = &checkpoint.checkpoint;
                 let result =
                     self.adapter
                         .sync_local(&self.state, target, None, &self.options.schema)?;
@@ -344,7 +354,7 @@ impl StreamingSyncIteration {
                 };
                 let result = self.adapter.sync_local(
                     &self.state,
-                    target,
+                    &target.checkpoint,
                     Some(priority),
                     &self.options.schema,
                 )?;
@@ -419,9 +429,10 @@ impl StreamingSyncIteration {
             SyncStateMachineTransition::StartTrackingCheckpoint {
                 progress,
                 updated_target,
+                subscription_state,
             } => {
                 self.status.update(
-                    |s| s.start_tracking_checkpoint(progress),
+                    |s| s.start_tracking_checkpoint(progress, subscription_state),
                     &mut event.instructions,
                 );
                 self.validated_but_not_applied = None;
@@ -565,6 +576,63 @@ impl StreamingSyncIteration {
         Ok(progress)
     }
 
+    fn resolve_subscription_state(
+        &self,
+        tracked: &TrackedCheckpoint,
+    ) -> Result<Vec<ActiveStreamSubscription>, PowerSyncError> {
+        let mut tracked_subscriptions: Vec<LocallyTrackedSubscription> = Vec::new();
+
+        // Load known subscriptions from database
+        self.adapter.iterate_local_subscriptions(|sub| {
+            tracked_subscriptions.push(sub);
+        })?;
+
+        // If they don't exist already, create default subscriptions included in checkpoint
+        for subscription in &tracked.streams {
+            if subscription.is_default {
+                let found = tracked_subscriptions
+                    .iter()
+                    .filter(|s| s.stream_name == subscription.name)
+                    .next();
+
+                if found.is_none() {
+                    let subscription = self.adapter.create_default_subscription(subscription)?;
+                    tracked_subscriptions.push(subscription);
+                }
+            }
+        }
+
+        debug_assert!(tracked_subscriptions.is_sorted_by_key(|s| s.id));
+
+        let mut resolved: Vec<ActiveStreamSubscription> = tracked_subscriptions
+            .iter()
+            .map(|e| ActiveStreamSubscription::from_local(e))
+            .collect();
+
+        // TODO: Cleanup old default subscriptions?
+
+        // Iterate over buckets to associate them with subscriptions
+        for bucket in tracked.checkpoint.buckets.values() {
+            match &bucket.subscriptions {
+                BucketSubscriptionReason::ExplicitlySubscribed { subscriptions } => {
+                    for subscription_id in subscriptions {
+                        if let Ok(index) =
+                            tracked_subscriptions.binary_search_by_key(subscription_id, |s| s.id)
+                        {
+                            resolved[index]
+                                .associated_buckets
+                                .push(bucket.bucket.clone());
+                        }
+                    }
+                }
+                BucketSubscriptionReason::IsDefault { stream_name } => todo!(),
+                BucketSubscriptionReason::Unknown => {}
+            }
+        }
+
+        Ok(resolved)
+    }
+
     /// Prepares a sync iteration by handling the initial [SyncEvent::Initialize].
     ///
     /// This prepares a [StreamingSyncRequest] by fetching local sync state and the requested bucket
@@ -617,16 +685,16 @@ impl StreamingSyncIteration {
 enum SyncTarget {
     /// We've received a checkpoint line towards the given checkpoint. The tracked checkpoint is
     /// updated for subsequent checkpoint or checkpoint_diff lines.
-    Tracking(OwnedCheckpoint),
+    Tracking(TrackedCheckpoint),
     /// We have not received a checkpoint message yet. We still keep a list of local buckets around
     /// so that we know which ones to delete depending on the first checkpoint message.
     BeforeCheckpoint(Vec<String>),
 }
 
 impl SyncTarget {
-    fn target_checkpoint(&self) -> Option<&OwnedCheckpoint> {
+    fn target_checkpoint(&self) -> Option<&TrackedCheckpoint> {
         match self {
-            Self::Tracking(cp) => Some(cp),
+            Self::Tracking(tracked) => Some(tracked),
             _ => None,
         }
     }
@@ -642,7 +710,7 @@ impl SyncTarget {
     /// buckets fails.
     fn track_checkpoint<'a>(&self, checkpoint: &Checkpoint<'a>) -> (BTreeSet<String>, Self) {
         let mut to_delete: BTreeSet<String> = match &self {
-            SyncTarget::Tracking(checkpoint) => checkpoint.buckets.keys().cloned().collect(),
+            SyncTarget::Tracking(tracked) => tracked.checkpoint.buckets.keys().cloned().collect(),
             SyncTarget::BeforeCheckpoint(buckets) => buckets.iter().cloned().collect(),
         };
 
@@ -654,8 +722,55 @@ impl SyncTarget {
 
         (
             to_delete,
-            SyncTarget::Tracking(OwnedCheckpoint::from_checkpoint(checkpoint, buckets)),
+            SyncTarget::Tracking(TrackedCheckpoint {
+                checkpoint: OwnedCheckpoint::from_checkpoint(checkpoint, buckets),
+                streams: checkpoint
+                    .streams
+                    .iter()
+                    .map(OwnedStreamDefinition::from_definition)
+                    .collect(),
+            }),
         )
+    }
+}
+
+/// Information about the currently-tracked checkpoint of the sync client.
+///
+/// This struct is initially created from the first [Checkpoint] line and then patched as we receive
+/// [CheckpointDiff] lines afterwards.
+#[derive(Debug, Clone)]
+pub struct TrackedCheckpoint {
+    pub checkpoint: OwnedCheckpoint,
+    /// Streams included in the checkpoint
+    pub streams: Vec<OwnedStreamDefinition>,
+}
+
+impl TrackedCheckpoint {
+    fn apply_diff<'a>(&mut self, diff: &CheckpointDiff<'a>) {
+        self.checkpoint.apply_diff(diff);
+        // stream definitions are never changed by a checkpoint_diff line
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct OwnedStreamDefinition {
+    pub name: String,
+    pub is_default: bool,
+}
+
+impl OwnedStreamDefinition {
+    pub fn from_definition<'a>(definition: &StreamDefinition<'a>) -> Self {
+        Self {
+            name: definition.name.clone().into_owned(),
+            is_default: definition.is_default,
+        }
+    }
+
+    pub fn key(&self) -> SubscriptionKey {
+        SubscriptionKey {
+            stream_name: self.name.clone(),
+            params: None,
+        }
     }
 }
 
@@ -707,6 +822,7 @@ enum SyncStateMachineTransition<'a> {
     StartTrackingCheckpoint {
         progress: SyncDownloadProgress,
         updated_target: SyncTarget,
+        subscription_state: Vec<ActiveStreamSubscription>,
     },
     DataLineSaved {
         line: &'a DataLine<'a>,
