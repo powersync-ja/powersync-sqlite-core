@@ -389,12 +389,13 @@ INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
 CREATE TABLE ps_stream_subscriptions (
   id NOT NULL INTEGER PRIMARY KEY,
   stream_name TEXT NOT NULL,
-  is_default INTEGER NOT NULL,
+  active INTEGER NOT NULL DEFAULT FALSE,
+  is_default INTEGER NOT NULL DEFAULT FALSE,
   local_priority INTEGER,
   local_params TEXT,
-  ttl INTEGER
+  ttl INTEGER,
+  expires_at INTEGER
 ) STRICT;
-ALTER TABLE ps_buckets ADD COLUMN from_subscriptions TEXT NOT NULL DEFAULT '[null]';
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(11, json_array(
 json_object('sql', 'todo down migration'),
