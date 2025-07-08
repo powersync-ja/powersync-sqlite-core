@@ -74,7 +74,7 @@ jobs:
         uses: ./.github/actions/upload
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: powersync-android.zip
+          file-name: powersync_android.zip
           tag: ${{ needs.draft_release.outputs.tag }}
 
   publish_ios_pod_and_spm_package:
