@@ -28,7 +28,7 @@ The above does the following:
 
 1. Create a draft GitHub release.
 2. Build the xcframework for iOS and macOS, and upload to GitHub (attached to the above release).
-3. Build and publish an Android aar to Sonatype. Afterwards,you can monitor the status of the publishing step [here](https://central.sonatype.com/publishing/deployments).
+3. Build and publish an Android aar to Sonatype. Afterwards, you can monitor the status of the publishing step [here](https://central.sonatype.com/publishing/deployments).
 
 Publish the cocoapod:
 
