@@ -68,8 +68,8 @@ jobs:
           curl --request POST \
             --header 'Authorization: Bearer ${{ secrets.CENTRAL_AUTH }}' \
             --form bundle=@powersync_android.zip \
-            https://central.sonatype.com/api/v1/publisher/upload
-      
+            'https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC'
+
       - name: Upload binary
         uses: ./.github/actions/upload
         with:
