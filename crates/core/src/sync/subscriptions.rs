@@ -23,6 +23,7 @@ pub struct LocallyTrackedSubscription {
     pub local_params: Option<Box<JsonString>>,
     pub ttl: Option<i64>,
     pub expires_at: Option<i64>,
+    pub last_synced_at: Option<i64>,
 }
 
 impl LocallyTrackedSubscription {

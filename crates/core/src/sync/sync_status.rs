@@ -271,7 +271,6 @@ pub struct ActiveStreamSubscription {
     pub active: bool,
     pub is_default: bool,
     pub expires_at: Option<Timestamp>,
-    pub has_synced: bool,
     pub last_synced_at: Option<Timestamp>,
 }
 
@@ -284,8 +283,7 @@ impl ActiveStreamSubscription {
             associated_buckets: Vec::new(),
             active: local.active,
             expires_at: local.expires_at.clone().map(|e| Timestamp(e)),
-            has_synced: false,    // TODDO
-            last_synced_at: None, // TODO
+            last_synced_at: local.last_synced_at.map(|e| Timestamp(e)),
         }
     }
 }
