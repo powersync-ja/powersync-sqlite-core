@@ -66,6 +66,8 @@ pub fn quote_identifier_prefixed(prefix: &str, name: &str) -> String {
     return format!("\"{:}{:}\"", prefix, name.replace("\"", "\"\""));
 }
 
+/// Calls [read] to read a column if it's not null, otherwise returns [None].
+#[inline]
 pub fn column_nullable<T, R: FnOnce() -> Result<T, PowerSyncError>>(
     stmt: &ManagedStmt,
     index: i32,

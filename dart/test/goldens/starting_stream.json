@@ -13,7 +13,8 @@
             "connected": false,
             "connecting": true,
             "priority_status": [],
-            "downloading": null
+            "downloading": null,
+            "streams": []
           }
         }
       },
@@ -27,6 +28,10 @@
             "client_id": "test-test-test-test",
             "parameters": {
               "foo": "bar"
+            },
+            "streams": {
+              "include_defaults": true,
+              "subscriptions": []
             }
           }
         }

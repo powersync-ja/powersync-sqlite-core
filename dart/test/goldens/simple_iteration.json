@@ -9,7 +9,8 @@
             "connected": false,
             "connecting": true,
             "priority_status": [],
-            "downloading": null
+            "downloading": null,
+            "streams": []
           }
         }
       },
@@ -21,7 +22,11 @@
             "raw_data": true,
             "binary_data": true,
             "client_id": "test-test-test-test",
-            "parameters": null
+            "parameters": null,
+            "streams": {
+              "include_defaults": true,
+              "subscriptions": []
+            }
           }
         }
       }
@@ -59,7 +64,8 @@
                   "target_count": 1
                 }
               }
-            }
+            },
+            "streams": []
           }
         }
       }
@@ -108,7 +114,8 @@
                   "target_count": 1
                 }
               }
-            }
+            },
+            "streams": []
           }
         }
       }
@@ -146,7 +153,8 @@
                 "has_synced": true
               }
             ],
-            "downloading": null
+            "downloading": null,
+            "streams": []
           }
         }
       }

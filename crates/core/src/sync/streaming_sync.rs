@@ -592,7 +592,7 @@ impl StreamingSyncIteration {
             if subscription.is_default {
                 let found = tracked_subscriptions
                     .iter()
-                    .filter(|s| s.stream_name == subscription.name)
+                    .filter(|s| s.stream_name == subscription.name && s.local_params.is_none())
                     .next();
 
                 if found.is_none() {
@@ -604,10 +604,20 @@ impl StreamingSyncIteration {
 
         debug_assert!(tracked_subscriptions.is_sorted_by_key(|s| s.id));
 
-        let mut resolved: Vec<ActiveStreamSubscription> = tracked_subscriptions
-            .iter()
-            .map(|e| ActiveStreamSubscription::from_local(e))
-            .collect();
+        let mut resolved: Vec<ActiveStreamSubscription> =
+            Vec::with_capacity(tracked_subscriptions.len());
+        // Map of stream name to index in resolved for stream subscriptions without custom
+        // parameters. This simplifies the association from BucketSubscriptionReason::IsDefault to
+        // stream subscriptions later.
+        let mut default_stream_subscriptions = BTreeMap::<&str, usize>::new();
+
+        for (i, subscription) in tracked_subscriptions.iter().enumerate() {
+            resolved.push(ActiveStreamSubscription::from_local(subscription));
+
+            if subscription.local_params.is_none() {
+                default_stream_subscriptions.insert(&subscription.stream_name, i);
+            }
+        }
 
         // TODO: Cleanup old default subscriptions?
 
@@ -625,7 +635,13 @@ impl StreamingSyncIteration {
                         }
                     }
                 }
-                BucketSubscriptionReason::IsDefault { stream_name } => todo!(),
+                BucketSubscriptionReason::IsDefault { stream_name } => {
+                    if let Some(index) = default_stream_subscriptions.get(stream_name.as_str()) {
+                        resolved[*index]
+                            .associated_buckets
+                            .push(bucket.bucket.clone());
+                    }
+                }
                 BucketSubscriptionReason::Unknown => {}
             }
         }

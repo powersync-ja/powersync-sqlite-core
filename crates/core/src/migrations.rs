@@ -12,7 +12,7 @@ use crate::error::{PSResult, PowerSyncError};
 use crate::fix_data::apply_v035_fix;
 use crate::sync::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 10;
+pub const LATEST_VERSION: i32 = 11;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -387,14 +387,15 @@ INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
     if current_version < 11 && target_version >= 11 {
         let stmt = "\
 CREATE TABLE ps_stream_subscriptions (
-  id NOT NULL INTEGER PRIMARY KEY,
+  id INTEGER NOT NULL PRIMARY KEY,
   stream_name TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT FALSE,
   is_default INTEGER NOT NULL DEFAULT FALSE,
   local_priority INTEGER,
   local_params TEXT,
   ttl INTEGER,
-  expires_at INTEGER
+  expires_at INTEGER,
+  last_synced_at INTEGER
 ) STRICT;
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(11, json_array(
@@ -402,7 +403,7 @@ json_object('sql', 'todo down migration'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 11')
 ));
 ";
-        local_db.exec_safe(stmt)?;
+        local_db.exec_safe(stmt).into_db_result(local_db)?;
     }
 
     Ok(())
