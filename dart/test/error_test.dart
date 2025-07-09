@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
-import 'utils/matchers.dart';
 import 'utils/native_test_utils.dart';
+import 'utils/test_utils.dart';
 
 void main() {
   group('error reporting', () {

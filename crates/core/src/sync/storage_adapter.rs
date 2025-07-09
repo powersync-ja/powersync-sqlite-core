@@ -309,6 +309,7 @@ impl StorageAdapter {
             })?,
             ttl: column_nullable(&stmt, 6, || Ok(stmt.column_int64(6)))?,
             expires_at: column_nullable(&stmt, 7, || Ok(stmt.column_int64(7)))?,
+            last_synced_at: column_nullable(&stmt, 8, || Ok(stmt.column_int64(8)))?,
         })
     }
 
@@ -323,8 +324,6 @@ impl StorageAdapter {
         while stmt.step()? == ResultCode::ROW {
             action(Self::read_stream_subscription(&stmt)?);
         }
-
-        stmt.finalize()?;
         Ok(())
     }
 
