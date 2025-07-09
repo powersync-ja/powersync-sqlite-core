@@ -58,7 +58,7 @@ void main() {
   }
 
   group('default streams', () {
-    test('are created on-demand', () {
+    syncTest('are created on-demand', (_) {
       control('start', null);
       control(
         'line_text',
@@ -86,11 +86,28 @@ void main() {
               'active': true,
               'is_default': true,
               'expires_at': null,
-              'last_synced_at': null
+              'last_synced_at': null,
+              'priority': 1,
             }
           ],
         ),
       );
+
+      control(
+        'line_text',
+        json.encode(checkpointComplete(priority: 1)),
+      );
+
+      expect(
+        lastStatus,
+        containsPair(
+          'streams',
+          [containsPair('last_synced_at', 1740823200)],
+        ),
+      );
+
+      final [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(stored, containsPair('last_synced_at', 1740823200));
     });
   });
 }

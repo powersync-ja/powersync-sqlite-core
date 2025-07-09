@@ -126,13 +126,7 @@ void _syncTests<T>({
   }
 
   List<Object?> pushCheckpointComplete({int? priority, String lastOpId = '1'}) {
-    return syncLine({
-      priority == null ? 'checkpoint_complete' : 'partial_checkpoint_complete':
-          {
-        'last_op_id': lastOpId,
-        if (priority != null) 'priority': priority,
-      },
-    });
+    return syncLine(checkpointComplete(priority: priority, lastOpId: lastOpId));
   }
 
   ResultSet fetchRows() {

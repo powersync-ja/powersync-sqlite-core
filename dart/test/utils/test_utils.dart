@@ -21,6 +21,16 @@ Object checkpoint({
   };
 }
 
+/// Creates a `checkpoint_complete` or `partial_checkpoint_complete` line.
+Object checkpointComplete({int? priority, String lastOpId = '1'}) {
+  return {
+    priority == null ? 'checkpoint_complete' : 'partial_checkpoint_complete': {
+      'last_op_id': lastOpId,
+      if (priority != null) 'priority': priority,
+    },
+  };
+}
+
 Object bucketDescription(
   String name, {
   int checksum = 0,

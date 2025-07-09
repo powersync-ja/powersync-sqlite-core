@@ -31,7 +31,7 @@ use crate::{
         sync_status::Timestamp,
     },
 };
-use sqlite_nostd::{self as sqlite};
+use sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
 use super::{
     interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},
@@ -307,9 +307,7 @@ impl StreamingSyncIteration {
                     ));
                 };
                 let target = &checkpoint.checkpoint;
-                let result =
-                    self.adapter
-                        .sync_local(&self.state, target, None, &self.options.schema)?;
+                let result = self.sync_local(target, None)?;
 
                 match result {
                     SyncLocalResult::ChecksumFailure(checkpoint_result) => {
@@ -352,12 +350,7 @@ impl StreamingSyncIteration {
                         "Received checkpoint complete without previous checkpoint",
                     ));
                 };
-                let result = self.adapter.sync_local(
-                    &self.state,
-                    &target.checkpoint,
-                    Some(priority),
-                    &self.options.schema,
-                )?;
+                let result = self.sync_local(&target.checkpoint, Some(priority))?;
 
                 match result {
                     SyncLocalResult::ChecksumFailure(checkpoint_result) => {
@@ -503,12 +496,7 @@ impl StreamingSyncIteration {
                     .map_err(|e| PowerSyncError::sync_protocol_error("invalid binary line", e))?,
                 SyncEvent::UploadFinished => {
                     if let Some(checkpoint) = self.validated_but_not_applied.take() {
-                        let result = self.adapter.sync_local(
-                            &self.state,
-                            &checkpoint,
-                            None,
-                            &self.options.schema,
-                        )?;
+                        let result = self.sync_local(&checkpoint, None)?;
 
                         match result {
                             SyncLocalResult::ChangesApplied => {
@@ -629,17 +617,13 @@ impl StreamingSyncIteration {
                         if let Ok(index) =
                             tracked_subscriptions.binary_search_by_key(subscription_id, |s| s.id)
                         {
-                            resolved[index]
-                                .associated_buckets
-                                .push(bucket.bucket.clone());
+                            resolved[index].mark_associated_with_bucket(&bucket);
                         }
                     }
                 }
                 BucketSubscriptionReason::IsDefault { stream_name } => {
                     if let Some(index) = default_stream_subscriptions.get(stream_name.as_str()) {
-                        resolved[*index]
-                            .associated_buckets
-                            .push(bucket.bucket.clone());
+                        resolved[*index].mark_associated_with_bucket(&bucket);
                     }
                 }
                 BucketSubscriptionReason::Unknown => {}
@@ -647,6 +631,41 @@ impl StreamingSyncIteration {
         }
 
         Ok(resolved)
+    }
+
+    /// Performs a partial or a complete local sync.
+    fn sync_local(
+        &self,
+        target: &OwnedCheckpoint,
+        priority: Option<BucketPriority>,
+    ) -> Result<SyncLocalResult, PowerSyncError> {
+        let result =
+            self.adapter
+                .sync_local(&self.state, target, priority, &self.options.schema)?;
+
+        if matches!(&result, SyncLocalResult::ChangesApplied) {
+            // Update affected stream subscriptions to mark them as synced.
+            let mut status = self.status.inner().borrow_mut();
+            if let Some(ref mut streams) = status.streams {
+                let stmt = self.adapter.db.prepare_v2(
+                    "UPDATE ps_stream_subscriptions SET last_synced_at = unixepoch() WHERE id = ? RETURNING last_synced_at",
+                )?;
+
+                for stream in streams {
+                    if stream.is_in_priority(priority) {
+                        stmt.bind_int64(1, stream.id)?;
+                        if stmt.step()? == ResultCode::ROW {
+                            let timestamp = Timestamp(stmt.column_int64(0));
+                            stream.last_synced_at = Some(timestamp);
+                        }
+
+                        stmt.reset()?;
+                    }
+                }
+            }
+        }
+
+        Ok(result)
     }
 
     /// Prepares a sync iteration by handling the initial [SyncEvent::Initialize].
