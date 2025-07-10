@@ -9,14 +9,15 @@ extern crate alloc;
 
 use core::ffi::{c_char, c_int};
 
-use alloc::sync::Arc;
+use alloc::{ffi::CString, format, sync::Arc};
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 
-use crate::state::DatabaseState;
+use crate::{error::PowerSyncError, state::DatabaseState};
 
 mod bson;
 mod checkpoint;
+mod constants;
 mod crud_vtab;
 mod diff;
 mod error;
@@ -42,21 +43,29 @@ mod vtab_util;
 #[no_mangle]
 pub extern "C" fn sqlite3_powersync_init(
     db: *mut sqlite::sqlite3,
-    _err_msg: *mut *mut c_char,
+    err_msg: *mut *mut c_char,
     api: *mut sqlite::api_routines,
 ) -> c_int {
+    debug_assert!(unsafe { *err_msg }.is_null());
     sqlite::EXTENSION_INIT2(api);
 
     let result = init_extension(db);
 
     return if let Err(code) = result {
-        code as c_int
+        if let Ok(desc) = CString::new(format!("Could not initialize PowerSync: {}", code)) {
+            // Note: This is fine since we're using sqlite3_malloc to allocate in Rust
+            unsafe { *err_msg = desc.into_raw() as *mut c_char };
+        }
+
+        code.sqlite_error_code() as c_int
     } else {
         ResultCode::OK as c_int
     };
 }
 
-fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
+    PowerSyncError::check_sqlite3_version()?;
+
     let state = Arc::new(DatabaseState::new());
 
     crate::version::register(db)?;

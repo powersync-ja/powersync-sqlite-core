@@ -1,4 +1,4 @@
-use core::{error::Error, fmt::Display};
+use core::{error::Error, ffi::c_int, fmt::Display};
 
 use alloc::{
     borrow::Cow,
@@ -6,10 +6,13 @@ use alloc::{
     string::{String, ToString},
 };
 use num_traits::FromPrimitive;
-use sqlite_nostd::{context, sqlite3, Connection, Context, ResultCode};
+use sqlite_nostd::{self as sqlite, context, sqlite3, Connection, Context, ResultCode};
 use thiserror::Error;
 
-use crate::bson::BsonError;
+use crate::{
+    bson::BsonError,
+    constants::{CORE_PKG_VERSION, MIN_SQLITE_VERSION_NUMBER},
+};
 
 /// A [RawPowerSyncError], but boxed.
 ///
@@ -125,7 +128,8 @@ impl PowerSyncError {
             StateError { .. } => ResultCode::MISUSE,
             MissingClientId
             | SyncProtocolError { .. }
-            | DownMigrationDidNotUpdateVersion { .. } => ResultCode::ABORT,
+            | DownMigrationDidNotUpdateVersion { .. }
+            | SqliteVersionMismatch { .. } => ResultCode::ABORT,
             LocalDataError { .. } => ResultCode::CORRUPT,
             Internal { .. } => ResultCode::INTERNAL,
         }
@@ -142,6 +146,20 @@ impl PowerSyncError {
                 }
             }
             _ => false,
+        }
+    }
+
+    pub fn check_sqlite3_version() -> Result<(), PowerSyncError> {
+        let actual_version = sqlite::libversion_number();
+
+        if actual_version < MIN_SQLITE_VERSION_NUMBER {
+            Err(RawPowerSyncError::SqliteVersionMismatch {
+                libversion_number: actual_version,
+                libversion: sqlite::libversion(),
+            }
+            .into())
+        } else {
+            Ok(())
         }
     }
 }
@@ -221,6 +239,15 @@ enum RawPowerSyncError {
     /// A catch-all for remaining internal errors that are very unlikely to happen.
     #[error("Internal PowerSync error. {cause}")]
     Internal { cause: PowerSyncErrorCause },
+    #[error(
+        "Version {} of the PowerSync SQLite extension requires SQLite version number {} or later, but was loaded against {libversion} ({libversion_number})",
+        CORE_PKG_VERSION,
+        MIN_SQLITE_VERSION_NUMBER
+    )]
+    SqliteVersionMismatch {
+        libversion_number: c_int,
+        libversion: &'static str,
+    },
 }
 
 #[derive(Debug)]
