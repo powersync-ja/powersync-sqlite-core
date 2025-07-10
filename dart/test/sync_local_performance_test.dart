@@ -1,3 +1,6 @@
+@Tags(['slow'])
+library;
+
 import 'dart:convert';
 
 import 'package:sqlite3/common.dart';

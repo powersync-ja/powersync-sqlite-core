@@ -78,6 +78,7 @@ jobs:
       - name: Dart tests on macOS
         if: runner.os == 'macOS'
         working-directory: dart
+        # We skip sync_local_performance_test on macOS because the runners are just so slow...
         run: |
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test
+          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test -P skip_slow
+          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test -P skip_slow
