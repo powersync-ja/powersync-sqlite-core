@@ -1,0 +1,6 @@
+tags:
+  slow:
+
+presets:
+  skip_slow:
+    exclude_tags: slow
