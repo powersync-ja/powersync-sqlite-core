@@ -7,6 +7,7 @@ use crate::constants::SUBTYPE_JSON;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
+use crate::sync::subscriptions::apply_subscriptions;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -217,6 +218,11 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
                 "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
+                "subscriptions" => {
+                    let request = serde_json::from_str(payload.text())
+                        .map_err(PowerSyncError::as_argument_error)?;
+                    return apply_subscriptions(ctx.db_handle(), request);
+                }
                 _ => {
                     return Err(PowerSyncError::argument_error("Unknown operation"));
                 }
