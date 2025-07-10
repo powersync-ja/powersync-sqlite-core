@@ -12,6 +12,11 @@ const libPath = '../target/debug';
 var didLoadExtension = false;
 
 void applyOpenOverride() {
+  if (Platform.environment['CORE_TEST_SQLITE'] case final sqlite?) {
+    sqlite_open.open
+        .overrideForAll(() => DynamicLibrary.open(p.absolute(sqlite)));
+  }
+
   sqlite_open.open.overrideFor(sqlite_open.OperatingSystem.linux, () {
     return DynamicLibrary.open('libsqlite3.so.0');
   });

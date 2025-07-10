@@ -2,6 +2,7 @@ on:
   push:
   pull_request:
 name: "tests"
+
 jobs:
   build:
     name: Testing on ${{ matrix.os }}
@@ -10,11 +11,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-          - os: macos-latest
+        os: [ubuntu-24.04, macos-latest]
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - uses: dart-lang/setup-dart@v1
@@ -55,11 +55,27 @@ jobs:
         run: |
           ./target/release/sqlite3 ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"
 
-      - name: Run dart-based tests
-        # Extension loading fails on macos currently
-        if: matrix.os == 'ubuntu-24.04'
+      - uses: actions/cache@v4
+        id: sqlite_build
+        with:
+          path: dart/.dart_tool/sqlite3/
+          key: ${{ runner.os }}-${{ hashFiles('dart/tool/') }}
+
+      - name: Setup Dart tests
+        working-directory: dart
         run: |
-          cd dart
           dart pub get
-          dart test
+          dart run tool/download_sqlite3.dart
           dart analyze
+      
+      - name: Dart tests on Linux
+        if: runner.os == 'ubuntu'
+        run: |
+          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.so dart test
+          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.so dart test
+
+      - name: Dart tests on macOS
+        if: runner.os == 'macOS'
+        run: |
+          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test
+          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test
