@@ -8,6 +8,7 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
+use crate::constants::{short_git_hash, CORE_PKG_VERSION};
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
 
@@ -15,9 +16,7 @@ fn powersync_rs_version_impl(
     _ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
 ) -> Result<String, ResultCode> {
-    let cargo_version = env!("CARGO_PKG_VERSION");
-    let full_hash = String::from(env!("GIT_HASH"));
-    let version = format!("{}/{}", cargo_version, &full_hash[0..8]);
+    let version = format!("{}/{}", CORE_PKG_VERSION, short_git_hash());
     Ok(version)
 }
 
