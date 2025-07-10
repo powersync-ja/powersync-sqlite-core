@@ -69,7 +69,7 @@ jobs:
           dart analyze
       
       - name: Dart tests on Linux
-        if: runner.os == 'ubuntu'
+        if: runner.os == 'Linux'
         run: |
           CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.so dart test
           CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.so dart test
