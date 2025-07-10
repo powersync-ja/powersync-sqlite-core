@@ -3,8 +3,14 @@ use core::{cmp::Ordering, hash::Hash, time::Duration};
 use alloc::{boxed::Box, string::String};
 use serde::Deserialize;
 use serde_with::{serde_as, DurationSeconds};
+use sqlite_nostd::{self as sqlite, Connection};
 
-use crate::{sync::BucketPriority, util::JsonString};
+use crate::{
+    error::{PSResult, PowerSyncError},
+    ext::SafeManagedStmt,
+    sync::BucketPriority,
+    util::JsonString,
+};
 
 /// A key that uniquely identifies a stream subscription.
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
@@ -38,6 +44,7 @@ impl LocallyTrackedSubscription {
 /// A request sent from a PowerSync SDK to alter the subscriptions managed by this client.
 #[derive(Deserialize)]
 pub enum SubscriptionChangeRequest {
+    #[serde(rename = "subscribe")]
     Subscribe(SubscribeToStream),
 }
 
@@ -45,9 +52,12 @@ pub enum SubscriptionChangeRequest {
 #[derive(Deserialize)]
 pub struct SubscribeToStream {
     pub stream: String,
+    #[serde(default)]
     pub params: Option<Box<serde_json::value::RawValue>>,
     #[serde_as(as = "Option<DurationSeconds>")]
+    #[serde(default)]
     pub ttl: Option<Duration>,
+    #[serde(default)]
     pub priority: Option<BucketPriority>,
 }
 
@@ -56,4 +66,38 @@ pub struct UnsubscribeFromStream {
     pub stream: String,
     pub params: Option<Box<serde_json::value::RawValue>>,
     pub immediate: bool,
+}
+
+pub fn apply_subscriptions(
+    db: *mut sqlite::sqlite3,
+    subscription: SubscriptionChangeRequest,
+) -> Result<(), PowerSyncError> {
+    match subscription {
+        SubscriptionChangeRequest::Subscribe(subscription) => {
+            let stmt = db
+                .prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, ttl) VALUES (?, ?2, ?, ?4) ON CONFLICT DO UPDATE SET local_priority = min(coalesce(?2, local_priority), local_priority), ttl = ?4, is_default = FALSE")
+                .into_db_result(db)?;
+
+            stmt.bind_text(1, &subscription.stream, sqlite::Destructor::STATIC)?;
+            match &subscription.priority {
+                Some(priority) => stmt.bind_int(2, priority.number),
+                None => stmt.bind_null(2),
+            }?;
+            stmt.bind_text(
+                3,
+                match &subscription.params {
+                    Some(params) => params.get(),
+                    None => "null",
+                },
+                sqlite::Destructor::STATIC,
+            )?;
+            match &subscription.ttl {
+                Some(ttl) => stmt.bind_int64(4, ttl.as_secs() as i64),
+                None => stmt.bind_null(4),
+            }?;
+            stmt.exec()?;
+        }
+    }
+
+    Ok(())
 }

@@ -47,14 +47,19 @@ void main() {
 
     db.execute('commit');
     final [row] = result;
-    final instructions = jsonDecode(row.columnAt(0)) as List;
-    for (final instruction in instructions) {
-      if (instruction case {'UpdateSyncStatus': final status}) {
-        lastStatus = status['status']!;
-      }
-    }
 
-    return instructions;
+    final rawResult = row.columnAt(0);
+    if (rawResult is String) {
+      final instructions = jsonDecode(row.columnAt(0)) as List;
+      for (final instruction in instructions) {
+        if (instruction case {'UpdateSyncStatus': final status}) {
+          lastStatus = status['status']!;
+        }
+      }
+      return instructions;
+    } else {
+      return const [];
+    }
   }
 
   group('default streams', () {
@@ -108,6 +113,67 @@ void main() {
 
       final [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
       expect(stored, containsPair('last_synced_at', 1740823200));
+    });
+
+    syncTest('are deleted', (_) {
+      control('start', null);
+
+      for (final stream in ['s1', 's2']) {
+        control(
+          'line_text',
+          json.encode(
+            checkpoint(
+              lastOpId: 1,
+              buckets: [
+                bucketDescription('a', subscriptions: stream, priority: 1),
+              ],
+              streams: [(stream, true)],
+            ),
+          ),
+        );
+        control(
+          'line_text',
+          json.encode(checkpointComplete(priority: 1)),
+        );
+      }
+
+      expect(
+        lastStatus,
+        containsPair(
+          'streams',
+          [containsPair('name', 's2')],
+        ),
+      );
+    });
+
+    syncTest('can be made explicit', (_) {
+      control('start', null);
+      control(
+        'line_text',
+        json.encode(
+          checkpoint(
+            lastOpId: 1,
+            buckets: [
+              bucketDescription('a', subscriptions: 'a', priority: 1),
+            ],
+            streams: [('a', true)],
+          ),
+        ),
+      );
+
+      var [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(stored, containsPair('is_default', 1));
+
+      control(
+        'subscriptions',
+        json.encode({
+          'subscribe': {'stream': 'a'},
+        }),
+      );
+
+      [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(stored, containsPair('active', 1));
+      expect(stored, containsPair('is_default', 0));
     });
   });
 }

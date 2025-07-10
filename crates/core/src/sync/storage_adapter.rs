@@ -36,6 +36,7 @@ pub struct StorageAdapter {
     pub db: *mut sqlite::sqlite3,
     pub progress_stmt: ManagedStmt,
     time_stmt: ManagedStmt,
+    delete_subscription: ManagedStmt,
 }
 
 impl StorageAdapter {
@@ -48,10 +49,15 @@ impl StorageAdapter {
         // language=SQLite
         let time = db.prepare_v2("SELECT unixepoch()")?;
 
+        // language=SQLite
+        let delete_subscription =
+            db.prepare_v2("DELETE FROM ps_stream_subscriptions WHERE id = ?")?;
+
         Ok(Self {
             db,
             progress_stmt: progress,
             time_stmt: time,
+            delete_subscription,
         })
     }
 
@@ -296,6 +302,8 @@ impl StorageAdapter {
     fn read_stream_subscription(
         stmt: &ManagedStmt,
     ) -> Result<LocallyTrackedSubscription, PowerSyncError> {
+        let raw_params = stmt.column_text(5)?;
+
         Ok(LocallyTrackedSubscription {
             id: stmt.column_int64(0),
             stream_name: stmt.column_text(1)?.to_string(),
@@ -304,9 +312,11 @@ impl StorageAdapter {
             local_priority: column_nullable(&stmt, 4, || {
                 BucketPriority::try_from(stmt.column_int(4))
             })?,
-            local_params: column_nullable(&stmt, 5, || {
-                JsonString::from_string(stmt.column_text(5)?.to_string())
-            })?,
+            local_params: if raw_params == "null" {
+                None
+            } else {
+                Some(JsonString::from_string(stmt.column_text(5)?.to_string())?)
+            },
             ttl: column_nullable(&stmt, 6, || Ok(stmt.column_int64(6)))?,
             expires_at: column_nullable(&stmt, 7, || Ok(stmt.column_int64(7)))?,
             last_synced_at: column_nullable(&stmt, 8, || Ok(stmt.column_int64(8)))?,
@@ -339,6 +349,13 @@ impl StorageAdapter {
         } else {
             Err(PowerSyncError::unknown_internal())
         }
+    }
+
+    pub fn delete_subscription(&self, id: i64) -> Result<(), PowerSyncError> {
+        let _ = self.delete_subscription.reset();
+        self.delete_subscription.bind_int64(1, id)?;
+        self.delete_subscription.exec()?;
+        Ok(())
     }
 }
 

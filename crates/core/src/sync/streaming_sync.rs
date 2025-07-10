@@ -571,24 +571,40 @@ impl StreamingSyncIteration {
         let mut tracked_subscriptions: Vec<LocallyTrackedSubscription> = Vec::new();
 
         // Load known subscriptions from database
-        self.adapter.iterate_local_subscriptions(|sub| {
+        self.adapter.iterate_local_subscriptions(|mut sub| {
+            // We will mark it as active again if it's part of the streams included in the
+            // checkpoint.
+            sub.active = false;
+
             tracked_subscriptions.push(sub);
         })?;
 
         // If they don't exist already, create default subscriptions included in checkpoint
         for subscription in &tracked.streams {
-            if subscription.is_default {
-                let found = tracked_subscriptions
-                    .iter()
-                    .filter(|s| s.stream_name == subscription.name && s.local_params.is_none())
-                    .next();
+            let matching_local_subscriptions = tracked_subscriptions
+                .iter_mut()
+                .filter(|s| s.stream_name == subscription.name);
 
-                if found.is_none() {
-                    let subscription = self.adapter.create_default_subscription(subscription)?;
-                    tracked_subscriptions.push(subscription);
-                }
+            let mut has_local = false;
+            for subscription in matching_local_subscriptions {
+                subscription.active = true;
+                has_local = true;
+            }
+
+            if !has_local && subscription.is_default {
+                let subscription = self.adapter.create_default_subscription(subscription)?;
+                tracked_subscriptions.push(subscription);
             }
         }
+
+        // Clean up default subscriptions that are no longer active.
+        for subscription in &tracked_subscriptions {
+            if subscription.is_default && !subscription.active {
+                self.adapter.delete_subscription(subscription.id)?;
+            }
+        }
+        tracked_subscriptions
+            .retain(|subscription| !subscription.is_default || subscription.active);
 
         debug_assert!(tracked_subscriptions.is_sorted_by_key(|s| s.id));
 
@@ -606,8 +622,6 @@ impl StreamingSyncIteration {
                 default_stream_subscriptions.insert(&subscription.stream_name, i);
             }
         }
-
-        // TODO: Cleanup old default subscriptions?
 
         // Iterate over buckets to associate them with subscriptions
         for bucket in tracked.checkpoint.buckets.values() {
