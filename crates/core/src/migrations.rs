@@ -392,10 +392,11 @@ CREATE TABLE ps_stream_subscriptions (
   active INTEGER NOT NULL DEFAULT FALSE,
   is_default INTEGER NOT NULL DEFAULT FALSE,
   local_priority INTEGER,
-  local_params TEXT,
+  local_params TEXT NOT NULL DEFAULT 'null',
   ttl INTEGER,
   expires_at INTEGER,
-  last_synced_at INTEGER
+  last_synced_at INTEGER,
+  UNIQUE (stream_name, local_params)
 ) STRICT;
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(11, json_array(
