@@ -70,12 +70,14 @@ jobs:
       
       - name: Dart tests on Linux
         if: runner.os == 'Linux'
+        working-directory: dart
         run: |
           CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.so dart test
           CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.so dart test
 
       - name: Dart tests on macOS
         if: runner.os == 'macOS'
+        working-directory: dart
         run: |
           CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test
           CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test
