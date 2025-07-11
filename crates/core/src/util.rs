@@ -1,7 +1,9 @@
 extern crate alloc;
 
+use core::fmt::{Display, Write};
+
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 
 #[cfg(not(feature = "getrandom"))]
 use crate::sqlite;
@@ -13,7 +15,7 @@ use uuid::Uuid;
 use uuid::Builder;
 
 pub fn quote_string(s: &str) -> String {
-    format!("'{:}'", s.replace("'", "''"))
+    return QuotedString(s).to_string();
 }
 
 pub fn quote_json_path(s: &str) -> String {
@@ -29,6 +31,28 @@ pub fn quote_internal_name(name: &str, local_only: bool) -> String {
         quote_identifier_prefixed("ps_data_local__", name)
     } else {
         quote_identifier_prefixed("ps_data__", name)
+    }
+}
+
+/// A string that [Display]s as a SQLite string literal.
+pub struct QuotedString<'a>(pub &'a str);
+
+impl<'a> Display for QuotedString<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        const SINGLE_QUOTE: char = '\'';
+        const ESCAPE_SEQUENCE: &'static str = "''";
+
+        f.write_char(SINGLE_QUOTE)?;
+
+        for (i, group) in self.0.split(SINGLE_QUOTE).enumerate() {
+            if i != 0 {
+                f.write_str(ESCAPE_SEQUENCE)?;
+            }
+
+            f.write_str(group)?;
+        }
+
+        f.write_char(SINGLE_QUOTE)
     }
 }
 

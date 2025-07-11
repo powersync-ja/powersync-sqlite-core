@@ -12,7 +12,7 @@ use sqlite_nostd::{self as sqlite};
 
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
-use crate::schema::{DiffIncludeOld, Table};
+use crate::schema::{Column, DiffIncludeOld, Table};
 use crate::util::*;
 
 fn powersync_view_sql_impl(
@@ -88,11 +88,12 @@ fn powersync_trigger_delete_sql_impl(
         match &table_info.diff_include_old {
             Some(include_old) => {
                 let mut json = match include_old {
-                    DiffIncludeOld::OnlyForColumns { columns } => {
-                        json_object_fragment("OLD", &mut columns.iter().map(|c| c.as_str()))
-                    }
+                    DiffIncludeOld::OnlyForColumns { columns } => json_object_fragment(
+                        "OLD",
+                        &mut table_info.filtered_columns(columns.iter().map(|c| c.as_str())),
+                    ),
                     DiffIncludeOld::ForAllColumns => {
-                        json_object_fragment("OLD", &mut table_info.column_names())
+                        json_object_fragment("OLD", &mut table_info.columns.iter())
                     }
                 }?;
 
@@ -174,7 +175,7 @@ fn powersync_trigger_insert_sql_impl(
     let trigger_name = quote_identifier_prefixed("ps_view_insert_", view_name);
     let type_string = quote_string(name);
 
-    let json_fragment = json_object_fragment("NEW", &mut table_info.column_names())?;
+    let json_fragment = json_object_fragment("NEW", &mut table_info.columns.iter())?;
 
     let (metadata_key, metadata_value) = if table_info.flags.include_metadata() {
         (",metadata", ",NEW._metadata")
@@ -247,15 +248,15 @@ fn powersync_trigger_update_sql_impl(
     let trigger_name = quote_identifier_prefixed("ps_view_update_", view_name);
     let type_string = quote_string(name);
 
-    let json_fragment_new = json_object_fragment("NEW", &mut table_info.column_names())?;
-    let json_fragment_old = json_object_fragment("OLD", &mut table_info.column_names())?;
+    let json_fragment_new = json_object_fragment("NEW", &mut table_info.columns.iter())?;
+    let json_fragment_old = json_object_fragment("OLD", &mut table_info.columns.iter())?;
 
     let mut old_values_fragment = match &table_info.diff_include_old {
         None => None,
         Some(DiffIncludeOld::ForAllColumns) => Some(json_fragment_old.clone()),
         Some(DiffIncludeOld::OnlyForColumns { columns }) => Some(json_object_fragment(
             "OLD",
-            &mut columns.iter().map(|c| c.as_str()),
+            &mut table_info.filtered_columns(columns.iter().map(|c| c.as_str())),
         )?),
     };
 
@@ -266,9 +267,12 @@ fn powersync_trigger_update_sql_impl(
                 let filtered_new_fragment = match &table_info.diff_include_old {
                     // When include_old_only_when_changed is combined with a column filter, make sure we
                     // only include the powersync_diff of columns matched by the filter.
-                    Some(DiffIncludeOld::OnlyForColumns { columns }) => Cow::Owned(
-                        json_object_fragment("NEW", &mut columns.iter().map(|c| c.as_str()))?,
-                    ),
+                    Some(DiffIncludeOld::OnlyForColumns { columns }) => {
+                        Cow::Owned(json_object_fragment(
+                            "NEW",
+                            &mut table_info.filtered_columns(columns.iter().map(|c| c.as_str())),
+                        )?)
+                    }
                     _ => Cow::Borrowed(json_fragment_new.as_str()),
                 };
 
@@ -401,7 +405,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 /// Example output with prefix "NEW": "json_object('id', NEW.id, 'name', NEW.name, 'age', NEW.age)".
 fn json_object_fragment<'a>(
     prefix: &str,
-    name_results: &mut dyn Iterator<Item = &'a str>,
+    columns: &mut dyn Iterator<Item = &'a Column>,
 ) -> Result<String, PowerSyncError> {
     // floor(SQLITE_MAX_FUNCTION_ARG / 2).
     // To keep databases portable, we use the default limit of 100 args for this,
@@ -409,13 +413,27 @@ fn json_object_fragment<'a>(
     const MAX_ARG_COUNT: usize = 50;
 
     let mut column_names_quoted: Vec<String> = alloc::vec![];
-    while let Some(name) = name_results.next() {
-        let quoted: String = format!(
-            "{:}, {:}.{:}",
-            quote_string(name),
-            prefix,
-            quote_identifier(name)
-        );
+    while let Some(column) = columns.next() {
+        let name = &*column.name;
+        let quoted = match &*column.type_name {
+            // We really want the individual columns here to appear as they show up in the database.
+            // For text columns however, it's possible that e.g. NEW.column was created by a JSON
+            // function, meaning that it has a JSON subtype active - causing the json_object() call
+            // we're about to emit to include it as a subobject instead of a string.
+            "TEXT" | "text" => format!(
+                "{:}, concat({:}.{:})",
+                QuotedString(name),
+                prefix,
+                quote_identifier(name)
+            ),
+            _ => format!(
+                "{:}, {:}.{:}",
+                QuotedString(name),
+                prefix,
+                quote_identifier(name)
+            ),
+        };
+
         column_names_quoted.push(quoted);
     }
 

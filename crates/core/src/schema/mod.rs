@@ -6,7 +6,8 @@ use serde::Deserialize;
 use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 pub use table_info::{
-    DiffIncludeOld, PendingStatement, PendingStatementValue, RawTable, Table, TableInfoFlags,
+    Column, DiffIncludeOld, PendingStatement, PendingStatementValue, RawTable, Table,
+    TableInfoFlags,
 };
 
 #[derive(Deserialize, Default)]
