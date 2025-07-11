@@ -51,8 +51,6 @@ EOF
   <array>
       <string>AppleTVOS</string>
   </array>
-  <key>MinimumOSVersion</key>
-  <string>13.0</string>
   <key>UIDeviceFamily</key>
   <array>
       <integer>3</integer>       
