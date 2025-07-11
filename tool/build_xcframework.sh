@@ -19,6 +19,11 @@ TARGETS=(
   aarch64-apple-watchos-sim
   x86_64-apple-watchos-sim
   arm64_32-apple-watchos
+
+  # tvOS and simulator
+  aarch64-apple-tvos
+  aarch64-apple-tvos-sim
+  x86_64-apple-tvos
 )
 VERSION=0.4.2
 
@@ -40,6 +45,19 @@ function generatePlist() {
 EOF
       )
       min_os_version="9.0";;
+    *"tvos"*)
+      additional_keys=$(cat <<EOF
+  <key>CFBundleSupportedPlatforms</key>
+  <array>
+      <string>AppleTVOS</string>
+  </array>
+  <key>UIDeviceFamily</key>
+  <array>
+      <integer>3</integer>       
+  </array>
+EOF
+      )
+      min_os_version="13.0";;
     *)
       min_os_version="11.0";;
   esac
@@ -77,6 +95,7 @@ function createXcframework() {
   ios_plist=$(generatePlist "ios")
   macos_plist=$(generatePlist "macos")
   watchos_plist=$(generatePlist "watchos")
+  tvos_plist=$(generatePlist "tvos")
 
   echo "===================== create ios device framework ====================="
   mkdir -p "${BUILD_DIR}/ios-arm64/powersync-sqlite-core.framework"
@@ -117,6 +136,22 @@ function createXcframework() {
   lipo ./target/aarch64-apple-watchos-sim/release_apple/libpowersync.a ./target/x86_64-apple-watchos-sim/release_apple/libpowersync.a -create -output "${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework/powersync-sqlite-core"
   # install_name_tool isn't necessary, we use a statically-linked library
 
+  echo "===================== create tvos device framework ====================="
+  mkdir -p "${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework"
+  echo "${tvos_plist}" > "${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework/Info.plist"
+  cp -f "./target/aarch64-apple-tvos/release_apple/libpowersync.dylib" "${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework/powersync-sqlite-core"
+  install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync-sqlite-core" "${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework/powersync-sqlite-core"
+  # Generate dSYM for tvOS Device
+  dsymutil "${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework/powersync-sqlite-core" -o "${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework.dSYM"
+
+  echo "===================== create tvos simulator framework ====================="
+  mkdir -p "${BUILD_DIR}/tvos-arm64_x86_64-simulator/powersync-sqlite-core.framework"
+  echo "${tvos_plist}" > "${BUILD_DIR}/tvos-arm64_x86_64-simulator/powersync-sqlite-core.framework/Info.plist"
+  lipo ./target/aarch64-apple-tvos-sim/release_apple/libpowersync.dylib ./target/x86_64-apple-tvos/release_apple/libpowersync.dylib -create -output "${BUILD_DIR}/tvos-arm64_x86_64-simulator/powersync-sqlite-core.framework/powersync-sqlite-core"
+  install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync-sqlite-core" "${BUILD_DIR}/tvos-arm64_x86_64-simulator/powersync-sqlite-core.framework/powersync-sqlite-core"
+  # Generate dSYM for tvOS Simulator
+  dsymutil "${BUILD_DIR}/tvos-arm64_x86_64-simulator/powersync-sqlite-core.framework/powersync-sqlite-core" -o "${BUILD_DIR}/tvos-arm64_x86_64-simulator/powersync-sqlite-core.framework.dSYM"
+
   echo "===================== create xcframework ====================="
   rm -rf "${BUILD_DIR}/powersync-sqlite-core.xcframework"
 
@@ -129,6 +164,10 @@ function createXcframework() {
     -debug-symbols "$(pwd -P)/${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework.dSYM" \
     -framework "${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework" \
     -framework "${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework" \
+    -framework "${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework" \
+    -debug-symbols "$(pwd -P)/${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework.dSYM" \
+    -framework "${BUILD_DIR}/tvos-arm64_x86_64-simulator/powersync-sqlite-core.framework" \
+    -debug-symbols "$(pwd -P)/${BUILD_DIR}/tvos-arm64_x86_64-simulator/powersync-sqlite-core.framework.dSYM" \
     -output "${BUILD_DIR}/powersync-sqlite-core.xcframework"
 
   cp -Rf "${BUILD_DIR}/powersync-sqlite-core.xcframework" "powersync-sqlite-core.xcframework"
