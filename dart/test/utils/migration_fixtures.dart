@@ -536,8 +536,8 @@ END
       THEN RAISE (FAIL, 'id should be text')
       END;
       INSERT INTO "ps_data__lists"
-      SELECT NEW.id, json_object('description', NEW."description");
-      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', 'lists', 'id', NEW.id, 'data', json(powersync_diff('{}', json_object('description', NEW."description")))));
+      SELECT NEW.id, json_object('description', concat(NEW."description"));
+      INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', 'lists', 'id', NEW.id, 'data', json(powersync_diff('{}', json_object('description', concat(NEW."description"))))));
       INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
       SELECT '$local',
               1,
@@ -557,9 +557,9 @@ BEGIN
   THEN RAISE (FAIL, 'Cannot update id')
   END;
   UPDATE "ps_data__lists"
-      SET data = json_object('description', NEW."description")
+      SET data = json_object('description', concat(NEW."description"))
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', 'lists', 'id', NEW.id, 'data', json(powersync_diff(json_object('description', OLD."description"), json_object('description', NEW."description")))));
+  INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PATCH', 'type', 'lists', 'id', NEW.id, 'data', json(powersync_diff(json_object('description', concat(OLD."description")), json_object('description', concat(NEW."description"))))));
   INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)
   SELECT '$local',
           1,
@@ -598,8 +598,8 @@ END
       WHEN (typeof(NEW.id) != 'text')
       THEN RAISE (FAIL, 'id should be text')
       END;
-      INSERT INTO "ps_data__lists" SELECT NEW.id, json_object('description', NEW."description");
-      INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT',NEW.id,'lists',json(powersync_diff('{}', json_object('description', NEW."description"))));
+      INSERT INTO "ps_data__lists" SELECT NEW.id, json_object('description', concat(NEW."description"));
+      INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT',NEW.id,'lists',json(powersync_diff('{}', json_object('description', concat(NEW."description")))));
     END
 ;CREATE TRIGGER "ps_view_update_lists"
 INSTEAD OF UPDATE ON "lists"
@@ -610,9 +610,9 @@ BEGIN
   THEN RAISE (FAIL, 'Cannot update id')
   END;
   UPDATE "ps_data__lists"
-      SET data = json_object('description', NEW."description")
+      SET data = json_object('description', concat(NEW."description"))
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud(op,type,id,data,options) VALUES ('PATCH','lists',NEW.id,json(powersync_diff(json_object('description', OLD."description"), json_object('description', NEW."description"))),0);
+  INSERT INTO powersync_crud(op,type,id,data,options) VALUES ('PATCH','lists',NEW.id,json(powersync_diff(json_object('description', concat(OLD."description")), json_object('description', concat(NEW."description")))),0);
 END
 ''';
 
@@ -636,8 +636,8 @@ END
       WHEN (typeof(NEW.id) != 'text')
       THEN RAISE (FAIL, 'id should be text')
       END;
-      INSERT INTO "ps_data__lists" SELECT NEW.id, json_object('description', NEW."description");
-      INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT',NEW.id,'lists',json(powersync_diff('{}', json_object('description', NEW."description"))));
+      INSERT INTO "ps_data__lists" SELECT NEW.id, json_object('description', concat(NEW."description"));
+      INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT',NEW.id,'lists',json(powersync_diff('{}', json_object('description', concat(NEW."description")))));
     END
 ;CREATE TRIGGER "ps_view_update_lists"
 INSTEAD OF UPDATE ON "lists"
@@ -648,8 +648,8 @@ BEGIN
   THEN RAISE (FAIL, 'Cannot update id')
   END;
   UPDATE "ps_data__lists"
-      SET data = json_object('description', NEW."description")
+      SET data = json_object('description', concat(NEW."description"))
       WHERE id = NEW.id;
-  INSERT INTO powersync_crud(op,type,id,data,options) VALUES ('PATCH','lists',NEW.id,json(powersync_diff(json_object('description', OLD."description"), json_object('description', NEW."description"))),0);
+  INSERT INTO powersync_crud(op,type,id,data,options) VALUES ('PATCH','lists',NEW.id,json(powersync_diff(json_object('description', concat(OLD."description")), json_object('description', concat(NEW."description")))),0);
 END
 ''';

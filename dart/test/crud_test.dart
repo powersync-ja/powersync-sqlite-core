@@ -661,5 +661,25 @@ void main() {
       // The update which didn't change any rows should not be recorded.
       expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
     });
+
+    test('json values are included as text', () {
+      db
+        ..execute('select powersync_replace_schema(?)', [
+          json.encode({
+            'tables': [
+              {
+                'name': 'items',
+                'columns': [
+                  {'name': 'col', 'type': 'text'}
+                ],
+              }
+            ]
+          })
+        ])
+        ..execute('INSERT INTO items (id, col) VALUES (uuid(), json_object())');
+
+      final [update] = db.select('SELECT data FROM ps_crud');
+      expect(json.decode(update['data']), containsPair('data', {'col': '{}'}));
+    });
   });
 }

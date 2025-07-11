@@ -45,8 +45,21 @@ impl Table {
         }
     }
 
-    pub fn column_names(&self) -> impl Iterator<Item = &str> {
-        self.columns.iter().map(|c| c.name.as_str())
+    pub fn filtered_columns<'a>(
+        &'a self,
+        names: impl Iterator<Item = &'a str>,
+    ) -> impl Iterator<Item = &'a Column> {
+        // First, sort all columns by name for faster lookups by name.
+        let mut sorted_by_name: Vec<&Column> = self.columns.iter().collect();
+        sorted_by_name.sort_by_key(|c| &*c.name);
+
+        names.filter_map(move |name| {
+            let index = sorted_by_name
+                .binary_search_by_key(&name, |c| c.name.as_str())
+                .ok()?;
+
+            Some(sorted_by_name[index])
+        })
     }
 }
 
