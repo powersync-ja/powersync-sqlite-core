@@ -569,6 +569,7 @@ impl StreamingSyncIteration {
         tracked: &TrackedCheckpoint,
     ) -> Result<Vec<ActiveStreamSubscription>, PowerSyncError> {
         let mut tracked_subscriptions: Vec<LocallyTrackedSubscription> = Vec::new();
+        let now = self.adapter.now()?;
 
         // Load known subscriptions from database
         self.adapter.iterate_local_subscriptions(|mut sub| {
@@ -586,9 +587,14 @@ impl StreamingSyncIteration {
                 .filter(|s| s.stream_name == subscription.name);
 
             let mut has_local = false;
-            for subscription in matching_local_subscriptions {
-                subscription.active = true;
+            for local in matching_local_subscriptions {
+                local.active = true;
+                local.is_default = subscription.is_default;
                 has_local = true;
+
+                if let Some(ttl) = local.ttl {
+                    local.expires_at = Some(now.0 + ttl);
+                }
             }
 
             if !has_local && subscription.is_default {
@@ -599,8 +605,10 @@ impl StreamingSyncIteration {
 
         // Clean up default subscriptions that are no longer active.
         for subscription in &tracked_subscriptions {
-            if subscription.is_default && !subscription.active {
+            if !subscription.has_subscribed_manually() && !subscription.active {
                 self.adapter.delete_subscription(subscription.id)?;
+            } else {
+                self.adapter.update_subscription(subscription)?;
             }
         }
         tracked_subscriptions

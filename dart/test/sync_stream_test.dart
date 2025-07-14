@@ -175,5 +175,77 @@ void main() {
       expect(stored, containsPair('active', 1));
       expect(stored, containsPair('is_default', 0));
     });
+
+    syncTest('ttl', (controller) {
+      db.execute(
+          'INSERT INTO ps_stream_subscriptions (stream_name, ttl) VALUES (?, ?);',
+          ['my_stream', 3600]);
+
+      var startInstructions = control('start', null);
+      expect(
+        startInstructions,
+        contains(
+          containsPair(
+            'EstablishSyncStream',
+            containsPair(
+              'request',
+              containsPair(
+                'streams',
+                {
+                  'include_defaults': true,
+                  'subscriptions': [
+                    {
+                      'stream': 'my_stream',
+                      'parameters': null,
+                      'override_priority': null,
+                      'client_id': '1',
+                    }
+                  ],
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+
+      // Send a checkpoint containing the stream, increasing the TTL.
+      control(
+        'line_text',
+        json.encode(
+          checkpoint(
+            lastOpId: 1,
+            buckets: [],
+            streams: [('my_stream', false)],
+          ),
+        ),
+      );
+
+      final [row] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(row, containsPair('expires_at', 1740826800));
+      control('stop', null);
+
+      // Elapse beyond end of TTL
+      controller.elapse(const Duration(hours: 2));
+      startInstructions = control('start', null);
+      expect(
+        startInstructions,
+        contains(
+          containsPair(
+            'EstablishSyncStream',
+            containsPair(
+              'request',
+              containsPair(
+                'streams',
+                {
+                  'include_defaults': true,
+                  // Outdated subscription should no longer be included.
+                  'subscriptions': isEmpty,
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+    });
   });
 }
