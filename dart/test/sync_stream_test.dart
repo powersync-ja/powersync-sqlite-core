@@ -175,6 +175,65 @@ void main() {
       expect(stored, containsPair('active', 1));
       expect(stored, containsPair('is_default', 0));
     });
+  });
+
+  group('explicit subscriptions', () {
+    syncTest('unsubscribe', (_) {
+      db.execute(
+          'INSERT INTO ps_stream_subscriptions (stream_name, ttl) VALUES (?, ?);',
+          ['my_stream', 3600]);
+
+      var startInstructions = control('start', null);
+      expect(
+        startInstructions,
+        contains(
+          containsPair(
+            'EstablishSyncStream',
+            containsPair(
+              'request',
+              containsPair(
+                'streams',
+                {
+                  'include_defaults': true,
+                  'subscriptions': isNotEmpty,
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      control('stop', null);
+
+      control(
+        'subscriptions',
+        json.encode({
+          'unsubscribe': {
+            'stream': 'my_stream',
+            'params': null,
+            'immediate': false,
+          }
+        }),
+      );
+      startInstructions = control('start', null);
+      expect(
+        startInstructions,
+        contains(
+          containsPair(
+            'EstablishSyncStream',
+            containsPair(
+              'request',
+              containsPair(
+                'streams',
+                {
+                  'include_defaults': true,
+                  'subscriptions': isEmpty,
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+    });
 
     syncTest('ttl', (controller) {
       db.execute(
