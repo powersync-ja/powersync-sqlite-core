@@ -350,7 +350,7 @@ impl StorageAdapter {
 
     fn delete_outdated_subscriptions(&self) -> Result<(), PowerSyncError> {
         self.db
-            .exec_safe("DELETE FROM ps_stream_subscriptions WHERE expires_at < unixepoch()")?;
+            .exec_safe("DELETE FROM ps_stream_subscriptions WHERE (expires_at < unixepoch()) OR (ttl IS NULL AND NOT active)")?;
         Ok(())
     }
 
