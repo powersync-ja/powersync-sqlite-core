@@ -33,11 +33,18 @@ pub struct LocallyTrackedSubscription {
 }
 
 impl LocallyTrackedSubscription {
+    /// The default TTL of non-default subscriptions if none is set: One day.
+    pub const DEFAULT_TTL: i64 = 60 * 60 * 24;
+
     pub fn key(&self) -> SubscriptionKey {
         SubscriptionKey {
             stream_name: self.stream_name.clone(),
             params: self.local_params.clone(),
         }
+    }
+
+    pub fn has_subscribed_manually(&self) -> bool {
+        self.ttl.is_some()
     }
 }
 

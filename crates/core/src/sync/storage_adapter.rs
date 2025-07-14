@@ -8,6 +8,7 @@ use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 use crate::{
     error::{PSResult, PowerSyncError},
     ext::SafeManagedStmt,
+    kv::client_id,
     operations::delete_bucket,
     schema::Schema,
     state::DatabaseState,
@@ -37,6 +38,7 @@ pub struct StorageAdapter {
     pub progress_stmt: ManagedStmt,
     time_stmt: ManagedStmt,
     delete_subscription: ManagedStmt,
+    update_subscription: ManagedStmt,
 }
 
 impl StorageAdapter {
@@ -53,11 +55,16 @@ impl StorageAdapter {
         let delete_subscription =
             db.prepare_v2("DELETE FROM ps_stream_subscriptions WHERE id = ?")?;
 
+        // language=SQLite
+        let update_subscription =
+            db.prepare_v2("UPDATE ps_stream_subscriptions SET active = ?2, is_default = ?3, ttl = ?, expires_at = ?, last_synced_at = ? WHERE id = ?1")?;
+
         Ok(Self {
             db,
             progress_stmt: progress,
             time_stmt: time,
             delete_subscription,
+            update_subscription,
         })
     }
 
@@ -283,7 +290,23 @@ impl StorageAdapter {
         &self,
         include_defaults: bool,
     ) -> Result<StreamSubscriptionRequest, PowerSyncError> {
+        self.delete_outdated_subscriptions()?;
+
         let mut subscriptions: Vec<RequestedStreamSubscription> = Vec::new();
+        let stmt = self
+            .db
+            .prepare_v2("SELECT * FROM ps_stream_subscriptions WHERE NOT is_default;")?;
+
+        while let ResultCode::ROW = stmt.step()? {
+            let subscription = Self::read_stream_subscription(&stmt)?;
+
+            subscriptions.push(RequestedStreamSubscription {
+                stream: subscription.stream_name,
+                parameters: subscription.local_params,
+                override_priority: subscription.local_priority,
+                client_id: subscription.id,
+            });
+        }
 
         Ok(StreamSubscriptionRequest {
             include_defaults,
@@ -323,6 +346,12 @@ impl StorageAdapter {
         })
     }
 
+    fn delete_outdated_subscriptions(&self) -> Result<(), PowerSyncError> {
+        self.db
+            .exec_safe("DELETE FROM ps_stream_subscriptions WHERE expires_at < unixepoch()")?;
+        Ok(())
+    }
+
     pub fn iterate_local_subscriptions<F: FnMut(LocallyTrackedSubscription) -> ()>(
         &self,
         mut action: F,
@@ -349,6 +378,39 @@ impl StorageAdapter {
         } else {
             Err(PowerSyncError::unknown_internal())
         }
+    }
+
+    pub fn update_subscription(
+        &self,
+        subscription: &LocallyTrackedSubscription,
+    ) -> Result<(), PowerSyncError> {
+        let _ = self.update_subscription.reset();
+
+        self.update_subscription.bind_int64(1, subscription.id)?;
+        self.update_subscription
+            .bind_int(2, if subscription.active { 1 } else { 0 })?;
+        self.update_subscription
+            .bind_int(3, if subscription.is_default { 1 } else { 0 })?;
+        if let Some(ttl) = subscription.ttl {
+            self.update_subscription.bind_int64(4, ttl)?;
+        } else {
+            self.update_subscription.bind_null(4)?;
+        }
+
+        if let Some(expires_at) = subscription.expires_at {
+            self.update_subscription.bind_int64(5, expires_at)?;
+        } else {
+            self.update_subscription.bind_null(5)?;
+        }
+
+        if let Some(last_synced_at) = subscription.last_synced_at {
+            self.update_subscription.bind_int64(6, last_synced_at)?;
+        } else {
+            self.update_subscription.bind_null(6)?;
+        }
+
+        self.update_subscription.exec()?;
+        Ok(())
     }
 
     pub fn delete_subscription(&self, id: i64) -> Result<(), PowerSyncError> {
