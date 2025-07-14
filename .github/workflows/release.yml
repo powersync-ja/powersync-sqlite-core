@@ -1,12 +1,8 @@
 name: release
 on:
-  workflow_dispatch:
-    inputs:
-      publish:
-        type: boolean
-        required: false
-        default: false
-        description: Set to true to publish artifacts to external targets such as Maven Central
+  push:
+    tags:
+      - v[0-9]+.[0-9]+.[0-9]+
 jobs:
   draft_release:
     if: github.event_name == 'workflow_dispatch'
@@ -63,7 +59,6 @@ jobs:
           name: android-library
 
       - name: Publish to Maven Central
-        if: ${{ inputs.publish }}
         run: |
           curl --request POST \
             --header 'Authorization: Bearer ${{ secrets.CENTRAL_AUTH }}' \
@@ -313,3 +308,49 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           file-name: libpowersync-wasm.a
           tag: ${{ needs.draft_release.outputs.tag }}
+
+  create_sdk_issue:
+    name: "Create issue for SDK updates"
+    permissions:
+      issues: write
+    runs-on: macos-latest
+    needs:
+      - draft_release
+      - publish_android
+      - publish_ios_pod_and_spm_package
+      - publish_linux_x86_64
+      - publish_linux_aarch64
+      - publish_windows_x64
+      - publish_macOS_aarch64
+      - publish_macOS_x64
+      - publish_wasm
+    steps:
+      - name: Create issue
+        run: |
+          gh issue create \
+            --title "$TITLE" \
+            --assignee "$ASSIGNEES" \
+            --body "$BODY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}          
+          TITLE: "Release checklist: ${{ needs.draft_release.outputs.tag }}"
+          ASSIGNES: ${{ github.event.push.sender }}
+          BODY: |
+            This is a checklist to track the release of ${{ needs.draft_release.outputs.tag }}.
+            
+            Core build (this repo):
+            * [x] GitHub Release
+            * [ ] Android aar released on Maven Central
+            * [ ] Cocoapod released
+
+            SQLite + powersync bundles:
+            * [ ] react-native-quick-sqlite: 
+            * [ ] wa-sqlite build: 
+            * [ ] sql.js dev adapter: 
+
+            User-facing SDK updates:
+            * [ ] powersync.dart:
+            * [ ] powersync-js:
+            * [ ] kotlin:
+            * [ ] swift:
