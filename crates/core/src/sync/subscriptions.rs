@@ -100,10 +100,13 @@ pub fn apply_subscriptions(
                 },
                 sqlite::Destructor::STATIC,
             )?;
-            match &subscription.ttl {
-                Some(ttl) => stmt.bind_int64(4, ttl.as_secs() as i64),
-                None => stmt.bind_null(4),
-            }?;
+            stmt.bind_int64(
+                4,
+                subscription
+                    .ttl
+                    .map(|f| f.as_secs() as i64)
+                    .unwrap_or(LocallyTrackedSubscription::DEFAULT_TTL) as i64,
+            )?;
             stmt.exec()?;
         }
         SubscriptionChangeRequest::Unsubscribe(subscription) => {
