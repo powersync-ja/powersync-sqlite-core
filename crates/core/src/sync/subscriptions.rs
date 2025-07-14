@@ -53,6 +53,8 @@ impl LocallyTrackedSubscription {
 pub enum SubscriptionChangeRequest {
     #[serde(rename = "subscribe")]
     Subscribe(SubscribeToStream),
+    #[serde(rename = "unsubscribe")]
+    Unsubscribe(UnsubscribeFromStream),
 }
 
 #[serde_as]
@@ -102,6 +104,21 @@ pub fn apply_subscriptions(
                 Some(ttl) => stmt.bind_int64(4, ttl.as_secs() as i64),
                 None => stmt.bind_null(4),
             }?;
+            stmt.exec()?;
+        }
+        SubscriptionChangeRequest::Unsubscribe(subscription) => {
+            let stmt = db
+                .prepare_v2("UPDATE ps_stream_subscriptions SET ttl = NULL WHERE stream_name = ? AND local_params = ?")
+                .into_db_result(db)?;
+            stmt.bind_text(1, &subscription.stream, sqlite::Destructor::STATIC)?;
+            stmt.bind_text(
+                2,
+                match &subscription.params {
+                    Some(params) => params.get(),
+                    None => "null",
+                },
+                sqlite::Destructor::STATIC,
+            )?;
             stmt.exec()?;
         }
     }

@@ -293,9 +293,11 @@ impl StorageAdapter {
         self.delete_outdated_subscriptions()?;
 
         let mut subscriptions: Vec<RequestedStreamSubscription> = Vec::new();
+        // We have an explicit subscription iff ttl is not null. Checking is_default is not enough,
+        // because a stream can both be a default stream and have an explicit subscription.
         let stmt = self
             .db
-            .prepare_v2("SELECT * FROM ps_stream_subscriptions WHERE NOT is_default;")?;
+            .prepare_v2("SELECT * FROM ps_stream_subscriptions WHERE ttl IS NOT NULL;")?;
 
         while let ResultCode::ROW = stmt.step()? {
             let subscription = Self::read_stream_subscription(&stmt)?;
