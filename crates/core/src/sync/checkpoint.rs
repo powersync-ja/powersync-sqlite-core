@@ -1,4 +1,4 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{rc::Rc, string::String, vec::Vec};
 use num_traits::Zero;
 
 use crate::sync::line::{BucketChecksum, BucketSubscriptionReason};
@@ -13,7 +13,7 @@ pub struct OwnedBucketChecksum {
     pub checksum: Checksum,
     pub priority: BucketPriority,
     pub count: Option<i64>,
-    pub subscriptions: BucketSubscriptionReason,
+    pub subscriptions: Rc<Vec<BucketSubscriptionReason>>,
 }
 
 impl OwnedBucketChecksum {

@@ -1,4 +1,5 @@
 use alloc::borrow::Cow;
+use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::Deserialize;
@@ -130,23 +131,19 @@ pub struct BucketChecksum<'a> {
     #[serde(default)]
     pub count: Option<i64>,
     #[serde(default)]
-    pub subscriptions: BucketSubscriptionReason,
+    pub subscriptions: Rc<Vec<BucketSubscriptionReason>>,
     //    #[serde(default)]
     //    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     //    pub last_op_id: Option<i64>,
 }
 
 /// The reason for why a bucket was included in a checkpoint.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug)]
 pub enum BucketSubscriptionReason {
-    /// A bucket was created for all of the subscription ids we've explicitly requested in the sync
-    /// request.
-    ExplicitlySubscribed { subscriptions: Vec<i64> },
     /// A bucket was created from a default stream.
-    IsDefault { stream_name: String },
-    /// We're talking to an older sync service not sending the reason.
-    #[default]
-    Unknown,
+    DerivedFromDefaultStream(String),
+    /// A bucket was created for a subscription id we've explicitly requested in the sync request.
+    DerivedFromExplicitSubscription(i64),
 }
 
 impl<'de> Deserialize<'de> for BucketSubscriptionReason {
@@ -156,6 +153,8 @@ impl<'de> Deserialize<'de> for BucketSubscriptionReason {
     {
         struct MyVisitor;
 
+        const VARIANTS: &'static [&'static str] = &["def", "sub"];
+
         impl<'de> Visitor<'de> for MyVisitor {
             type Value = BucketSubscriptionReason;
 
@@ -163,30 +162,29 @@ impl<'de> Deserialize<'de> for BucketSubscriptionReason {
                 write!(formatter, "a subscription reason")
             }
 
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
             where
-                A: serde::de::SeqAccess<'de>,
+                A: serde::de::EnumAccess<'de>,
             {
-                let mut subscriptions = Vec::<i64>::new();
+                let (key, variant) = data.variant::<&'de str>()?;
+                Ok(match key {
+                    "def" => BucketSubscriptionReason::DerivedFromDefaultStream(
+                        variant.newtype_variant()?,
+                    ),
+                    "sub" => {
+                        let textual_id = variant.newtype_variant::<&'de str>()?;
+                        let id = textual_id
+                            .parse()
+                            .map_err(|_| A::Error::custom("not an int"))?;
 
-                while let Some(item) = seq.next_element::<&'de str>()? {
-                    subscriptions.push(item.parse().map_err(|_| A::Error::custom("not an int"))?);
-                }
-
-                Ok(BucketSubscriptionReason::ExplicitlySubscribed { subscriptions })
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Ok(BucketSubscriptionReason::IsDefault {
-                    stream_name: v.to_string(),
+                        BucketSubscriptionReason::DerivedFromExplicitSubscription(id)
+                    }
+                    other => return Err(A::Error::unknown_variant(other, VARIANTS)),
                 })
             }
         }
 
-        deserializer.deserialize_any(MyVisitor)
+        deserializer.deserialize_enum("BucketSubscriptionReason", VARIANTS, MyVisitor)
     }
 }
 
