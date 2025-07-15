@@ -145,33 +145,43 @@ impl<'a> SyncOperation<'a> {
         let mut untyped_delete_statement: Option<ManagedStmt> = None;
         let mut untyped_insert_statement: Option<ManagedStmt> = None;
 
+        let mut jsonb2json: Option<ManagedStmt> = None;
+
         while statement.step().into_db_result(self.db)? == ResultCode::ROW {
             let type_name = statement.column_text(0)?;
             let id = statement.column_text(1)?;
-            let data = statement.column_text(2);
+            // data can either be null (delete), or a JSON object as text or blob (put)
+            let data_value = statement.column_value(2)?;
+            let has_data = data_value.value_type() != ColumnType::Null;
 
             if let Some(known) = self.schema.tables.get_mut(type_name) {
                 if let Some(raw) = &mut known.raw {
-                    match data {
-                        Ok(data) => {
-                            let stmt = raw.put_statement(self.db)?;
-                            let parsed: serde_json::Value = serde_json::from_str(data)
-                                .map_err(PowerSyncError::json_local_error)?;
-                            stmt.bind_for_put(id, &parsed)?;
-                            stmt.stmt.exec()?;
-                        }
-                        Err(_) => {
-                            let stmt = raw.delete_statement(self.db)?;
-                            stmt.bind_for_delete(id)?;
-                            stmt.stmt.exec()?;
-                        }
+                    if has_data {
+                        // data_value could be jsonb, but we need json to parse it for raw statements.
+                        let convert_stmt = match &jsonb2json {
+                            Some(stmt) => stmt,
+                            None => jsonb2json.insert(self.db.prepare_v2("SELECT json(?)")?),
+                        };
+
+                        convert_stmt.reset()?;
+                        convert_stmt.bind_value(1, data_value)?;
+                        convert_stmt.step()?;
+                        let data = convert_stmt.column_text(0)?;
+
+                        let stmt = raw.put_statement(self.db)?;
+                        let parsed: serde_json::Value =
+                            serde_json::from_str(data).map_err(PowerSyncError::json_local_error)?;
+                        stmt.bind_for_put(id, &parsed)?;
+                        stmt.stmt.exec()?;
+                    } else {
+                        let stmt = raw.delete_statement(self.db)?;
+                        stmt.bind_for_delete(id)?;
+                        stmt.stmt.exec()?;
                     }
                 } else {
                     let quoted = quote_internal_name(type_name, false);
 
-                    // is_err() is essentially a NULL check here.
-                    // NULL data means no PUT operations found, so we delete the row.
-                    if data.is_err() {
+                    if !has_data {
                         // DELETE
                         if last_delete_table.as_deref() != Some(&quoted) {
                             // Prepare statement when the table changed
@@ -204,12 +214,12 @@ impl<'a> SyncOperation<'a> {
                         let insert_statement = last_insert_statement.as_mut().unwrap();
                         insert_statement.reset()?;
                         insert_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
-                        insert_statement.bind_text(2, data?, sqlite::Destructor::STATIC)?;
+                        insert_statement.bind_value(2, data_value)?;
                         insert_statement.exec()?;
                     }
                 }
             } else {
-                if data.is_err() {
+                if !has_data {
                     // DELETE
                     if untyped_delete_statement.is_none() {
                         // Prepare statement on first use
@@ -240,7 +250,7 @@ impl<'a> SyncOperation<'a> {
                     insert_statement.reset()?;
                     insert_statement.bind_text(1, type_name, sqlite::Destructor::STATIC)?;
                     insert_statement.bind_text(2, id, sqlite::Destructor::STATIC)?;
-                    insert_statement.bind_text(3, data?, sqlite::Destructor::STATIC)?;
+                    insert_statement.bind_value(3, data_value)?;
                     insert_statement.exec()?;
                 }
             }
