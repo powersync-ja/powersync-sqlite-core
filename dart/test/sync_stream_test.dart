@@ -72,7 +72,10 @@ void main() {
             lastOpId: 1,
             buckets: [
               bucketDescription('a',
-                  subscriptions: 'my_default_stream', priority: 1),
+                  subscriptions: [
+                    {'def': 'my_default_stream'}
+                  ],
+                  priority: 1),
             ],
             streams: [('my_default_stream', true)],
           ),
@@ -90,6 +93,7 @@ void main() {
               'associated_buckets': ['a'],
               'active': true,
               'is_default': true,
+              'has_explicit_subscription': false,
               'expires_at': null,
               'last_synced_at': null,
               'priority': 1,
@@ -125,7 +129,11 @@ void main() {
             checkpoint(
               lastOpId: 1,
               buckets: [
-                bucketDescription('a', subscriptions: stream, priority: 1),
+                bucketDescription('a',
+                    subscriptions: [
+                      {'def': stream}
+                    ],
+                    priority: 1),
               ],
               streams: [(stream, true)],
             ),
@@ -154,7 +162,11 @@ void main() {
           checkpoint(
             lastOpId: 1,
             buckets: [
-              bucketDescription('a', subscriptions: 'a', priority: 1),
+              bucketDescription('a',
+                  subscriptions: [
+                    {'def': 'a'}
+                  ],
+                  priority: 1),
             ],
             streams: [('a', true)],
           ),

@@ -633,22 +633,23 @@ impl StreamingSyncIteration {
 
         // Iterate over buckets to associate them with subscriptions
         for bucket in tracked.checkpoint.buckets.values() {
-            match &bucket.subscriptions {
-                BucketSubscriptionReason::ExplicitlySubscribed { subscriptions } => {
-                    for subscription_id in subscriptions {
-                        if let Ok(index) =
-                            tracked_subscriptions.binary_search_by_key(subscription_id, |s| s.id)
-                        {
-                            resolved[index].mark_associated_with_bucket(&bucket);
-                        }
+            for reason in &*bucket.subscriptions {
+                let subscription_index = match reason {
+                    BucketSubscriptionReason::DerivedFromDefaultStream(stream_name) => {
+                        default_stream_subscriptions
+                            .get(stream_name.as_str())
+                            .cloned()
                     }
-                }
-                BucketSubscriptionReason::IsDefault { stream_name } => {
-                    if let Some(index) = default_stream_subscriptions.get(stream_name.as_str()) {
-                        resolved[*index].mark_associated_with_bucket(&bucket);
+                    BucketSubscriptionReason::DerivedFromExplicitSubscription(subscription_id) => {
+                        tracked_subscriptions
+                            .binary_search_by_key(subscription_id, |s| s.id)
+                            .ok()
                     }
+                };
+
+                if let Some(index) = subscription_index {
+                    resolved[index].mark_associated_with_bucket(&bucket);
                 }
-                BucketSubscriptionReason::Unknown => {}
             }
         }
 

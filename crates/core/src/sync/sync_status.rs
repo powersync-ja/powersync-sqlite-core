@@ -281,6 +281,7 @@ pub struct ActiveStreamSubscription {
     pub priority: Option<BucketPriority>,
     pub active: bool,
     pub is_default: bool,
+    pub has_explicit_subscription: bool,
     pub expires_at: Option<Timestamp>,
     pub last_synced_at: Option<Timestamp>,
 }
@@ -295,13 +296,25 @@ impl ActiveStreamSubscription {
             priority: None,
             associated_buckets: Vec::new(),
             active: local.active,
+            has_explicit_subscription: local.has_subscribed_manually(),
             expires_at: local.expires_at.clone().map(|e| Timestamp(e)),
             last_synced_at: local.last_synced_at.map(|e| Timestamp(e)),
         }
     }
 
     pub fn mark_associated_with_bucket(&mut self, bucket: &OwnedBucketChecksum) {
-        self.associated_buckets.push(bucket.bucket.clone());
+        match self.associated_buckets.binary_search(&bucket.bucket) {
+            Ok(_) => {
+                // The bucket is already part of the list
+                return;
+            }
+            Err(position) => {
+                // Insert here to keep vec sorted
+                self.associated_buckets
+                    .insert(position, bucket.bucket.clone());
+            }
+        };
+
         self.priority = Some(match self.priority {
             None => bucket.priority,
             Some(prio) => min(prio, bucket.priority),
