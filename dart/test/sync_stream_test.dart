@@ -175,6 +175,7 @@ void main() {
 
       var [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
       expect(stored, containsPair('is_default', 1));
+      expect(stored, containsPair('ttl', isNull));
 
       control(
         'subscriptions',
@@ -185,7 +186,29 @@ void main() {
 
       [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
       expect(stored, containsPair('active', 1));
+      // It's still a default stream, but it now has a TTL to indicate the
+      // explicit subscription.
+      expect(stored, containsPair('is_default', 1));
+      expect(stored, containsPair('ttl', isNotNull));
+
+      // Remove the stream from the checkpoint, should still be included due to
+      // the explicit subscription.
+      control(
+        'line_text',
+        json.encode(
+          checkpoint(
+            lastOpId: 1,
+            buckets: [
+              bucketDescription('a', priority: 1),
+            ],
+          ),
+        ),
+      );
+
+      [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(stored, containsPair('active', 0));
       expect(stored, containsPair('is_default', 0));
+      expect(stored, containsPair('ttl', isNotNull));
     });
   });
 
@@ -310,6 +333,58 @@ void main() {
                 {
                   'include_defaults': true,
                   // Outdated subscription should no longer be included.
+                  'subscriptions': isEmpty,
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+
+    syncTest('can be made implicit', (_) {
+      control(
+          'subscriptions',
+          json.encode({
+            'subscribe': {'stream': 'a'}
+          }));
+      control('start', null);
+      control(
+        'line_text',
+        json.encode(
+          checkpoint(
+            lastOpId: 1,
+            buckets: [],
+            streams: [('a', true)],
+          ),
+        ),
+      );
+
+      var [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(stored, containsPair('is_default', 1));
+      expect(stored, containsPair('ttl', isNotNull));
+
+      control(
+        'subscriptions',
+        json.encode({
+          'unsubscribe': {'stream': 'a', 'immediate': false}
+        }),
+      );
+      control('stop', null);
+
+      // The stream should no longer be requested
+      var startInstructions = control('start', null);
+      expect(
+        startInstructions,
+        contains(
+          containsPair(
+            'EstablishSyncStream',
+            containsPair(
+              'request',
+              containsPair(
+                'streams',
+                {
+                  'include_defaults': true,
                   'subscriptions': isEmpty,
                 },
               ),

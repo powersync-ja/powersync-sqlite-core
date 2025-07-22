@@ -73,6 +73,7 @@ pub struct SubscribeToStream {
 #[derive(Deserialize)]
 pub struct UnsubscribeFromStream {
     pub stream: String,
+    #[serde(default)]
     pub params: Option<Box<serde_json::value::RawValue>>,
     pub immediate: bool,
 }
@@ -84,7 +85,7 @@ pub fn apply_subscriptions(
     match subscription {
         SubscriptionChangeRequest::Subscribe(subscription) => {
             let stmt = db
-                .prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, ttl) VALUES (?, ?2, ?, ?4) ON CONFLICT DO UPDATE SET local_priority = min(coalesce(?2, local_priority), local_priority), ttl = ?4, is_default = FALSE")
+                .prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, ttl) VALUES (?, ?2, ?, ?4) ON CONFLICT DO UPDATE SET local_priority = min(coalesce(?2, local_priority), local_priority), ttl = ?4")
                 .into_db_result(db)?;
 
             stmt.bind_text(1, &subscription.stream, sqlite::Destructor::STATIC)?;

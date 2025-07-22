@@ -578,6 +578,7 @@ impl StreamingSyncIteration {
             // We will mark it as active again if it's part of the streams included in the
             // checkpoint.
             sub.active = false;
+            sub.is_default = false;
 
             tracked_subscriptions.push(sub);
         })?;
@@ -614,7 +615,7 @@ impl StreamingSyncIteration {
             }
         }
         tracked_subscriptions
-            .retain(|subscription| !subscription.is_default || subscription.active);
+            .retain(|subscription| subscription.has_subscribed_manually() || subscription.active);
 
         debug_assert!(tracked_subscriptions.is_sorted_by_key(|s| s.id));
 
