@@ -75,7 +75,6 @@ pub struct UnsubscribeFromStream {
     pub stream: String,
     #[serde(default)]
     pub params: Option<Box<serde_json::value::RawValue>>,
-    pub immediate: bool,
 }
 
 pub fn apply_subscriptions(
