@@ -43,7 +43,7 @@ Object bucketDescription(
     'checksum': checksum,
     'priority': priority,
     'count': count,
-    'subscriptions': subscriptions,
+    if (subscriptions != null) 'subscriptions': subscriptions,
   };
 }
 
