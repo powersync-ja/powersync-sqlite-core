@@ -245,7 +245,6 @@ void main() {
           'unsubscribe': {
             'stream': 'my_stream',
             'params': null,
-            'immediate': false,
           }
         }),
       );
@@ -367,7 +366,7 @@ void main() {
       control(
         'subscriptions',
         json.encode({
-          'unsubscribe': {'stream': 'a', 'immediate': false}
+          'unsubscribe': {'stream': 'a'}
         }),
       );
       control('stop', null);
