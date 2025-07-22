@@ -84,7 +84,17 @@ pub fn apply_subscriptions(
     match subscription {
         SubscriptionChangeRequest::Subscribe(subscription) => {
             let stmt = db
-                .prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, ttl) VALUES (?, ?2, ?, ?4) ON CONFLICT DO UPDATE SET local_priority = min(coalesce(?2, local_priority), local_priority), ttl = ?4")
+                .prepare_v2(
+                    "
+INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, ttl, expires_at)
+    VALUES (?, ?2, ?, ?4, unixepoch() + ?4)
+    ON CONFLICT DO UPDATE SET
+        local_priority = min(coalesce(?2, local_priority),
+        local_priority),
+        ttl = ?4,
+        expires_at = unixepoch() + ?4
+                ",
+                )
                 .into_db_result(db)?;
 
             stmt.bind_text(1, &subscription.stream, sqlite::Destructor::STATIC)?;
