@@ -270,9 +270,18 @@ void main() {
     });
 
     syncTest('ttl', (controller) {
-      db.execute(
-          'INSERT INTO ps_stream_subscriptions (stream_name, ttl) VALUES (?, ?);',
-          ['my_stream', 3600]);
+      control(
+        'subscriptions',
+        json.encode({
+          'subscribe': {
+            'stream': 'my_stream',
+            'ttl': 3600,
+          }
+        }),
+      );
+
+      final [row] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(row, containsPair('expires_at', 1740826800));
 
       var startInstructions = control('start', null);
       expect(
@@ -300,21 +309,6 @@ void main() {
           ),
         ),
       );
-
-      // Send a checkpoint containing the stream, increasing the TTL.
-      control(
-        'line_text',
-        json.encode(
-          checkpoint(
-            lastOpId: 1,
-            buckets: [],
-            streams: [('my_stream', false)],
-          ),
-        ),
-      );
-
-      final [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', 1740826800));
       control('stop', null);
 
       // Elapse beyond end of TTL

@@ -592,10 +592,6 @@ impl StreamingSyncIteration {
                 local.active = true;
                 local.is_default = subscription.is_default;
                 has_local = true;
-
-                if let Some(ttl) = local.ttl {
-                    local.expires_at = Some(now.0 + ttl);
-                }
             }
 
             if !has_local && subscription.is_default {
