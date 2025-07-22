@@ -400,7 +400,7 @@ CREATE TABLE ps_stream_subscriptions (
 ) STRICT;
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(11, json_array(
-json_object('sql', 'todo down migration'),
+json_object('sql', 'DROP TABLE ps_stream_subscriptions'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 11')
 ));
 ";
