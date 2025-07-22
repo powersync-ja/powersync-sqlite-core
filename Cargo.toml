@@ -23,7 +23,6 @@ debug = true
 
 [profile.wasm]
 inherits = "release"
-debug = true
 
 [profile.wasm_asyncify]
 inherits = "wasm"
