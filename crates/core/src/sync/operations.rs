@@ -45,7 +45,7 @@ RETURNING op_id, hash",
 
     // language=SQLite
     let insert_statement = db.prepare_v2("\
-INSERT INTO ps_oplog(bucket, op_id, key, row_type, row_id, data, hash) VALUES (?, ?, ?, ?, ?, ?, ?)")?;
+INSERT INTO ps_oplog(bucket, op_id, key, row_type, row_id, data, hash) VALUES (?, ?, ?, ?, ?, jsonb(?), ?)")?;
     insert_statement.bind_int64(1, bucket_id)?;
 
     let updated_row_statement = db.prepare_v2(
