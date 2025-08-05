@@ -10,7 +10,10 @@ use crate::{
     operations::delete_bucket,
     schema::Schema,
     state::DatabaseState,
-    sync::checkpoint::{validate_checkpoint, ChecksumMismatch},
+    sync::{
+        checkpoint::{validate_checkpoint, ChecksumMismatch},
+        sync_status::SyncPriorityStatus,
+    },
     sync_local::{PartialSyncOperation, SyncOperation},
 };
 
@@ -66,6 +69,32 @@ impl StorageAdapter {
         }
 
         Ok(requests)
+    }
+
+    pub fn collect_sync_state(&self) -> Result<Vec<SyncPriorityStatus>, PowerSyncError> {
+        // language=SQLite
+        let statement = self
+            .db
+            .prepare_v2(
+                "SELECT priority, unixepoch(last_synced_at) FROM ps_sync_state ORDER BY priority",
+            )
+            .into_db_result(self.db)?;
+
+        let mut items = Vec::<SyncPriorityStatus>::new();
+        while statement.step()? == ResultCode::ROW {
+            let priority = BucketPriority {
+                number: statement.column_int(0),
+            };
+            let timestamp = statement.column_int64(1);
+
+            items.push(SyncPriorityStatus {
+                priority,
+                last_synced_at: Some(Timestamp(timestamp)),
+                has_synced: Some(true),
+            });
+        }
+
+        return Ok(items);
     }
 
     pub fn delete_buckets<'a>(

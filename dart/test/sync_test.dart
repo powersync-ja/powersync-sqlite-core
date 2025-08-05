@@ -301,6 +301,46 @@ void _syncTests<T>({
     }
   });
 
+  syncTest('remembers sync state', (controller) {
+    invokeControl('start', null);
+
+    pushCheckpoint(buckets: priorityBuckets);
+    pushCheckpointComplete();
+
+    controller.elapse(Duration(minutes: 10));
+    pushCheckpoint(buckets: priorityBuckets);
+    pushCheckpointComplete(priority: 2);
+    invokeControl('stop', null);
+
+    final instructions = invokeControl('start', null);
+    expect(
+      instructions,
+      contains(
+        containsPair(
+          'UpdateSyncStatus',
+          containsPair(
+            'status',
+            containsPair(
+              'priority_status',
+              [
+                {
+                  'priority': 2,
+                  'last_synced_at': 1740823800,
+                  'has_synced': true
+                },
+                {
+                  'priority': 2147483647,
+                  'last_synced_at': 1740823200,
+                  'has_synced': true
+                },
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   test('clearing database clears sync status', () {
     invokeControl('start', null);
     pushCheckpoint(buckets: priorityBuckets);
