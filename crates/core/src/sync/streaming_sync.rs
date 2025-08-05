@@ -577,8 +577,11 @@ impl StreamingSyncIteration {
             ));
         };
 
-        self.status
-            .update(|s| s.start_connecting(), &mut event.instructions);
+        let sync_state = self.adapter.collect_sync_state()?;
+        self.status.update(
+            move |s| s.start_connecting(sync_state),
+            &mut event.instructions,
+        );
 
         let requests = self.adapter.collect_bucket_requests()?;
         let local_bucket_names: Vec<String> = requests.iter().map(|s| s.name.clone()).collect();

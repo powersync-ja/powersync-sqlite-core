@@ -46,10 +46,12 @@ impl DownloadSyncStatus {
         self.downloading = None;
     }
 
-    pub fn start_connecting(&mut self) {
+    pub fn start_connecting(&mut self, status: Vec<SyncPriorityStatus>) {
         self.connected = false;
         self.downloading = None;
         self.connecting = true;
+        self.priority_status = status;
+        self.debug_assert_priority_status_is_sorted();
     }
 
     pub fn mark_connected(&mut self) {
@@ -161,9 +163,9 @@ pub struct Timestamp(pub i64);
 
 #[derive(Serialize, Hash)]
 pub struct SyncPriorityStatus {
-    priority: BucketPriority,
-    last_synced_at: Option<Timestamp>,
-    has_synced: Option<bool>,
+    pub priority: BucketPriority,
+    pub last_synced_at: Option<Timestamp>,
+    pub has_synced: Option<bool>,
 }
 
 /// Per-bucket download progress information.
