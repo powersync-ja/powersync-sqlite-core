@@ -415,26 +415,17 @@ fn json_object_fragment<'a>(
     let mut column_names_quoted: Vec<String> = alloc::vec![];
     while let Some(column) = columns.next() {
         let name = &*column.name;
-        let quoted = match &*column.type_name {
-            // We really want the individual columns here to appear as they show up in the database.
-            // For text columns however, it's possible that e.g. NEW.column was created by a JSON
-            // function, meaning that it has a JSON subtype active - causing the json_object() call
-            // we're about to emit to include it as a subobject instead of a string.
-            "TEXT" | "text" => format!(
-                "{:}, powersync_strip_subtype({:}.{:})",
-                QuotedString(name),
-                prefix,
-                quote_identifier(name)
-            ),
-            _ => format!(
-                "{:}, {:}.{:}",
-                QuotedString(name),
-                prefix,
-                quote_identifier(name)
-            ),
-        };
 
-        column_names_quoted.push(quoted);
+        // We really want the individual columns here to appear as they show up in the database.
+        // For text columns however, it's possible that e.g. NEW.column was created by a JSON
+        // function, meaning that it has a JSON subtype active - causing the json_object() call
+        // we're about to emit to include it as a subobject instead of a string.
+        column_names_quoted.push(format!(
+            "{:}, powersync_strip_subtype({:}.{:})",
+            QuotedString(name),
+            prefix,
+            quote_identifier(name)
+        ));
     }
 
     // SQLITE_MAX_COLUMN - 1 (because of the id column)

@@ -81,7 +81,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 
     db.create_function_v2(
         "powersync_strip_subtype",
-        -1,
+        1,
         sqlite::UTF8 | sqlite::DETERMINISTIC | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE,
         None,
         Some(powersync_strip_subtype),
