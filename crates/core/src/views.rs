@@ -421,7 +421,7 @@ fn json_object_fragment<'a>(
             // function, meaning that it has a JSON subtype active - causing the json_object() call
             // we're about to emit to include it as a subobject instead of a string.
             "TEXT" | "text" => format!(
-                "{:}, concat({:}.{:})",
+                "{:}, powersync_strip_subtype({:}.{:})",
                 QuotedString(name),
                 prefix,
                 quote_identifier(name)

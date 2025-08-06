@@ -28,7 +28,7 @@ inherits = "release"
 inherits = "wasm"
 
 [workspace.package]
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 authors = ["JourneyApps"]
 keywords = ["sqlite", "powersync"]
@@ -37,5 +37,4 @@ homepage = "https://powersync.com"
 repository = "https://github.com/powersync-ja/powersync-sqlite-core"
 
 [workspace.dependencies]
-sqlite_nostd = { path="./sqlite-rs-embedded/sqlite_nostd" }
-
+sqlite_nostd = { path = "./sqlite-rs-embedded/sqlite_nostd" }
