@@ -1,7 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use num_traits::Zero;
 
-use crate::sync::{line::BucketChecksum, BucketPriority, Checksum};
+use crate::sync::{BucketPriority, Checksum, line::BucketChecksum};
 use sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
 /// A structure cloned from [BucketChecksum]s with an owned bucket name instead of one borrowed from

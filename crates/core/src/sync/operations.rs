@@ -9,8 +9,8 @@ use crate::{
     ext::SafeManagedStmt,
 };
 
-use super::line::OplogData;
 use super::Checksum;
+use super::line::OplogData;
 use super::{
     line::{DataLine, OpType},
     storage_adapter::{BucketInfo, StorageAdapter},

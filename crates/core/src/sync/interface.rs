@@ -196,7 +196,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
     }
 
     unsafe extern "C" fn destroy(ptr: *mut c_void) {
-        drop(Box::from_raw(ptr.cast::<SqlController>()));
+        drop(unsafe { Box::from_raw(ptr.cast::<SqlController>()) });
     }
 
     let controller = Box::new(SqlController {

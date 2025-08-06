@@ -12,7 +12,7 @@ use sqlite_nostd::{Connection, Context, Value};
 
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
-use crate::sync::checkpoint::{validate_checkpoint, OwnedBucketChecksum};
+use crate::sync::checkpoint::{OwnedBucketChecksum, validate_checkpoint};
 use crate::sync::line::Checkpoint;
 
 #[derive(Serialize)]

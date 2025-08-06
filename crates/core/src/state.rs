@@ -40,7 +40,7 @@ impl DatabaseState {
     }
 
     pub unsafe extern "C" fn destroy_arc(ptr: *mut c_void) {
-        drop(Arc::from_raw(ptr.cast::<DatabaseState>()));
+        drop(unsafe { Arc::from_raw(ptr.cast::<DatabaseState>()) });
     }
 }
 

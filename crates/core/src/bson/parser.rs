@@ -1,6 +1,6 @@
 use core::ffi::CStr;
 
-use super::{error::ErrorKind, BsonError};
+use super::{BsonError, error::ErrorKind};
 use num_traits::{FromBytes, Num};
 
 pub struct Parser<'de> {

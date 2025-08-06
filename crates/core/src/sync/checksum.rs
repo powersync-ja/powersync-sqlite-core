@@ -4,9 +4,9 @@ use core::{
     ops::{Add, AddAssign, Sub, SubAssign},
 };
 
-use num_traits::float::FloatCore;
 use num_traits::Zero;
-use serde::{de::Visitor, Deserialize, Serialize};
+use num_traits::float::FloatCore;
+use serde::{Deserialize, Serialize, de::Visitor};
 
 /// A checksum as received from the sync service.
 ///
@@ -18,7 +18,7 @@ pub struct Checksum(Wrapping<u32>);
 
 impl Checksum {
     pub const fn value(self) -> u32 {
-        self.0 .0
+        self.0.0
     }
 
     pub const fn from_value(value: u32) -> Self {

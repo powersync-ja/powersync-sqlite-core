@@ -35,9 +35,10 @@ pub struct DownloadSyncStatus {
 
 impl DownloadSyncStatus {
     fn debug_assert_priority_status_is_sorted(&self) {
-        debug_assert!(self
-            .priority_status
-            .is_sorted_by(|a, b| a.priority >= b.priority))
+        debug_assert!(
+            self.priority_status
+                .is_sorted_by(|a, b| a.priority >= b.priority)
+        )
     }
 
     pub fn disconnect(&mut self) {

@@ -10,7 +10,7 @@ use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
 use crate::error::PowerSyncError;
-use crate::migrations::{powersync_migrate, LATEST_VERSION};
+use crate::migrations::{LATEST_VERSION, powersync_migrate};
 use crate::util::quote_identifier;
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 

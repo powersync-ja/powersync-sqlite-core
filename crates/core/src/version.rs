@@ -8,7 +8,7 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context};
 
-use crate::constants::{short_git_hash, CORE_PKG_VERSION};
+use crate::constants::{CORE_PKG_VERSION, short_git_hash};
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
 
