@@ -102,7 +102,7 @@ unsafe extern "C" {
 }
 
 #[cfg(feature = "static")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn powersync_init_static() -> c_int {
     unsafe {
         let f = sqlite3_powersync_init;
