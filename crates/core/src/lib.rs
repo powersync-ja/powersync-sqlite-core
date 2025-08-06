@@ -40,7 +40,7 @@ mod view_admin;
 mod views;
 mod vtab_util;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn sqlite3_powersync_init(
     db: *mut sqlite::sqlite3,
     err_msg: *mut *mut c_char,
@@ -87,7 +87,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
     Ok(())
 }
 
-extern "C" {
+unsafe extern "C" {
     #[cfg(feature = "static")]
     #[allow(non_snake_case)]
     pub fn sqlite3_auto_extension(
