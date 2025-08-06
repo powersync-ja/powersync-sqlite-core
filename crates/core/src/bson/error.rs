@@ -4,7 +4,7 @@ use alloc::{
     boxed::Box,
     string::{String, ToString},
 };
-use serde::de::{self, StdError};
+use serde::de::{self};
 
 use super::parser::ElementType;
 
@@ -97,4 +97,3 @@ impl de::Error for BsonError {
         BsonError::new(None, ErrorKind::Custom(msg.to_string()))
     }
 }
-impl StdError for BsonError {}
