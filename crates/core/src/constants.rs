@@ -9,6 +9,8 @@ pub const FULL_GIT_HASH: &'static str = env!("GIT_HASH");
 // we're testing with the minimum version we claim to support.
 pub const MIN_SQLITE_VERSION_NUMBER: c_int = 3044000;
 
+pub const SUBTYPE_JSON: u32 = 'J' as u32;
+
 pub fn short_git_hash() -> &'static str {
     &FULL_GIT_HASH[..8]
 }

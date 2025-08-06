@@ -1,6 +1,12 @@
 use core::cell::RefCell;
 use core::ffi::{c_int, c_void};
 
+use super::streaming_sync::SyncClient;
+use super::sync_status::DownloadSyncStatus;
+use crate::constants::SUBTYPE_JSON;
+use crate::error::PowerSyncError;
+use crate::schema::Schema;
+use crate::state::DatabaseState;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -8,15 +14,9 @@ use alloc::sync::Arc;
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 use sqlite::{ResultCode, Value};
+use sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
-
-use crate::error::PowerSyncError;
-use crate::schema::Schema;
-use crate::state::DatabaseState;
-
-use super::streaming_sync::SyncClient;
-use super::sync_status::DownloadSyncStatus;
 
 /// Payload provided by SDKs when requesting a sync iteration.
 #[derive(Default, Deserialize)]
@@ -186,6 +186,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
             let formatted =
                 serde_json::to_string(&instructions).map_err(PowerSyncError::internal)?;
             ctx.result_text_transient(&formatted);
+            ctx.result_subtype(SUBTYPE_JSON);
 
             Ok(())
         })();
@@ -206,7 +207,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
     db.create_function_v2(
         "powersync_control",
         2,
-        sqlite::UTF8 | sqlite::DIRECTONLY,
+        sqlite::UTF8 | sqlite::DIRECTONLY | SQLITE_RESULT_SUBTYPE,
         Some(Box::into_raw(controller).cast()),
         Some(control),
         None,

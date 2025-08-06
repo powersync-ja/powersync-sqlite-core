@@ -681,5 +681,25 @@ void main() {
       final [update] = db.select('SELECT data FROM ps_crud');
       expect(json.decode(update['data']), containsPair('data', {'col': '{}'}));
     });
+
+    test('null values are included as null', () {
+      db
+        ..execute('select powersync_replace_schema(?)', [
+          json.encode({
+            'tables': [
+              {
+                'name': 'items',
+                'columns': [
+                  {'name': 'col', 'type': 'text'}
+                ],
+              }
+            ]
+          })
+        ])
+        ..execute('INSERT INTO items (id, col) VALUES (uuid(), null)');
+
+      final [update] = db.select('SELECT data FROM ps_crud');
+      expect(json.decode(update['data']), containsPair('data', {}));
+    });
   });
 }

@@ -7,18 +7,20 @@ use sqlite::ResultCode;
 use sqlite_nostd as sqlite;
 use sqlite_nostd::{Connection, Context, Value};
 
-use serde_json as json;
-
+use crate::constants::SUBTYPE_JSON;
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
+use serde_json as json;
+use sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 
 fn powersync_diff_impl(
-    _ctx: *mut sqlite::context,
+    ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let data_old = args[0].text();
     let data_new = args[1].text();
 
+    ctx.result_subtype(SUBTYPE_JSON);
     diff_objects(data_old, data_new)
 }
 
@@ -66,7 +68,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     db.create_function_v2(
         "powersync_diff",
         2,
-        sqlite::UTF8 | sqlite::DETERMINISTIC,
+        sqlite::UTF8 | sqlite::DETERMINISTIC | SQLITE_RESULT_SUBTYPE,
         None,
         Some(powersync_diff),
         None,
