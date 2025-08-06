@@ -11,7 +11,7 @@ use crate::{
     schema::Schema,
     state::DatabaseState,
     sync::{
-        checkpoint::{validate_checkpoint, ChecksumMismatch},
+        checkpoint::{ChecksumMismatch, validate_checkpoint},
         sync_status::SyncPriorityStatus,
     },
     sync_local::{PartialSyncOperation, SyncOperation},

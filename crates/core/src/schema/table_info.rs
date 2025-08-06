@@ -1,5 +1,5 @@
 use alloc::{format, string::String, vec, vec::Vec};
-use serde::{de::Visitor, Deserialize};
+use serde::{Deserialize, de::Visitor};
 
 #[derive(Deserialize)]
 pub struct Table {

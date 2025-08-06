@@ -1,12 +1,12 @@
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
-use serde::de::{IgnoredAny, VariantAccess, Visitor};
 use serde::Deserialize;
+use serde::de::{IgnoredAny, VariantAccess, Visitor};
 
 use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64};
 
-use super::bucket_priority::BucketPriority;
 use super::Checksum;
+use super::bucket_priority::BucketPriority;
 
 /// While we would like to always borrow strings for efficiency, that's not consistently possible.
 /// With the JSON decoder, borrowing from input data is only possible when the string contains no

@@ -1,4 +1,4 @@
-use sqlite_nostd::{sqlite3, Connection, Destructor, ManagedStmt, ResultCode};
+use sqlite_nostd::{Connection, Destructor, ManagedStmt, ResultCode, sqlite3};
 
 pub trait SafeManagedStmt {
     fn exec(&self) -> Result<(), ResultCode>;

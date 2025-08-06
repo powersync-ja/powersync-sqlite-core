@@ -9,9 +9,9 @@ use serde::{
 };
 
 use super::{
+    BsonError,
     error::ErrorKind,
     parser::{ElementType, Parser},
-    BsonError,
 };
 
 pub struct Deserializer<'de> {

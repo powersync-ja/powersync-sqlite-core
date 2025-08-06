@@ -21,8 +21,8 @@ use crate::{
     kv::client_id,
     state::DatabaseState,
     sync::{
-        checkpoint::OwnedBucketChecksum, interface::StartSyncStream, line::DataLine,
-        sync_status::Timestamp, BucketPriority,
+        BucketPriority, checkpoint::OwnedBucketChecksum, interface::StartSyncStream,
+        line::DataLine, sync_status::Timestamp,
     },
 };
 use sqlite_nostd::{self as sqlite};
