@@ -662,7 +662,7 @@ void main() {
       expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
     });
 
-    test('json values are included as text', () {
+    test('preserves values in text column', () {
       db
         ..execute('select powersync_replace_schema(?)', [
           json.encode({
@@ -675,14 +675,20 @@ void main() {
               }
             ]
           })
-        ])
-        ..execute('INSERT INTO items (id, col) VALUES (uuid(), json_object())');
+        ]);
 
+      db.execute('INSERT INTO items (id, col) VALUES (uuid(), json_object())');
+      final [insert] = db.select('SELECT data FROM ps_crud');
+      expect(json.decode(insert['data']), containsPair('data', {'col': '{}'}));
+      db.execute('DELETE FROM ps_crud');
+
+      db.execute('UPDATE items SET col = NULL;');
       final [update] = db.select('SELECT data FROM ps_crud');
-      expect(json.decode(update['data']), containsPair('data', {'col': '{}'}));
+      expect(json.decode(update['data']), containsPair('data', {'col': null}));
+      db.execute('DELETE FROM ps_crud');
     });
 
-    test('null values are included as null', () {
+    test('preserves mismatched type', () {
       db
         ..execute('select powersync_replace_schema(?)', [
           json.encode({
@@ -690,16 +696,23 @@ void main() {
               {
                 'name': 'items',
                 'columns': [
-                  {'name': 'col', 'type': 'text'}
+                  {'name': 'col', 'type': 'int'}
                 ],
               }
             ]
           })
         ])
-        ..execute('INSERT INTO items (id, col) VALUES (uuid(), null)');
+        ..execute('insert into items (id, col) values (uuid(), json_object())')
+        ..execute('insert into items (id, col) values (uuid(), null)')
+        ..execute('insert into items (id, col) values (uuid(), ?)',
+            ['not an integer']);
 
-      final [update] = db.select('SELECT data FROM ps_crud');
-      expect(json.decode(update['data']), containsPair('data', {}));
+      final data = db.select('SELECT data FROM ps_crud');
+      expect(data.map((row) => jsonDecode(row['data'])), [
+        containsPair('data', {'col': '{}'}),
+        containsPair('data', {}),
+        containsPair('data', {'col': 'not an integer'}),
+      ]);
     });
   });
 }
