@@ -1,9 +1,10 @@
 #![no_std]
-#![feature(vec_into_raw_parts)]
 #![allow(internal_features)]
+#![feature(btree_set_entry)]
 #![feature(core_intrinsics)]
 #![feature(assert_matches)]
 #![feature(strict_overflow_ops)]
+#![feature(vec_into_raw_parts)]
 
 extern crate alloc;
 
