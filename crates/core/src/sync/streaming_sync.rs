@@ -628,16 +628,16 @@ impl StreamingSyncIteration {
                             let mut desc = String::new();
                             let _ = write!(
                                 &mut desc,
-                                "Subscription to stream {}",
+                                "Subscription to stream {} ",
                                 local.local.stream_name
                             );
                             if let Some(params) = &local.local.local_params {
                                 let _ = write!(&mut desc, "(with parameters {params})");
                             } else {
-                                desc.push_str(" (without parameters)");
+                                desc.push_str("(without parameters)");
                             }
 
-                            let _ = write!(&mut desc, "could not be resolved: {}", error.message);
+                            let _ = write!(&mut desc, " could not be resolved: {}", error.message);
                             event.instructions.push(Instruction::LogLine {
                                 severity: LogSeverity::WARNING,
                                 line: Cow::Owned(desc),
