@@ -296,6 +296,7 @@ impl ActiveStreamSubscription {
             priority: None,
             associated_buckets: Vec::new(),
             active: local.active,
+
             has_explicit_subscription: local.has_subscribed_manually(),
             expires_at: local.expires_at.clone().map(|e| Timestamp(e)),
             last_synced_at: local.last_synced_at.map(|e| Timestamp(e)),

@@ -144,6 +144,12 @@ impl Clone for Box<JsonString> {
     }
 }
 
+impl Display for JsonString {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 // Use getrandom crate to generate UUID.
 // This is not available in all WASM builds - use the default in those cases.
 #[cfg(feature = "getrandom")]

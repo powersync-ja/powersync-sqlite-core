@@ -2,20 +2,18 @@ use core::{assert_matches::debug_assert_matches, fmt::Display};
 
 use alloc::{string::ToString, vec::Vec};
 use serde::Serialize;
-use serde_json::value::RawValue;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 
 use crate::{
     error::{PSResult, PowerSyncError},
     ext::SafeManagedStmt,
-    kv::client_id,
     operations::delete_bucket,
     schema::Schema,
     state::DatabaseState,
     sync::{
         checkpoint::{ChecksumMismatch, validate_checkpoint},
         interface::{RequestedStreamSubscription, StreamSubscriptionRequest},
-        streaming_sync::OwnedStreamDefinition,
+        streaming_sync::OwnedStreamDescription,
         subscriptions::LocallyTrackedSubscription,
         sync_status::SyncPriorityStatus,
     },
@@ -289,10 +287,12 @@ impl StorageAdapter {
     pub fn collect_subscription_requests(
         &self,
         include_defaults: bool,
-    ) -> Result<StreamSubscriptionRequest, PowerSyncError> {
+    ) -> Result<(StreamSubscriptionRequest, Vec<i64>), PowerSyncError> {
         self.delete_outdated_subscriptions()?;
 
         let mut subscriptions: Vec<RequestedStreamSubscription> = Vec::new();
+        let mut index_to_local_id = Vec::<i64>::new();
+
         // We have an explicit subscription iff ttl is not null. Checking is_default is not enough,
         // because a stream can both be a default stream and have an explicit subscription.
         let stmt = self
@@ -306,14 +306,17 @@ impl StorageAdapter {
                 stream: subscription.stream_name,
                 parameters: subscription.local_params,
                 override_priority: subscription.local_priority,
-                client_id: subscription.id,
             });
+            index_to_local_id.push(subscription.id);
         }
 
-        Ok(StreamSubscriptionRequest {
-            include_defaults,
-            subscriptions,
-        })
+        Ok((
+            StreamSubscriptionRequest {
+                include_defaults,
+                subscriptions,
+            },
+            index_to_local_id,
+        ))
     }
 
     pub fn now(&self) -> Result<Timestamp, ResultCode> {
@@ -370,8 +373,9 @@ impl StorageAdapter {
 
     pub fn create_default_subscription(
         &self,
-        stream: &OwnedStreamDefinition,
+        stream: &OwnedStreamDescription,
     ) -> Result<LocallyTrackedSubscription, PowerSyncError> {
+        debug_assert!(stream.is_default);
         let stmt = self.db.prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, active, is_default) VALUES (?, TRUE, TRUE) RETURNING *;")?;
         stmt.bind_text(1, &stream.name, sqlite_nostd::Destructor::STATIC)?;
 

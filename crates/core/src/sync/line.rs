@@ -1,6 +1,6 @@
 use alloc::borrow::Cow;
 use alloc::rc::Rc;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
 use serde::de::{Error, IgnoredAny, VariantAccess, Visitor};
@@ -85,13 +85,76 @@ pub struct Checkpoint<'a> {
     #[serde(borrow)]
     pub buckets: Vec<BucketChecksum<'a>>,
     #[serde(default, borrow)]
-    pub streams: Vec<StreamDefinition<'a>>,
+    pub streams: Vec<StreamDescription<'a>>,
 }
 
 #[derive(Deserialize, Debug)]
-pub struct StreamDefinition<'a> {
+pub struct StreamDescription<'a> {
     pub name: SyncLineStr<'a>,
     pub is_default: bool,
+    pub errors: Rc<Vec<StreamSubscriptionError>>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct StreamSubscriptionError {
+    pub subscription: StreamSubscriptionErrorCause,
+    pub message: String,
+}
+
+/// The concrete stream subscription that has caused an error.
+#[derive(Debug)]
+pub enum StreamSubscriptionErrorCause {
+    /// The error is caused by the stream being subscribed to by default (i.e., no parameters).
+    Default,
+    /// The error is caused by an explicit subscription (e.g. due to invalid parameters).
+    ///
+    /// The inner value is the index into  [StreamSubscriptionRequest::subscriptions] of the
+    /// faulty subscription.
+    ExplicitSubscription(usize),
+}
+
+impl<'de> Deserialize<'de> for StreamSubscriptionErrorCause {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct CauseVisitor;
+
+        impl<'de> Visitor<'de> for CauseVisitor {
+            type Value = StreamSubscriptionErrorCause;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                write!(formatter, "default or index")
+            }
+
+            fn visit_str<E>(self, _v: &str) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                return Ok(StreamSubscriptionErrorCause::Default);
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                return Ok(StreamSubscriptionErrorCause::ExplicitSubscription(
+                    v as usize,
+                ));
+            }
+
+            fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                return Ok(StreamSubscriptionErrorCause::ExplicitSubscription(
+                    v as usize,
+                ));
+            }
+        }
+
+        deserializer.deserialize_any(CauseVisitor)
+    }
 }
 
 #[serde_as]
@@ -141,9 +204,13 @@ pub struct BucketChecksum<'a> {
 #[derive(Debug)]
 pub enum BucketSubscriptionReason {
     /// A bucket was created from a default stream.
-    DerivedFromDefaultStream(String),
+    ///
+    /// The inner value is the index of the stream in [Checkpoint::streams].
+    DerivedFromDefaultStream(usize),
     /// A bucket was created for a subscription id we've explicitly requested in the sync request.
-    DerivedFromExplicitSubscription(i64),
+    ///
+    /// The inner value is the index of the stream in [StreamSubscriptionRequest::subscriptions].
+    DerivedFromExplicitSubscription(usize),
 }
 
 impl<'de> Deserialize<'de> for BucketSubscriptionReason {
@@ -153,7 +220,7 @@ impl<'de> Deserialize<'de> for BucketSubscriptionReason {
     {
         struct MyVisitor;
 
-        const VARIANTS: &'static [&'static str] = &["def", "sub"];
+        const VARIANTS: &'static [&'static str] = &["default", "sub"];
 
         impl<'de> Visitor<'de> for MyVisitor {
             type Value = BucketSubscriptionReason;
@@ -168,17 +235,12 @@ impl<'de> Deserialize<'de> for BucketSubscriptionReason {
             {
                 let (key, variant) = data.variant::<&'de str>()?;
                 Ok(match key {
-                    "def" => BucketSubscriptionReason::DerivedFromDefaultStream(
+                    "default" => BucketSubscriptionReason::DerivedFromDefaultStream(
                         variant.newtype_variant()?,
                     ),
-                    "sub" => {
-                        let textual_id = variant.newtype_variant::<&'de str>()?;
-                        let id = textual_id
-                            .parse()
-                            .map_err(|_| A::Error::custom("not an int"))?;
-
-                        BucketSubscriptionReason::DerivedFromExplicitSubscription(id)
-                    }
+                    "sub" => BucketSubscriptionReason::DerivedFromExplicitSubscription(
+                        variant.newtype_variant()?,
+                    ),
                     other => return Err(A::Error::unknown_variant(other, VARIANTS)),
                 })
             }

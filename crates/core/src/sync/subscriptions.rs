@@ -1,8 +1,8 @@
-use core::{cmp::Ordering, hash::Hash, time::Duration};
+use core::time::Duration;
 
 use alloc::{boxed::Box, string::String};
 use serde::Deserialize;
-use serde_with::{serde_as, DurationSeconds};
+use serde_with::{DurationSeconds, serde_as};
 use sqlite_nostd::{self as sqlite, Connection};
 
 use crate::{
@@ -11,13 +11,6 @@ use crate::{
     sync::BucketPriority,
     util::JsonString,
 };
-
-/// A key that uniquely identifies a stream subscription.
-#[derive(Debug, PartialEq, PartialOrd, Eq, Ord)]
-pub struct SubscriptionKey {
-    pub stream_name: String,
-    pub params: Option<Box<JsonString>>,
-}
 
 /// A row in the `ps_stream_subscriptions` table.
 pub struct LocallyTrackedSubscription {
@@ -35,13 +28,6 @@ pub struct LocallyTrackedSubscription {
 impl LocallyTrackedSubscription {
     /// The default TTL of non-default subscriptions if none is set: One day.
     pub const DEFAULT_TTL: i64 = 60 * 60 * 24;
-
-    pub fn key(&self) -> SubscriptionKey {
-        SubscriptionKey {
-            stream_name: self.stream_name.clone(),
-            params: self.local_params.clone(),
-        }
-    }
 
     pub fn has_subscribed_manually(&self) -> bool {
         self.ttl.is_some()
