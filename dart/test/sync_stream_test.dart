@@ -73,11 +73,11 @@ void main() {
             buckets: [
               bucketDescription('a',
                   subscriptions: [
-                    {'def': 'my_default_stream'}
+                    {'default': 0}
                   ],
                   priority: 1),
             ],
-            streams: [('my_default_stream', true)],
+            streams: [stream('my_default_stream', true)],
           ),
         ),
       );
@@ -122,7 +122,7 @@ void main() {
     syncTest('are deleted', (_) {
       control('start', null);
 
-      for (final stream in ['s1', 's2']) {
+      for (final name in ['s1', 's2']) {
         control(
           'line_text',
           json.encode(
@@ -131,11 +131,11 @@ void main() {
               buckets: [
                 bucketDescription('a',
                     subscriptions: [
-                      {'def': stream}
+                      {'default': 0}
                     ],
                     priority: 1),
               ],
-              streams: [(stream, true)],
+              streams: [stream(name, true)],
             ),
           ),
         );
@@ -164,11 +164,11 @@ void main() {
             buckets: [
               bucketDescription('a',
                   subscriptions: [
-                    {'def': 'a'}
+                    {'default': 0}
                   ],
                   priority: 1),
             ],
-            streams: [('a', true)],
+            streams: [stream('a', true)],
           ),
         ),
       );
@@ -209,6 +209,41 @@ void main() {
       expect(stored, containsPair('active', 0));
       expect(stored, containsPair('is_default', 0));
       expect(stored, containsPair('ttl', isNotNull));
+    });
+
+    syncTest('reports errors', (_) {
+      control('start', null);
+      final response = control(
+        'line_text',
+        json.encode(
+          checkpoint(
+            lastOpId: 1,
+            buckets: [
+              bucketDescription('a',
+                  subscriptions: [
+                    {'default': 0}
+                  ],
+                  priority: 1),
+            ],
+            streams: [
+              stream('a', true, errors: [
+                {'message': 'error message', 'subscription': 'default'}
+              ])
+            ],
+          ),
+        ),
+      );
+
+      expect(
+        response,
+        contains(
+          containsPair(
+            'LogLine',
+            containsPair(
+                'line', 'Default subscription a has errors: error message'),
+          ),
+        ),
+      );
     });
   });
 
@@ -300,7 +335,6 @@ void main() {
                       'stream': 'my_stream',
                       'parameters': null,
                       'override_priority': null,
-                      'client_id': '1',
                     }
                   ],
                 },
@@ -348,7 +382,7 @@ void main() {
           checkpoint(
             lastOpId: 1,
             buckets: [],
-            streams: [('a', true)],
+            streams: [stream('a', true)],
           ),
         ),
       );
@@ -382,6 +416,77 @@ void main() {
                 },
               ),
             ),
+          ),
+        ),
+      );
+    });
+
+    syncTest('reports errors', (_) {
+      control(
+        'subscriptions',
+        json.encode({
+          'subscribe': {'stream': 'a', 'params': 'invalid'}
+        }),
+      );
+      control(
+        'subscriptions',
+        json.encode({
+          'subscribe': {'stream': 'a', 'params': 'valid'}
+        }),
+      );
+
+      final start = control('start', null);
+      expect(
+        start,
+        contains(
+          containsPair(
+            'EstablishSyncStream',
+            containsPair(
+              'request',
+              containsPair(
+                'streams',
+                {
+                  'include_defaults': true,
+                  'subscriptions': [
+                    {
+                      'stream': 'a',
+                      'parameters': 'invalid',
+                      'override_priority': null
+                    },
+                    {
+                      'stream': 'a',
+                      'parameters': 'valid',
+                      'override_priority': null
+                    }
+                  ]
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      final response = control(
+        'line_text',
+        json.encode(
+          checkpoint(
+            lastOpId: 1,
+            buckets: [],
+            streams: [
+              stream('a', true, errors: [
+                {'message': 'error message', 'subscription': 0}
+              ])
+            ],
+          ),
+        ),
+      );
+
+      expect(
+        response,
+        contains(
+          containsPair(
+            'LogLine',
+            containsPair('line',
+                'Subscription to stream a (with parameters "invalid") could not be resolved: error message'),
           ),
         ),
       );

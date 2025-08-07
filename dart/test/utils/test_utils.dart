@@ -6,19 +6,20 @@ Object checkpoint({
   required int lastOpId,
   List<Object> buckets = const [],
   String? writeCheckpoint,
-  List<(String, bool)> streams = const [],
+  List<Object> streams = const [],
 }) {
   return {
     'checkpoint': {
       'last_op_id': '$lastOpId',
       'write_checkpoint': null,
       'buckets': buckets,
-      'streams': [
-        for (final (name, isDefault) in streams)
-          {'name': name, 'is_default': isDefault},
-      ],
+      'streams': streams,
     }
   };
+}
+
+Object stream(String name, bool isDefault, {List<Object> errors = const []}) {
+  return {'name': name, 'is_default': isDefault, 'errors': errors};
 }
 
 /// Creates a `checkpoint_complete` or `partial_checkpoint_complete` line.
