@@ -1,4 +1,5 @@
 use core::{
+    fmt::Write,
     future::Future,
     marker::PhantomData,
     pin::Pin,
@@ -6,9 +7,11 @@ use core::{
 };
 
 use alloc::{
+    borrow::Cow,
     boxed::Box,
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     format,
+    rc::Rc,
     string::{String, ToString},
     sync::Arc,
     vec::Vec,
@@ -24,11 +27,12 @@ use crate::{
         BucketPriority,
         checkpoint::OwnedBucketChecksum,
         interface::StartSyncStream,
-        line::DataLine,
-        line::{BucketSubscriptionReason, StreamDefinition},
-        subscriptions::{LocallyTrackedSubscription, SubscriptionKey},
-        sync_status::ActiveStreamSubscription,
-        sync_status::Timestamp,
+        line::{
+            BucketSubscriptionReason, DataLine, StreamDescription, StreamSubscriptionError,
+            StreamSubscriptionErrorCause,
+        },
+        subscriptions::LocallyTrackedSubscription,
+        sync_status::{ActiveStreamSubscription, Timestamp},
     },
 };
 use sqlite_nostd::{self as sqlite, Connection, ResultCode};
@@ -275,7 +279,7 @@ impl StreamingSyncIteration {
                 let progress = self.load_progress(&target.checkpoint)?;
                 SyncStateMachineTransition::StartTrackingCheckpoint {
                     progress,
-                    subscription_state: self.resolve_subscription_state(&target)?,
+                    subscription_state: self.resolve_subscription_state(&target, event)?,
                     updated_target,
                 }
             }
@@ -295,7 +299,7 @@ impl StreamingSyncIteration {
                 let progress = self.load_progress(&target.checkpoint)?;
                 SyncStateMachineTransition::StartTrackingCheckpoint {
                     progress,
-                    subscription_state: self.resolve_subscription_state(&target)?,
+                    subscription_state: self.resolve_subscription_state(&target, event)?,
                     updated_target: SyncTarget::Tracking(target),
                 }
             }
@@ -567,9 +571,17 @@ impl StreamingSyncIteration {
     fn resolve_subscription_state(
         &self,
         tracked: &TrackedCheckpoint,
+        event: &mut ActiveEvent,
     ) -> Result<Vec<ActiveStreamSubscription>, PowerSyncError> {
-        let mut tracked_subscriptions: Vec<LocallyTrackedSubscription> = Vec::new();
-        let now = self.adapter.now()?;
+        struct LocalAndServerSubscription<'a, T> {
+            local: T,
+            /// If this subscription has an acknowledged stream included in the checkpoint, the
+            /// index of that stream in [Checkpoint::streams] and the corresponding description.
+            server: Option<(usize, &'a OwnedStreamDescription)>,
+        }
+
+        let mut tracked_subscriptions: Vec<LocalAndServerSubscription<LocallyTrackedSubscription>> =
+            Vec::new();
 
         // Load known subscriptions from database
         self.adapter.iterate_local_subscriptions(|mut sub| {
@@ -578,69 +590,142 @@ impl StreamingSyncIteration {
             sub.active = false;
             sub.is_default = false;
 
-            tracked_subscriptions.push(sub);
+            tracked_subscriptions.push(LocalAndServerSubscription {
+                local: sub,
+                server: None,
+            });
         })?;
 
         // If they don't exist already, create default subscriptions included in checkpoint
-        for subscription in &tracked.streams {
+        for (server_index, subscription) in tracked.streams.iter().enumerate() {
             let matching_local_subscriptions = tracked_subscriptions
                 .iter_mut()
-                .filter(|s| s.stream_name == subscription.name);
+                .filter(|s| s.local.stream_name == subscription.name);
 
             let mut has_local = false;
             for local in matching_local_subscriptions {
-                local.active = true;
-                local.is_default = subscription.is_default;
+                local.server = Some((server_index, subscription));
+                local.local.active = true;
+                local.local.is_default = subscription.is_default;
                 has_local = true;
+
+                // Warn if this local subscription has errors. This search is quadratic because we
+                // only get the index of the faulty subscription with an error, which we then map
+                // to the local id via `tracked.requested_subscription_ids` and finally compare with
+                // one of the matching subscription here. That's fine though because we don't expect
+                // most of the streams to error in practice.
+                for error in &*subscription.errors {
+                    if let StreamSubscriptionErrorCause::ExplicitSubscription(index) =
+                        error.subscription
+                    {
+                        let Some(local_id_for_error) =
+                            tracked.requested_subscription_ids.get(index)
+                        else {
+                            continue;
+                        };
+
+                        if *local_id_for_error == local.local.id {
+                            let mut desc = String::new();
+                            let _ = write!(
+                                &mut desc,
+                                "Subscription to stream {}",
+                                local.local.stream_name
+                            );
+                            if let Some(params) = &local.local.local_params {
+                                let _ = write!(&mut desc, "(with parameters {params})");
+                            } else {
+                                desc.push_str(" (without parameters)");
+                            }
+
+                            let _ = write!(&mut desc, "could not be resolved: {}", error.message);
+                            event.instructions.push(Instruction::LogLine {
+                                severity: LogSeverity::WARNING,
+                                line: Cow::Owned(desc),
+                            });
+                        }
+                    }
+                }
+            }
+
+            for error in &*subscription.errors {
+                if let StreamSubscriptionErrorCause::Default = error.subscription {
+                    event.instructions.push(Instruction::LogLine {
+                        severity: LogSeverity::WARNING,
+                        line: Cow::Owned(format!(
+                            "Default subscription {} has errors: {}",
+                            subscription.name, error.message
+                        )),
+                    });
+                }
             }
 
             if !has_local && subscription.is_default {
-                let subscription = self.adapter.create_default_subscription(subscription)?;
-                tracked_subscriptions.push(subscription);
+                let local = self.adapter.create_default_subscription(subscription)?;
+                tracked_subscriptions.push(LocalAndServerSubscription {
+                    local,
+                    server: Some((server_index, subscription)),
+                });
             }
         }
 
         // Clean up default subscriptions that are no longer active.
         for subscription in &tracked_subscriptions {
-            if !subscription.has_subscribed_manually() && !subscription.active {
-                self.adapter.delete_subscription(subscription.id)?;
+            if !subscription.local.has_subscribed_manually() && subscription.server.is_none() {
+                self.adapter.delete_subscription(subscription.local.id)?;
             } else {
-                self.adapter.update_subscription(subscription)?;
+                self.adapter.update_subscription(&subscription.local)?;
             }
         }
-        tracked_subscriptions
-            .retain(|subscription| subscription.has_subscribed_manually() || subscription.active);
-
-        debug_assert!(tracked_subscriptions.is_sorted_by_key(|s| s.id));
+        tracked_subscriptions.retain(|subscription| {
+            subscription.local.has_subscribed_manually() || subscription.server.is_some()
+        });
 
         let mut resolved: Vec<ActiveStreamSubscription> =
             Vec::with_capacity(tracked_subscriptions.len());
-        // Map of stream name to index in resolved for stream subscriptions without custom
-        // parameters. This simplifies the association from BucketSubscriptionReason::IsDefault to
-        // stream subscriptions later.
-        let mut default_stream_subscriptions = BTreeMap::<&str, usize>::new();
+        // Contains (index in Checkpoint::streams, index in resolved) pairs for default streams.
+        let mut default_stream_index: Vec<(usize, usize)> = Vec::new();
 
         for (i, subscription) in tracked_subscriptions.iter().enumerate() {
-            resolved.push(ActiveStreamSubscription::from_local(subscription));
+            resolved.push(ActiveStreamSubscription::from_local(&subscription.local));
 
-            if subscription.local_params.is_none() {
-                default_stream_subscriptions.insert(&subscription.stream_name, i);
+            if let Some((server_index, server)) = subscription.server {
+                if server.is_default && !subscription.local.has_subscribed_manually() {
+                    let pair = (server_index, i);
+                    match default_stream_index.binary_search_by_key(&server_index, |p| p.0) {
+                        Ok(_) => {
+                            debug_assert!(
+                                false,
+                                "Looks like we have more than one local subscription for one default server-side subscription."
+                            )
+                        }
+                        Err(index) => default_stream_index.insert(index, pair),
+                    }
+                }
             }
         }
+
+        debug_assert!(tracked_subscriptions.is_sorted_by_key(|s| s.local.id));
 
         // Iterate over buckets to associate them with subscriptions
         for bucket in tracked.checkpoint.buckets.values() {
             for reason in &*bucket.subscriptions {
                 let subscription_index = match reason {
-                    BucketSubscriptionReason::DerivedFromDefaultStream(stream_name) => {
-                        default_stream_subscriptions
-                            .get(stream_name.as_str())
-                            .cloned()
-                    }
-                    BucketSubscriptionReason::DerivedFromExplicitSubscription(subscription_id) => {
-                        tracked_subscriptions
-                            .binary_search_by_key(subscription_id, |s| s.id)
+                    BucketSubscriptionReason::DerivedFromDefaultStream(stream_index) => {
+                        default_stream_index
+                            .binary_search_by_key(stream_index, |s| s.0)
                             .ok()
+                            .map(|idx| default_stream_index[idx].1)
+                    }
+                    BucketSubscriptionReason::DerivedFromExplicitSubscription(index) => {
+                        let subscription_id = tracked.requested_subscription_ids.get(*index);
+
+                        if let Some(subscription_id) = subscription_id {
+                            tracked_subscriptions
+                                .binary_search_by_key(subscription_id, |s| s.local.id)
+                                .ok()
+                        } else {
+                            None
+                        }
                     }
                 };
 
@@ -692,7 +777,11 @@ impl StreamingSyncIteration {
     ///
     /// This prepares a [StreamingSyncRequest] by fetching local sync state and the requested bucket
     /// parameters.
-    async fn prepare_request(&mut self) -> Result<Vec<String>, PowerSyncError> {
+    ///
+    /// This returns local bucket names (used to delete buckets that don't appear in checkpoints
+    /// anymore) and the [LocallyTrackedSubscription::id] of explicitly-requested stream
+    /// subscriptions, used to associate [BucketSubscriptionReason::DerivedFromExplicitSubscription].
+    async fn prepare_request(&mut self) -> Result<BeforeCheckpoint, PowerSyncError> {
         let event = Self::receive_event().await;
         let SyncEvent::Initialize = event.event else {
             return Err(PowerSyncError::argument_error(
@@ -708,6 +797,10 @@ impl StreamingSyncIteration {
 
         let requests = self.adapter.collect_bucket_requests()?;
         let local_bucket_names: Vec<String> = requests.iter().map(|s| s.name.clone()).collect();
+        let (streams, index_to_id) = self
+            .adapter
+            .collect_subscription_requests(self.options.include_defaults)?;
+
         let request = StreamingSyncRequest {
             buckets: requests,
             include_checksum: true,
@@ -715,15 +808,16 @@ impl StreamingSyncIteration {
             binary_data: true,
             client_id: client_id(self.db)?,
             parameters: self.options.parameters.take(),
-            streams: self
-                .adapter
-                .collect_subscription_requests(self.options.include_defaults)?,
+            streams,
         };
 
         event
             .instructions
             .push(Instruction::EstablishSyncStream { request });
-        Ok(local_bucket_names)
+        Ok(BeforeCheckpoint {
+            local_buckets: local_bucket_names,
+            explicit_stream_subscriptions: Rc::new(index_to_id),
+        })
     }
 
     fn handle_checkpoint_applied(&mut self, event: &mut ActiveEvent, timestamp: Timestamp) {
@@ -743,7 +837,20 @@ enum SyncTarget {
     Tracking(TrackedCheckpoint),
     /// We have not received a checkpoint message yet. We still keep a list of local buckets around
     /// so that we know which ones to delete depending on the first checkpoint message.
-    BeforeCheckpoint(Vec<String>),
+    BeforeCheckpoint(BeforeCheckpoint),
+}
+
+#[derive(Debug)]
+struct BeforeCheckpoint {
+    /// Local bucket names, kept so that we can delete outdated ones when we receive the first
+    /// checkpoint.
+    local_buckets: Vec<String>,
+
+    /// Local stream subscription ids ([LocallyTrackedSubscription::id]), in order in which they
+    /// appear in the [StreamSubscriptionRequest]. This is used to associate buckets, which
+    /// reference an index into this vector ([BucketSubscriptionReason::DerivedFromExplicitSubscription]),
+    /// with the local subscription.
+    explicit_stream_subscriptions: Rc<Vec<i64>>,
 }
 
 impl SyncTarget {
@@ -751,6 +858,13 @@ impl SyncTarget {
         match self {
             Self::Tracking(tracked) => Some(tracked),
             _ => None,
+        }
+    }
+
+    fn explicit_stream_subscriptions(&self) -> &Rc<Vec<i64>> {
+        match self {
+            SyncTarget::Tracking(tracking) => &tracking.requested_subscription_ids,
+            SyncTarget::BeforeCheckpoint(before) => &before.explicit_stream_subscriptions,
         }
     }
 
@@ -766,7 +880,7 @@ impl SyncTarget {
     fn track_checkpoint<'a>(&self, checkpoint: &Checkpoint<'a>) -> (BTreeSet<String>, Self) {
         let mut to_delete: BTreeSet<String> = match &self {
             SyncTarget::Tracking(tracked) => tracked.checkpoint.buckets.keys().cloned().collect(),
-            SyncTarget::BeforeCheckpoint(buckets) => buckets.iter().cloned().collect(),
+            SyncTarget::BeforeCheckpoint(before) => before.local_buckets.iter().cloned().collect(),
         };
 
         let mut buckets = BTreeMap::<String, OwnedBucketChecksum>::new();
@@ -782,8 +896,9 @@ impl SyncTarget {
                 streams: checkpoint
                     .streams
                     .iter()
-                    .map(OwnedStreamDefinition::from_definition)
+                    .map(OwnedStreamDescription::from_definition)
                     .collect(),
+                requested_subscription_ids: Rc::clone(self.explicit_stream_subscriptions()),
             }),
         )
     }
@@ -797,7 +912,8 @@ impl SyncTarget {
 pub struct TrackedCheckpoint {
     pub checkpoint: OwnedCheckpoint,
     /// Streams included in the checkpoint
-    pub streams: Vec<OwnedStreamDefinition>,
+    pub streams: Vec<OwnedStreamDescription>,
+    pub requested_subscription_ids: Rc<Vec<i64>>,
 }
 
 impl TrackedCheckpoint {
@@ -808,23 +924,18 @@ impl TrackedCheckpoint {
 }
 
 #[derive(Debug, Clone)]
-pub struct OwnedStreamDefinition {
+pub struct OwnedStreamDescription {
     pub name: String,
     pub is_default: bool,
+    pub errors: Rc<Vec<StreamSubscriptionError>>,
 }
 
-impl OwnedStreamDefinition {
-    pub fn from_definition<'a>(definition: &StreamDefinition<'a>) -> Self {
+impl OwnedStreamDescription {
+    pub fn from_definition<'a>(definition: &StreamDescription<'a>) -> Self {
         Self {
             name: definition.name.clone().into_owned(),
             is_default: definition.is_default,
-        }
-    }
-
-    pub fn key(&self) -> SubscriptionKey {
-        SubscriptionKey {
-            stream_name: self.name.clone(),
-            params: None,
+            errors: Rc::clone(&definition.errors),
         }
     }
 }

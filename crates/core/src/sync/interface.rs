@@ -14,7 +14,6 @@ use alloc::rc::Rc;
 use alloc::sync::Arc;
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
-use serde_with::{DisplayFromStr, serde_as};
 use sqlite::{ResultCode, Value};
 use sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 use sqlite_nostd::{self as sqlite, ColumnType};
@@ -138,7 +137,6 @@ pub struct StreamSubscriptionRequest {
     pub subscriptions: Vec<RequestedStreamSubscription>,
 }
 
-#[serde_as]
 #[derive(Serialize)]
 pub struct RequestedStreamSubscription {
     /// The name of the sync stream to subscribe to.
@@ -146,8 +144,6 @@ pub struct RequestedStreamSubscription {
     /// Parameters to make available in the stream's definition.
     pub parameters: Option<Box<JsonString>>,
     pub override_priority: Option<BucketPriority>,
-    #[serde_as(as = "DisplayFromStr")]
-    pub client_id: i64,
 }
 
 #[derive(Serialize)]
