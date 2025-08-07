@@ -1,9 +1,14 @@
 use core::{
+    cell::RefCell,
     ffi::{c_int, c_void},
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use alloc::sync::Arc;
+use alloc::{
+    collections::btree_set::BTreeSet,
+    string::{String, ToString},
+    sync::Arc,
+};
 use sqlite::{Connection, ResultCode};
 use sqlite_nostd::{self as sqlite, Context};
 
@@ -14,12 +19,16 @@ use sqlite_nostd::{self as sqlite, Context};
 /// functions/vtabs that need access to it.
 pub struct DatabaseState {
     pub is_in_sync_local: AtomicBool,
+    pending_updates: RefCell<BTreeSet<String>>,
+    commited_updates: RefCell<BTreeSet<String>>,
 }
 
 impl DatabaseState {
     pub fn new() -> Self {
         DatabaseState {
             is_in_sync_local: AtomicBool::new(false),
+            pending_updates: Default::default(),
+            commited_updates: Default::default(),
         }
     }
 
@@ -37,6 +46,25 @@ impl DatabaseState {
         }
 
         ClearOnDrop(self)
+    }
+
+    pub fn track_update(self, tbl: &str) {
+        let mut set = self.pending_updates.borrow_mut();
+        set.get_or_insert_with(tbl, str::to_string);
+    }
+
+    pub fn track_rollback(&self) {
+        self.pending_updates.borrow_mut().clear();
+    }
+
+    pub fn track_commit(&self) {
+        let mut commited = self.commited_updates.borrow_mut();
+        let mut pending = self.pending_updates.borrow_mut();
+        let pending = core::mem::replace(&mut *pending, Default::default());
+
+        for pending in pending.into_iter() {
+            commited.insert(pending);
+        }
     }
 
     pub unsafe extern "C" fn destroy_arc(ptr: *mut c_void) {
