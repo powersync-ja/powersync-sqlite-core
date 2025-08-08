@@ -163,7 +163,7 @@ fn check_previous(desc: &'static str, expected: &Arc<DatabaseState>, previous: *
         "Previous call to {desc} hook outside of PowerSync: Expected {expected:p}, installed was {previous:p}",
     );
     if !previous.is_null() {
-        // The hook callback own an Arc<DatabaseState> that needs to be dropped now.
+        // The hook callbacks own an Arc<DatabaseState> that needs to be dropped now.
         unsafe {
             Arc::decrement_strong_count(previous);
         }
