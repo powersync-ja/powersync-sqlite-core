@@ -340,7 +340,7 @@ extern "C" fn commit(vtab: *mut sqlite::vtab) -> c_int {
 
 extern "C" fn rollback(vtab: *mut sqlite::vtab) -> c_int {
     let tab = unsafe { &mut *(vtab.cast::<VirtualTable>()) };
-    tab.state.track_rollback();
+    tab.end_transaction();
     // ps_tx will be rolled back automatically
     ResultCode::OK as c_int
 }
