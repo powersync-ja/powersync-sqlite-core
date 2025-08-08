@@ -34,6 +34,7 @@ mod schema;
 mod state;
 mod sync;
 mod sync_local;
+mod update_hooks;
 mod util;
 mod uuid;
 mod version;
@@ -80,6 +81,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
     crate::kv::register(db)?;
     crate::state::register(db, state.clone())?;
     sync::register(db, state.clone())?;
+    update_hooks::register(db, state.clone())?;
 
     crate::schema::register(db)?;
     crate::operations_vtab::register(db, state.clone())?;
