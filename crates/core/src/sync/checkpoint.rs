@@ -1,7 +1,8 @@
-use alloc::{string::String, vec::Vec};
+use alloc::{rc::Rc, string::String, vec::Vec};
 use num_traits::Zero;
 
-use crate::sync::{BucketPriority, Checksum, line::BucketChecksum};
+use crate::sync::line::{BucketChecksum, BucketSubscriptionReason};
+use crate::sync::{BucketPriority, Checksum};
 use sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
 /// A structure cloned from [BucketChecksum]s with an owned bucket name instead of one borrowed from
@@ -12,6 +13,7 @@ pub struct OwnedBucketChecksum {
     pub checksum: Checksum,
     pub priority: BucketPriority,
     pub count: Option<i64>,
+    pub subscriptions: Rc<Vec<BucketSubscriptionReason>>,
 }
 
 impl OwnedBucketChecksum {
@@ -30,6 +32,7 @@ impl From<&'_ BucketChecksum<'_>> for OwnedBucketChecksum {
             checksum: value.checksum,
             priority: value.priority.unwrap_or(BucketPriority::FALLBACK),
             count: value.count,
+            subscriptions: value.subscriptions.clone(),
         }
     }
 }

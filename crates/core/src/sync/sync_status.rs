@@ -1,10 +1,20 @@
-use alloc::{collections::btree_map::BTreeMap, rc::Rc, string::String, vec::Vec};
-use core::{cell::RefCell, hash::BuildHasher};
+use alloc::{boxed::Box, collections::btree_map::BTreeMap, rc::Rc, string::String, vec::Vec};
+use core::{
+    cell::RefCell,
+    cmp::min,
+    hash::{BuildHasher, Hash},
+};
 use rustc_hash::FxBuildHasher;
 use serde::Serialize;
 use sqlite_nostd::ResultCode;
 
-use crate::sync::storage_adapter::StorageAdapter;
+use crate::{
+    sync::{
+        checkpoint::OwnedBucketChecksum, storage_adapter::StorageAdapter,
+        subscriptions::LocallyTrackedSubscription,
+    },
+    util::JsonString,
+};
 
 use super::{
     bucket_priority::BucketPriority, interface::Instruction, line::DataLine,
@@ -31,6 +41,7 @@ pub struct DownloadSyncStatus {
     /// When a download is active (that is, a `checkpoint` or `checkpoint_diff` line has been
     /// received), information about how far the download has progressed.
     pub downloading: Option<SyncDownloadProgress>,
+    pub streams: Option<Vec<ActiveStreamSubscription>>,
 }
 
 impl DownloadSyncStatus {
@@ -63,10 +74,15 @@ impl DownloadSyncStatus {
     /// Transitions state after receiving a checkpoint line.
     ///
     /// This sets the [downloading] state to include [progress].
-    pub fn start_tracking_checkpoint<'a>(&mut self, progress: SyncDownloadProgress) {
+    pub fn start_tracking_checkpoint<'a>(
+        &mut self,
+        progress: SyncDownloadProgress,
+        subscriptions: Vec<ActiveStreamSubscription>,
+    ) {
         self.mark_connected();
 
         self.downloading = Some(progress);
+        self.streams = Some(subscriptions);
     }
 
     /// Increments [SyncDownloadProgress] progress for the given [DataLine].
@@ -110,6 +126,7 @@ impl Default for DownloadSyncStatus {
             connecting: false,
             downloading: None,
             priority_status: Vec::new(),
+            streams: None,
         }
     }
 }
@@ -125,6 +142,10 @@ impl SyncStatusContainer {
             status: Rc::new(RefCell::new(Default::default())),
             last_published_hash: 0,
         }
+    }
+
+    pub fn inner(&self) -> &Rc<RefCell<DownloadSyncStatus>> {
+        &self.status
     }
 
     /// Invokes a function to update the sync status, then emits an [Instruction::UpdateSyncStatus]
@@ -246,6 +267,65 @@ impl SyncDownloadProgress {
     pub fn increment_download_count(&mut self, line: &DataLine) {
         if let Some(info) = self.buckets.get_mut(&*line.bucket) {
             info.since_last += line.data.len() as i64
+        }
+    }
+}
+
+#[derive(Serialize, Hash)]
+pub struct ActiveStreamSubscription {
+    #[serde(skip)]
+    pub id: i64,
+    pub name: String,
+    pub parameters: Option<Box<JsonString>>,
+    pub associated_buckets: Vec<String>,
+    pub priority: Option<BucketPriority>,
+    pub active: bool,
+    pub is_default: bool,
+    pub has_explicit_subscription: bool,
+    pub expires_at: Option<Timestamp>,
+    pub last_synced_at: Option<Timestamp>,
+}
+
+impl ActiveStreamSubscription {
+    pub fn from_local(local: &LocallyTrackedSubscription) -> Self {
+        Self {
+            id: local.id,
+            name: local.stream_name.clone(),
+            parameters: local.local_params.clone(),
+            is_default: local.is_default,
+            priority: None,
+            associated_buckets: Vec::new(),
+            active: local.active,
+
+            has_explicit_subscription: local.has_subscribed_manually(),
+            expires_at: local.expires_at.clone().map(|e| Timestamp(e)),
+            last_synced_at: local.last_synced_at.map(|e| Timestamp(e)),
+        }
+    }
+
+    pub fn mark_associated_with_bucket(&mut self, bucket: &OwnedBucketChecksum) {
+        match self.associated_buckets.binary_search(&bucket.bucket) {
+            Ok(_) => {
+                // The bucket is already part of the list
+                return;
+            }
+            Err(position) => {
+                // Insert here to keep vec sorted
+                self.associated_buckets
+                    .insert(position, bucket.bucket.clone());
+            }
+        };
+
+        self.priority = Some(match self.priority {
+            None => bucket.priority,
+            Some(prio) => min(prio, bucket.priority),
+        });
+    }
+
+    pub fn is_in_priority(&self, prio: Option<BucketPriority>) -> bool {
+        match prio {
+            None => true,
+            Some(prio) => self.priority >= Some(prio),
         }
     }
 }

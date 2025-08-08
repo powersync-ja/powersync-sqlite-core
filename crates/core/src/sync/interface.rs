@@ -7,6 +7,7 @@ use crate::constants::SUBTYPE_JSON;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
+use crate::sync::subscriptions::apply_subscriptions;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -18,14 +19,35 @@ use sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
 
+use crate::sync::BucketPriority;
+use crate::util::JsonString;
+
 /// Payload provided by SDKs when requesting a sync iteration.
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct StartSyncStream {
     /// Bucket parameters to include in the request when opening a sync stream.
     #[serde(default)]
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub schema: Schema,
+    #[serde(default = "StartSyncStream::include_defaults_by_default")]
+    pub include_defaults: bool,
+}
+
+impl StartSyncStream {
+    pub const fn include_defaults_by_default() -> bool {
+        true
+    }
+}
+
+impl Default for StartSyncStream {
+    fn default() -> Self {
+        Self {
+            parameters: Default::default(),
+            schema: Default::default(),
+            include_defaults: Self::include_defaults_by_default(),
+        }
+    }
 }
 
 /// A request sent from a client SDK to the [SyncClient] with a `powersync_control` invocation.
@@ -106,6 +128,22 @@ pub struct StreamingSyncRequest {
     pub binary_data: bool,
     pub client_id: String,
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
+    pub streams: StreamSubscriptionRequest,
+}
+
+#[derive(Serialize)]
+pub struct StreamSubscriptionRequest {
+    pub include_defaults: bool,
+    pub subscriptions: Vec<RequestedStreamSubscription>,
+}
+
+#[derive(Serialize)]
+pub struct RequestedStreamSubscription {
+    /// The name of the sync stream to subscribe to.
+    pub stream: String,
+    /// Parameters to make available in the stream's definition.
+    pub parameters: Option<Box<JsonString>>,
+    pub override_priority: Option<BucketPriority>,
 }
 
 #[derive(Serialize)]
@@ -177,6 +215,11 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
                 "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
+                "subscriptions" => {
+                    let request = serde_json::from_str(payload.text())
+                        .map_err(PowerSyncError::as_argument_error)?;
+                    return apply_subscriptions(ctx.db_handle(), request);
+                }
                 _ => {
                     return Err(PowerSyncError::argument_error("Unknown operation"));
                 }
