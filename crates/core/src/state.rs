@@ -48,7 +48,7 @@ impl DatabaseState {
         ClearOnDrop(self)
     }
 
-    pub fn track_update(self, tbl: &str) {
+    pub fn track_update(&self, tbl: &str) {
         let mut set = self.pending_updates.borrow_mut();
         set.get_or_insert_with(tbl, str::to_string);
     }
@@ -65,6 +65,11 @@ impl DatabaseState {
         for pending in pending.into_iter() {
             commited.insert(pending);
         }
+    }
+
+    pub fn take_updates(&self) -> BTreeSet<String> {
+        let mut committed = self.commited_updates.borrow_mut();
+        core::mem::replace(&mut *committed, Default::default())
     }
 
     pub unsafe extern "C" fn destroy_arc(ptr: *mut c_void) {
