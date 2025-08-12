@@ -14,7 +14,7 @@ use crate::{
         checkpoint::{ChecksumMismatch, validate_checkpoint},
         interface::{RequestedStreamSubscription, StreamSubscriptionRequest},
         streaming_sync::OwnedStreamDescription,
-        subscriptions::LocallyTrackedSubscription,
+        subscriptions::{LocallyTrackedSubscription, StreamKey},
         sync_status::SyncPriorityStatus,
     },
     sync_local::{PartialSyncOperation, SyncOperation},
@@ -354,6 +354,25 @@ impl StorageAdapter {
     fn delete_outdated_subscriptions(&self) -> Result<(), PowerSyncError> {
         self.db
             .exec_safe("DELETE FROM ps_stream_subscriptions WHERE (expires_at < unixepoch()) OR (ttl IS NULL AND NOT active)")?;
+        Ok(())
+    }
+
+    /// Increases the TTL for explicit subscriptions that are currently marked as active.
+    pub fn increase_ttl(&self, streams: &[StreamKey]) -> Result<(), PowerSyncError> {
+        let stmt = self.db.prepare_v2(
+            "UPDATE ps_stream_subscriptions SET expires_at = unixepoch() + ttl WHERE stream_name = ? AND local_params = ? AND ttl IS NOT NULL",
+        )?;
+
+        for stream in streams {
+            stmt.bind_text(1, &stream.name, sqlite_nostd::Destructor::STATIC)?;
+            stmt.bind_text(
+                2,
+                &stream.serialized_params(),
+                sqlite_nostd::Destructor::STATIC,
+            )?;
+            stmt.exec()?;
+        }
+
         Ok(())
     }
 
