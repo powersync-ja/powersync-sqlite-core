@@ -389,6 +389,8 @@ impl StreamingSyncIteration {
                 SyncStateMachineTransition::DataLineSaved { line: data_line }
             }
             SyncLine::KeepAlive(token) => {
+                self.adapter.increase_ttl(&self.options.active_streams)?;
+
                 if token.is_expired() {
                     // Token expired already - stop the connection immediately.
                     event

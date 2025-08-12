@@ -372,6 +372,8 @@ void main() {
     });
 
     syncTest('increase ttl', (controller) {
+      const startTime = 1740826800;
+
       control(
         'subscriptions',
         json.encode({
@@ -383,7 +385,7 @@ void main() {
       );
 
       var [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', 1740826800));
+      expect(row, containsPair('expires_at', startTime));
 
       controller.elapse(const Duration(minutes: 30));
 
@@ -399,15 +401,22 @@ void main() {
 
       // Which should increase its expiry date.
       [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', 1740828600));
+      expect(row, containsPair('expires_at', startTime + 1800));
 
-      // Stopping should not increase the expiry date. Client SDKs will do that
-      // periodically.
+      // The sync client uses token_expires_in lines to extend the expiry date
+      // of active stream subscriptions.
+      controller.elapse(const Duration(minutes: 30));
+      control('line_text', json.encode({'token_expires_in': 3600}));
+
+      [row] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(row, containsPair('expires_at', startTime + 3600));
+
+      // Stopping should not increase the expiry date.
       controller.elapse(const Duration(minutes: 30));
       control('stop', null);
 
       [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', 1740828600));
+      expect(row, containsPair('expires_at', startTime + 3600));
     });
 
     syncTest('can be made implicit', (_) {
