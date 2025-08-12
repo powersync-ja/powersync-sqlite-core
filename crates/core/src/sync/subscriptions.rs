@@ -39,28 +39,43 @@ impl LocallyTrackedSubscription {
 pub enum SubscriptionChangeRequest {
     #[serde(rename = "subscribe")]
     Subscribe(SubscribeToStream),
+
+    /// Explicitly unsubscribes from a stream. This corresponds to the `unsubscribeAll()` API in the
+    /// SDKs.
+    ///
+    /// Unsubscribing a single stream subscription happens internally in the SDK by reducing its
+    /// refcount. Once no references are remaining, it's no longer listed in
+    /// [StartSyncStream.active_streams] which will cause it to get unsubscribed after its TTL.
     #[serde(rename = "unsubscribe")]
-    Unsubscribe(UnsubscribeFromStream),
+    Unsubscribe(StreamKey),
+}
+
+/// A key uniquely identifying a stream.
+#[derive(Deserialize)]
+pub struct StreamKey {
+    pub name: String,
+    #[serde(default)]
+    pub params: Option<Box<serde_json::value::RawValue>>,
+}
+
+impl StreamKey {
+    pub fn serialized_params(&self) -> &str {
+        match &self.params {
+            Some(params) => params.get(),
+            None => "null",
+        }
+    }
 }
 
 #[serde_as]
 #[derive(Deserialize)]
 pub struct SubscribeToStream {
-    pub stream: String,
-    #[serde(default)]
-    pub params: Option<Box<serde_json::value::RawValue>>,
+    pub stream: StreamKey,
     #[serde_as(as = "Option<DurationSeconds>")]
     #[serde(default)]
     pub ttl: Option<Duration>,
     #[serde(default)]
     pub priority: Option<BucketPriority>,
-}
-
-#[derive(Deserialize)]
-pub struct UnsubscribeFromStream {
-    pub stream: String,
-    #[serde(default)]
-    pub params: Option<Box<serde_json::value::RawValue>>,
 }
 
 pub fn apply_subscriptions(
@@ -83,17 +98,14 @@ INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, 
                 )
                 .into_db_result(db)?;
 
-            stmt.bind_text(1, &subscription.stream, sqlite::Destructor::STATIC)?;
+            stmt.bind_text(1, &subscription.stream.name, sqlite::Destructor::STATIC)?;
             match &subscription.priority {
                 Some(priority) => stmt.bind_int(2, priority.number),
                 None => stmt.bind_null(2),
             }?;
             stmt.bind_text(
                 3,
-                match &subscription.params {
-                    Some(params) => params.get(),
-                    None => "null",
-                },
+                subscription.stream.serialized_params(),
                 sqlite::Destructor::STATIC,
             )?;
             stmt.bind_int64(
@@ -109,13 +121,10 @@ INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, 
             let stmt = db
                 .prepare_v2("UPDATE ps_stream_subscriptions SET ttl = NULL WHERE stream_name = ? AND local_params = ?")
                 .into_db_result(db)?;
-            stmt.bind_text(1, &subscription.stream, sqlite::Destructor::STATIC)?;
+            stmt.bind_text(1, &subscription.name, sqlite::Destructor::STATIC)?;
             stmt.bind_text(
                 2,
-                match &subscription.params {
-                    Some(params) => params.get(),
-                    None => "null",
-                },
+                subscription.serialized_params(),
                 sqlite::Destructor::STATIC,
             )?;
             stmt.exec()?;

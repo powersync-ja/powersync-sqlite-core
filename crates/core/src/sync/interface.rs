@@ -7,7 +7,7 @@ use crate::constants::SUBTYPE_JSON;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
-use crate::sync::subscriptions::apply_subscriptions;
+use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -30,8 +30,15 @@ pub struct StartSyncStream {
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub schema: Schema,
+
+    /// Whether to request default streams in the generated sync request.
     #[serde(default = "StartSyncStream::include_defaults_by_default")]
     pub include_defaults: bool,
+    /// Streams that are currently active in the app.
+    ///
+    /// We will increase the expiry date for those streams at the time we connect and disconnect.
+    #[serde(default)]
+    pub active_streams: Vec<StreamKey>,
 }
 
 impl StartSyncStream {
@@ -46,6 +53,7 @@ impl Default for StartSyncStream {
             parameters: Default::default(),
             schema: Default::default(),
             include_defaults: Self::include_defaults_by_default(),
+            active_streams: Default::default(),
         }
     }
 }

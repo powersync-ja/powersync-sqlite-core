@@ -797,6 +797,7 @@ impl StreamingSyncIteration {
 
         let requests = self.adapter.collect_bucket_requests()?;
         let local_bucket_names: Vec<String> = requests.iter().map(|s| s.name.clone()).collect();
+        self.adapter.increase_ttl(&self.options.active_streams)?;
         let (streams, index_to_id) = self
             .adapter
             .collect_subscription_requests(self.options.include_defaults)?;

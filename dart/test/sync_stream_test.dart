@@ -180,7 +180,9 @@ void main() {
       control(
         'subscriptions',
         json.encode({
-          'subscribe': {'stream': 'a'},
+          'subscribe': {
+            'stream': {'name': 'a'}
+          },
         }),
       );
 
@@ -278,7 +280,7 @@ void main() {
         'subscriptions',
         json.encode({
           'unsubscribe': {
-            'stream': 'my_stream',
+            'name': 'my_stream',
             'params': null,
           }
         }),
@@ -304,12 +306,12 @@ void main() {
       );
     });
 
-    syncTest('ttl', (controller) {
+    syncTest('delete after ttl', (controller) {
       control(
         'subscriptions',
         json.encode({
           'subscribe': {
-            'stream': 'my_stream',
+            'stream': {'name': 'my_stream'},
             'ttl': 3600,
           }
         }),
@@ -369,11 +371,52 @@ void main() {
       );
     });
 
+    syncTest('increase ttl', (controller) {
+      control(
+        'subscriptions',
+        json.encode({
+          'subscribe': {
+            'stream': {'name': 'my_stream'},
+            'ttl': 3600,
+          }
+        }),
+      );
+
+      var [row] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(row, containsPair('expires_at', 1740826800));
+
+      controller.elapse(const Duration(minutes: 30));
+
+      // Mark the stream as active in the connect procedure
+      control(
+        'start',
+        json.encode({
+          'active_streams': [
+            {'name': 'my_stream'}
+          ]
+        }),
+      );
+
+      // Which should increase its expiry date.
+      [row] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(row, containsPair('expires_at', 1740828600));
+
+      // Stopping should not increase the expiry date. Client SDKs will do that
+      // periodically.
+      controller.elapse(const Duration(minutes: 30));
+      control('stop', null);
+
+      [row] = db.select('SELECT * FROM ps_stream_subscriptions');
+      expect(row, containsPair('expires_at', 1740828600));
+    });
+
     syncTest('can be made implicit', (_) {
       control(
           'subscriptions',
           json.encode({
-            'subscribe': {'stream': 'a'}
+            'subscribe': {
+              'stream': {'name': 'a'}
+            }
           }));
       control('start', null);
       control(
@@ -394,7 +437,7 @@ void main() {
       control(
         'subscriptions',
         json.encode({
-          'unsubscribe': {'stream': 'a'}
+          'unsubscribe': {'name': 'a'}
         }),
       );
       control('stop', null);
@@ -425,13 +468,17 @@ void main() {
       control(
         'subscriptions',
         json.encode({
-          'subscribe': {'stream': 'a', 'params': 'invalid'}
+          'subscribe': {
+            'stream': {'name': 'a', 'params': 'invalid'}
+          }
         }),
       );
       control(
         'subscriptions',
         json.encode({
-          'subscribe': {'stream': 'a', 'params': 'valid'}
+          'subscribe': {
+            'stream': {'name': 'a', 'params': 'valid'}
+          }
         }),
       );
 
