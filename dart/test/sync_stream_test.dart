@@ -548,4 +548,47 @@ void main() {
       );
     });
   });
+
+  syncTest('changing subscriptions', (controller) {
+    var activeAppSubscriptions = <Object>[];
+
+    void startIteration() {
+      control('start', json.encode({'active_streams': activeAppSubscriptions}));
+    }
+
+    bool checkRestart() {
+      final instructions =
+          control('update_subscriptions', json.encode(activeAppSubscriptions));
+      return instructions.any((e) => (e as Map).containsKey('CloseSyncStream'));
+    }
+
+    startIteration();
+    control(
+      'subscriptions',
+      json.encode({
+        'subscribe': {
+          'stream': {'name': 'a'},
+          'ttl': 3600,
+        }
+      }),
+    );
+    activeAppSubscriptions.add({'name': 'a'});
+
+    // Adding the subscription requires another request.
+    expect(checkRestart(), isTrue);
+    startIteration();
+
+    // Now assume the app calls unsubscribe() on the subscription. Because it
+    // has a TTL, this doesn't invalidate the current session.
+    activeAppSubscriptions.clear();
+    expect(checkRestart(), isFalse);
+
+    // While we're still connected, the TTL of the subscription is running out.
+    controller.elapse(const Duration(hours: 1, seconds: 1));
+    // So, the client should request a reconnect!
+    final instructions =
+        control('line_text', json.encode({'token_expires_in': 1800}));
+    expect(instructions,
+        contains(containsPair('CloseSyncStream', {'hide_disconnect': true})));
+  });
 }

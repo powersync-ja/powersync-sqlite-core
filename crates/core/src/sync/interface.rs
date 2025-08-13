@@ -38,7 +38,7 @@ pub struct StartSyncStream {
     ///
     /// We will increase the expiry date for those streams at the time we connect and disconnect.
     #[serde(default)]
-    pub active_streams: Vec<StreamKey>,
+    pub active_streams: Rc<Vec<StreamKey>>,
 }
 
 impl StartSyncStream {
@@ -89,6 +89,12 @@ pub enum SyncEvent<'a> {
     TextLine { data: &'a str },
     /// Forward a binary line (BSON) received from the sync service.
     BinaryLine { data: &'a [u8] },
+    /// The active stream subscriptions (as in, `SyncStreamSubscription` instances active right now)
+    /// have changed.
+    ///
+    /// The client will compare the new active subscriptions with the current one and will issue a
+    /// request to restart the sync iteration if necessary.
+    DidUpdateSubscriptions { active_streams: Rc<Vec<StreamKey>> },
 }
 
 /// An instruction sent by the core extension to the SDK.
@@ -114,11 +120,18 @@ pub enum Instruction {
     // These are defined like this because deserializers in Kotlin can't support either an
     // object or a literal value
     /// Close the websocket / HTTP stream to the sync service.
-    CloseSyncStream {},
+    CloseSyncStream(CloseSyncStream),
     /// Flush the file-system if it's non-durable (only applicable to the Dart SDK).
     FlushFileSystem {},
     /// Notify that a sync has been completed, prompting client SDKs to clear earlier errors.
     DidCompleteSync {},
+}
+
+#[derive(Serialize, Default)]
+pub struct CloseSyncStream {
+    /// Whether clients should hide the brief disconnected status from the public sync status and
+    /// reconnect immediately.
+    pub hide_disconnect: bool,
 }
 
 #[derive(Serialize)]
@@ -136,16 +149,16 @@ pub struct StreamingSyncRequest {
     pub binary_data: bool,
     pub client_id: String,
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
-    pub streams: StreamSubscriptionRequest,
+    pub streams: Rc<StreamSubscriptionRequest>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 pub struct StreamSubscriptionRequest {
     pub include_defaults: bool,
     pub subscriptions: Vec<RequestedStreamSubscription>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize, PartialEq)]
 pub struct RequestedStreamSubscription {
     /// The name of the sync stream to subscribe to.
     pub stream: String,
@@ -223,6 +236,12 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
                 "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
+                "update_subscriptions" => {
+                    SyncControlRequest::SyncEvent(SyncEvent::DidUpdateSubscriptions {
+                        active_streams: serde_json::from_str(payload.text())
+                            .map_err(PowerSyncError::as_argument_error)?,
+                    })
+                }
                 "subscriptions" => {
                     let request = serde_json::from_str(payload.text())
                         .map_err(PowerSyncError::as_argument_error)?;
