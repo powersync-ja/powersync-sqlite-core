@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
@@ -24,7 +25,10 @@ extension on SqliteVersion {
   String get autoconfUrl =>
       'https://sqlite.org/$year/sqlite-autoconf-$version.tar.gz';
 
-  String get windowsUrl =>
+  String get windowsArm64Url =>
+      'https://sqlite.org/$year/sqlite-dll-win-arm64-$version.zip';
+
+  String get windowsX64Url =>
       'https://sqlite.org/$year/sqlite-dll-win-x64-$version.zip';
 }
 
@@ -61,7 +65,9 @@ Future<void> _downloadAndCompile(String name, SqliteVersion version,
   // installed and all those tools activated in the current shell.
   // Much easier to just download precompiled builds.
   if (Platform.isWindows) {
-    final windowsUri = version.windowsUrl;
+    final windowsUri = Abi.current() == Abi.windowsX64
+        ? version.windowsX64Url
+        : version.windowsArm64Url;
     final sqlite3Zip = p.join(temporaryDirPath, 'sqlite3.zip');
     final client = Client();
     final response = await client
