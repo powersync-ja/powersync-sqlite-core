@@ -1,0 +1,26 @@
+name: "Build Windows libraries"
+description: "Create artifact for Windows libraries"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust Nightly
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: nightly-2025-04-15
+        components: rust-src
+        targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+    
+    - name: Build binaries
+      shell: bash
+      run: |
+        ./tool/build_windows.sh x64
+        ./tool/build_windows.sh aarch64
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: windows-library
+        retention-days: 1
+        path: |
+          powersync_x64.dll
+          powersync_aarch64.dll

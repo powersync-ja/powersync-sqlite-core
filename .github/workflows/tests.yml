@@ -4,6 +4,75 @@ on:
 name: "tests"
 
 jobs:
+  libs_linux:
+    name: Building Linux libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build Android
+        uses: ./.github/actions/linux
+
+  libs_macos:
+    name: Building macOS libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build macOS
+        uses: ./.github/actions/macos
+
+  libs_windows:
+    name: Building Windows libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build Windows
+        uses: ./.github/actions/windows
+
+  libs_android:
+    name: Building Android libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build Android
+        uses: ./.github/actions/android
+        with:
+          sign-publication: '0'
+
+  libs_wasm:
+    name: Basic WASM build
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Build wasm
+        uses: ./.github/actions/wasm
+
+  libs_xcframework:
+    name: Build XCFramework
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build XCFramework
+        uses: ./.github/actions/xcframework
+
   build:
     name: Testing on ${{ matrix.os }}
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
@@ -82,3 +151,27 @@ jobs:
         run: |
           CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test -P skip_slow
           CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test -P skip_slow
+
+  valgrind:
+    name: Testing with Valgrind on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install valgrind
+        run: sudo apt update && sudo apt install -y valgrind
+
+      - name: Install Cargo Valgrind
+        run: |
+          cargo install cargo-valgrind
+
+      - name: Test Core
+        run: |
+          cargo valgrind test -p powersync_core --features loadable_extension
