@@ -591,4 +591,61 @@ void main() {
     expect(instructions,
         contains(containsPair('CloseSyncStream', {'hide_disconnect': true})));
   });
+
+  syncTest('persists stream state', (_) {
+    control(
+      'subscriptions',
+      json.encode({
+        'subscribe': {
+          'stream': {'name': 'a'},
+        }
+      }),
+    );
+
+    control(
+      'start',
+      json.encode({
+        'active_streams': [
+          {'name': 'a'}
+        ]
+      }),
+    );
+    control(
+      'line_text',
+      json.encode(
+        checkpoint(
+          lastOpId: 1,
+          buckets: [
+            bucketDescription(
+              'a',
+              subscriptions: [
+                {'sub': 0}
+              ],
+              priority: 1,
+            )
+          ],
+          streams: [stream('a', false)],
+        ),
+      ),
+    );
+    control('line_text', json.encode(checkpointComplete()));
+
+    final [row] = db.select('select powersync_offline_sync_status();');
+    expect(
+        json.decode(row[0]),
+        containsPair('streams', [
+          {
+            'name': 'a',
+            'parameters': null,
+            // not persisted, only needed for download progress
+            'associated_buckets': [],
+            'priority': null, // same
+            'active': true,
+            'is_default': false,
+            'has_explicit_subscription': true,
+            'expires_at': 1740909600,
+            'last_synced_at': 1740823200
+          }
+        ]));
+  });
 }
