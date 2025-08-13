@@ -784,12 +784,13 @@ impl StreamingSyncIteration {
         if matches!(&result, SyncLocalResult::ChangesApplied) {
             // Update affected stream subscriptions to mark them as synced.
             let mut status = self.status.inner().borrow_mut();
-            if let Some(ref mut streams) = status.streams {
+
+            if !status.streams.is_empty() {
                 let stmt = self.adapter.db.prepare_v2(
                     "UPDATE ps_stream_subscriptions SET last_synced_at = unixepoch() WHERE id = ? RETURNING last_synced_at",
                 )?;
 
-                for stream in streams {
+                for stream in &mut status.streams {
                     if stream.is_in_priority(priority) {
                         stmt.bind_int64(1, stream.id)?;
                         if stmt.step()? == ResultCode::ROW {
@@ -822,9 +823,12 @@ impl StreamingSyncIteration {
             ));
         };
 
-        let sync_state = self.adapter.collect_sync_state()?;
+        let offline_state = self.adapter.offline_sync_state()?;
         self.status.update(
-            move |s| s.start_connecting(sync_state),
+            move |s| {
+                *s = offline_state;
+                s.start_connecting();
+            },
             &mut event.instructions,
         );
 

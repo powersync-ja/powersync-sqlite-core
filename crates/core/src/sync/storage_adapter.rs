@@ -15,7 +15,7 @@ use crate::{
         interface::{RequestedStreamSubscription, StreamSubscriptionRequest},
         streaming_sync::{OwnedStreamDescription, RequestedStreamSubscriptions},
         subscriptions::{LocallyTrackedSubscription, StreamKey},
-        sync_status::SyncPriorityStatus,
+        sync_status::{ActiveStreamSubscription, DownloadSyncStatus, SyncPriorityStatus},
     },
     sync_local::{PartialSyncOperation, SyncOperation},
     util::{JsonString, column_nullable},
@@ -87,30 +87,45 @@ impl StorageAdapter {
         Ok(requests)
     }
 
-    pub fn collect_sync_state(&self) -> Result<Vec<SyncPriorityStatus>, PowerSyncError> {
-        // language=SQLite
-        let statement = self
+    pub fn offline_sync_state(&self) -> Result<DownloadSyncStatus, PowerSyncError> {
+        let priority_items = {
+            // language=SQLite
+            let statement = self
             .db
             .prepare_v2(
                 "SELECT priority, unixepoch(last_synced_at) FROM ps_sync_state ORDER BY priority",
             )
             .into_db_result(self.db)?;
 
-        let mut items = Vec::<SyncPriorityStatus>::new();
-        while statement.step()? == ResultCode::ROW {
-            let priority = BucketPriority {
-                number: statement.column_int(0),
-            };
-            let timestamp = statement.column_int64(1);
+            let mut items = Vec::<SyncPriorityStatus>::new();
+            while statement.step()? == ResultCode::ROW {
+                let priority = BucketPriority {
+                    number: statement.column_int(0),
+                };
+                let timestamp = statement.column_int64(1);
 
-            items.push(SyncPriorityStatus {
-                priority,
-                last_synced_at: Some(Timestamp(timestamp)),
-                has_synced: Some(true),
-            });
-        }
+                items.push(SyncPriorityStatus {
+                    priority,
+                    last_synced_at: Some(Timestamp(timestamp)),
+                    has_synced: Some(true),
+                });
+            }
 
-        return Ok(items);
+            items
+        };
+
+        let mut streams = Vec::new();
+        self.iterate_local_subscriptions(|sub| {
+            streams.push(ActiveStreamSubscription::from_local(&sub));
+        })?;
+
+        Ok(DownloadSyncStatus {
+            connected: false,
+            connecting: false,
+            priority_status: priority_items,
+            downloading: None,
+            streams,
+        })
     }
 
     pub fn delete_buckets<'a>(
