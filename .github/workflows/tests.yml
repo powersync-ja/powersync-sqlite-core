@@ -143,7 +143,7 @@ jobs:
         id: sqlite_build
         with:
           path: dart/.dart_tool/sqlite3/
-          key: ${{ runner.os }}-${{ hashFiles('dart/tool/') }}
+          key: ${{ matrix.os }}-${{ hashFiles('dart/tool/') }}
 
       - name: Setup Dart tests
         working-directory: dart
