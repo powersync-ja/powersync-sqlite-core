@@ -203,9 +203,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release upload "${{ inputs.tag }}" *.dll
-          gh release upload "${{ inputs.tag }}" *.dylib
-          gh release upload "${{ inputs.tag }}" *.so
+          gh release upload "${{ needs.draft_release.outputs.tag }}" *.dll
+          gh release upload "${{ needs.draft_release.outputs.tag }}" *.dylib
+          gh release upload "${{ needs.draft_release.outputs.tag }}" *.so
 
   publish_wasm:
     name: Publish WASM builds
