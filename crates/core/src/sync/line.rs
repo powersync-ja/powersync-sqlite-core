@@ -1,9 +1,10 @@
 use alloc::borrow::Cow;
+use alloc::rc::Rc;
+use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Deserialize;
-use serde::de::{IgnoredAny, VariantAccess, Visitor};
-
-use crate::util::{deserialize_optional_string_to_i64, deserialize_string_to_i64};
+use serde::de::{Error, IgnoredAny, VariantAccess, Visitor};
+use serde_with::{DisplayFromStr, serde_as};
 
 use super::Checksum;
 use super::bucket_priority::BucketPriority;
@@ -73,27 +74,99 @@ impl<'de> Deserialize<'de> for SyncLine<'de> {
     }
 }
 
+#[serde_as]
 #[derive(Deserialize, Debug)]
 pub struct Checkpoint<'a> {
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
+    #[serde_as(as = "DisplayFromStr")]
     pub last_op_id: i64,
     #[serde(default)]
-    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub write_checkpoint: Option<i64>,
     #[serde(borrow)]
     pub buckets: Vec<BucketChecksum<'a>>,
+    #[serde(default, borrow)]
+    pub streams: Vec<StreamDescription<'a>>,
 }
 
 #[derive(Deserialize, Debug)]
+pub struct StreamDescription<'a> {
+    pub name: SyncLineStr<'a>,
+    pub is_default: bool,
+    pub errors: Rc<Vec<StreamSubscriptionError>>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct StreamSubscriptionError {
+    pub subscription: StreamSubscriptionErrorCause,
+    pub message: String,
+}
+
+/// The concrete stream subscription that has caused an error.
+#[derive(Debug)]
+pub enum StreamSubscriptionErrorCause {
+    /// The error is caused by the stream being subscribed to by default (i.e., no parameters).
+    Default,
+    /// The error is caused by an explicit subscription (e.g. due to invalid parameters).
+    ///
+    /// The inner value is the index into  [StreamSubscriptionRequest::subscriptions] of the
+    /// faulty subscription.
+    ExplicitSubscription(usize),
+}
+
+impl<'de> Deserialize<'de> for StreamSubscriptionErrorCause {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct CauseVisitor;
+
+        impl<'de> Visitor<'de> for CauseVisitor {
+            type Value = StreamSubscriptionErrorCause;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                write!(formatter, "default or index")
+            }
+
+            fn visit_str<E>(self, _v: &str) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                return Ok(StreamSubscriptionErrorCause::Default);
+            }
+
+            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                return Ok(StreamSubscriptionErrorCause::ExplicitSubscription(
+                    v as usize,
+                ));
+            }
+
+            fn visit_i32<E>(self, v: i32) -> Result<Self::Value, E>
+            where
+                E: Error,
+            {
+                return Ok(StreamSubscriptionErrorCause::ExplicitSubscription(
+                    v as usize,
+                ));
+            }
+        }
+
+        deserializer.deserialize_any(CauseVisitor)
+    }
+}
+
+#[serde_as]
+#[derive(Deserialize, Debug)]
 pub struct CheckpointDiff<'a> {
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
+    #[serde_as(as = "DisplayFromStr")]
     pub last_op_id: i64,
     #[serde(borrow)]
     pub updated_buckets: Vec<BucketChecksum<'a>>,
     #[serde(borrow)]
     pub removed_buckets: Vec<SyncLineStr<'a>>,
-    #[serde(default)]
-    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub write_checkpoint: Option<i64>,
 }
 
@@ -110,6 +183,7 @@ pub struct CheckpointPartiallyComplete {
     pub priority: BucketPriority,
 }
 
+#[serde_as]
 #[derive(Deserialize, Debug)]
 pub struct BucketChecksum<'a> {
     #[serde(borrow)]
@@ -119,9 +193,61 @@ pub struct BucketChecksum<'a> {
     pub priority: Option<BucketPriority>,
     #[serde(default)]
     pub count: Option<i64>,
+    #[serde(default)]
+    pub subscriptions: Rc<Vec<BucketSubscriptionReason>>,
     //    #[serde(default)]
     //    #[serde(deserialize_with = "deserialize_optional_string_to_i64")]
     //    pub last_op_id: Option<i64>,
+}
+
+/// The reason for why a bucket was included in a checkpoint.
+#[derive(Debug)]
+pub enum BucketSubscriptionReason {
+    /// A bucket was created from a default stream.
+    ///
+    /// The inner value is the index of the stream in [Checkpoint::streams].
+    DerivedFromDefaultStream(usize),
+    /// A bucket was created for a subscription id we've explicitly requested in the sync request.
+    ///
+    /// The inner value is the index of the stream in [StreamSubscriptionRequest::subscriptions].
+    DerivedFromExplicitSubscription(usize),
+}
+
+impl<'de> Deserialize<'de> for BucketSubscriptionReason {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct MyVisitor;
+
+        const VARIANTS: &'static [&'static str] = &["default", "sub"];
+
+        impl<'de> Visitor<'de> for MyVisitor {
+            type Value = BucketSubscriptionReason;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                write!(formatter, "a subscription reason")
+            }
+
+            fn visit_enum<A>(self, data: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::EnumAccess<'de>,
+            {
+                let (key, variant) = data.variant::<&'de str>()?;
+                Ok(match key {
+                    "default" => BucketSubscriptionReason::DerivedFromDefaultStream(
+                        variant.newtype_variant()?,
+                    ),
+                    "sub" => BucketSubscriptionReason::DerivedFromExplicitSubscription(
+                        variant.newtype_variant()?,
+                    ),
+                    other => return Err(A::Error::unknown_variant(other, VARIANTS)),
+                })
+            }
+        }
+
+        deserializer.deserialize_enum("BucketSubscriptionReason", VARIANTS, MyVisitor)
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -137,10 +263,11 @@ pub struct DataLine<'a> {
     //    pub next_after: Option<SyncLineStr<'a>>,
 }
 
+#[serde_as]
 #[derive(Deserialize, Debug)]
 pub struct OplogEntry<'a> {
     pub checksum: Checksum,
-    #[serde(deserialize_with = "deserialize_string_to_i64")]
+    #[serde_as(as = "DisplayFromStr")]
     pub op_id: i64,
     pub op: OpType,
     #[serde(default, borrow)]
@@ -224,6 +351,7 @@ mod tests {
                 last_op_id: 10,
                 write_checkpoint: None,
                 buckets: _,
+                streams: _,
             })
         );
 
@@ -259,6 +387,7 @@ mod tests {
                 last_op_id: 1,
                 write_checkpoint: None,
                 buckets: _,
+                streams: _,
             })
         );
     }
