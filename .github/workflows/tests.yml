@@ -18,7 +18,7 @@ jobs:
   libs_macos:
     name: Building macOS libraries
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,7 +29,7 @@ jobs:
   libs_windows:
     name: Building Windows libraries
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,20 +73,18 @@ jobs:
       - name: Build XCFramework
         uses: ./.github/actions/xcframework
 
-  build:
-    name: Testing on ${{ matrix.os }}
+  rust_unit_tests:
+    name: Rust unit tests on ${{ matrix.os }}
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-latest]
-
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: dart-lang/setup-dart@v1
 
       - name: Ubuntu setup
         if: matrix.os == 'ubuntu-24.04'
@@ -123,6 +121,23 @@ jobs:
       - name: Check loadable extension
         run: |
           ./target/release/sqlite3 ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"
+
+  build:
+    name: Testing on ${{ matrix.os }}
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ${{ matrix.os }}
+    needs: [libs_linux, libs_macos]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-arm64, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dart-lang/setup-dart@v1
 
       - uses: actions/cache@v4
         id: sqlite_build

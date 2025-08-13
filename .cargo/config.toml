@@ -17,22 +17,22 @@
 #   173K, loading works
 # Conclusion: -lgcc_eh has no effect when using -Z build-std.
 
-[target.x86_64-unknown-linux-gnu]
+[target.'cfg(target_os = "linux")']
 rustflags = [
     "-C", "link-arg=-lgcc_eh",
 ]
 
-[target.i686-unknown-linux-gnu]
-rustflags = [
-    "-C", "link-arg=-lgcc_eh",
-]
+[target.x86_64-unknown-linux-gnu]
+linker = "x86_64-linux-gnu-gcc"
 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
-rustflags = [
-    "-C", "link-arg=-lgcc_eh",
-]
 
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+
+[target.riscv64gc-unknown-linux-gnu]
+linker = "riscv64-linux-gnu-gcc"
 
 # For iOS and macOS, we need to specify the minimum/target version.
 # This must match the versions in the podspec file.
