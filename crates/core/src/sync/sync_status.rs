@@ -41,7 +41,7 @@ pub struct DownloadSyncStatus {
     /// When a download is active (that is, a `checkpoint` or `checkpoint_diff` line has been
     /// received), information about how far the download has progressed.
     pub downloading: Option<SyncDownloadProgress>,
-    pub streams: Option<Vec<ActiveStreamSubscription>>,
+    pub streams: Vec<ActiveStreamSubscription>,
 }
 
 impl DownloadSyncStatus {
@@ -58,11 +58,10 @@ impl DownloadSyncStatus {
         self.downloading = None;
     }
 
-    pub fn start_connecting(&mut self, status: Vec<SyncPriorityStatus>) {
+    pub fn start_connecting(&mut self) {
         self.connected = false;
         self.downloading = None;
         self.connecting = true;
-        self.priority_status = status;
         self.debug_assert_priority_status_is_sorted();
     }
 
@@ -82,7 +81,7 @@ impl DownloadSyncStatus {
         self.mark_connected();
 
         self.downloading = Some(progress);
-        self.streams = Some(subscriptions);
+        self.streams = subscriptions;
     }
 
     /// Increments [SyncDownloadProgress] progress for the given [DataLine].
@@ -126,7 +125,7 @@ impl Default for DownloadSyncStatus {
             connecting: false,
             downloading: None,
             priority_status: Vec::new(),
-            streams: None,
+            streams: Vec::new(),
         }
     }
 }

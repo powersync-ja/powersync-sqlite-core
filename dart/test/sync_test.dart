@@ -703,7 +703,9 @@ void _syncTests<T>({
                   "Checksums didn't match, failed for: a (expected 0x000004d2, got 0x000010e1 = 0x000010e1 (op) + 0x00000000 (add))")
             }
           },
-          {'CloseSyncStream': {}},
+          {
+            'CloseSyncStream': {'hide_disconnect': false}
+          },
         ],
       );
 
