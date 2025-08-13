@@ -34,7 +34,7 @@ runs:
     - uses: actions/upload-artifact@v4
       with:
         name: xcframework
-        retention-days: 1
+        retention-days: 14
         compression: 0 # We're uploading a zip archive, no need to compress agan
         path: |
           powersync-sqlite-core.xcframework.zip

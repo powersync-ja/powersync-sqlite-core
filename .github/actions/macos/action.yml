@@ -20,7 +20,7 @@ runs:
     - uses: actions/upload-artifact@v4
       with:
         name: macos-library
-        retention-days: 1
+        retention-days: 14
         path: |
           libpowersync_x64.dylib
           libpowersync_aarch64.dylib
