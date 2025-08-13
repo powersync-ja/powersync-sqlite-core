@@ -1,6 +1,6 @@
 use core::{assert_matches::debug_assert_matches, fmt::Display};
 
-use alloc::{string::ToString, vec::Vec};
+use alloc::{rc::Rc, string::ToString, vec::Vec};
 use serde::Serialize;
 use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 
@@ -13,7 +13,7 @@ use crate::{
     sync::{
         checkpoint::{ChecksumMismatch, validate_checkpoint},
         interface::{RequestedStreamSubscription, StreamSubscriptionRequest},
-        streaming_sync::OwnedStreamDescription,
+        streaming_sync::{OwnedStreamDescription, RequestedStreamSubscriptions},
         subscriptions::{LocallyTrackedSubscription, StreamKey},
         sync_status::SyncPriorityStatus,
     },
@@ -287,7 +287,7 @@ impl StorageAdapter {
     pub fn collect_subscription_requests(
         &self,
         include_defaults: bool,
-    ) -> Result<(StreamSubscriptionRequest, Vec<i64>), PowerSyncError> {
+    ) -> Result<RequestedStreamSubscriptions, PowerSyncError> {
         self.delete_outdated_subscriptions()?;
 
         let mut subscriptions: Vec<RequestedStreamSubscription> = Vec::new();
@@ -310,13 +310,13 @@ impl StorageAdapter {
             index_to_local_id.push(subscription.id);
         }
 
-        Ok((
-            StreamSubscriptionRequest {
+        Ok(RequestedStreamSubscriptions {
+            request: Rc::new(StreamSubscriptionRequest {
                 include_defaults,
                 subscriptions,
-            },
-            index_to_local_id,
-        ))
+            }),
+            subscription_ids: Rc::new(index_to_local_id),
+        })
     }
 
     pub fn now(&self) -> Result<Timestamp, ResultCode> {

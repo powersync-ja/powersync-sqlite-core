@@ -26,7 +26,7 @@ use crate::{
     sync::{
         BucketPriority,
         checkpoint::OwnedBucketChecksum,
-        interface::StartSyncStream,
+        interface::{CloseSyncStream, StartSyncStream, StreamSubscriptionRequest},
         line::{
             BucketSubscriptionReason, DataLine, StreamDescription, StreamSubscriptionError,
             StreamSubscriptionErrorCause,
@@ -137,7 +137,7 @@ impl ClientState {
 /// At each invocation, the future is polled once (and gets access to context that allows it to
 /// render [Instruction]s to return from the function).
 struct SyncIterationHandle {
-    future: Pin<Box<dyn Future<Output = Result<(), PowerSyncError>>>>,
+    future: Pin<Box<dyn Future<Output = Result<CloseSyncStream, PowerSyncError>>>>,
 }
 
 impl SyncIterationHandle {
@@ -184,9 +184,11 @@ impl SyncIterationHandle {
 
         Ok(
             if let Poll::Ready(result) = self.future.poll(&mut context) {
-                result?;
+                let close = result?;
 
-                active.instructions.push(Instruction::CloseSyncStream {});
+                active
+                    .instructions
+                    .push(Instruction::CloseSyncStream(close));
                 true
             } else {
                 false
@@ -322,7 +324,7 @@ impl StreamingSyncIteration {
                             severity: LogSeverity::WARNING,
                             line: format!("Could not apply checkpoint, {checkpoint_result}").into(),
                         });
-                        SyncStateMachineTransition::CloseIteration
+                        SyncStateMachineTransition::CloseIteration(Default::default())
                     }
                     SyncLocalResult::PendingLocalChanges => {
                         event.instructions.push(Instruction::LogLine {
@@ -368,7 +370,7 @@ impl StreamingSyncIteration {
                             )
                             .into(),
                         });
-                        SyncStateMachineTransition::CloseIteration
+                        SyncStateMachineTransition::CloseIteration(Default::default())
                     }
                     SyncLocalResult::PendingLocalChanges => {
                         // If we have pending uploads, we can't complete new checkpoints outside
@@ -397,14 +399,26 @@ impl StreamingSyncIteration {
                         .instructions
                         .push(Instruction::FetchCredentials { did_expire: true });
 
-                    SyncStateMachineTransition::CloseIteration
+                    SyncStateMachineTransition::CloseIteration(Default::default())
                 } else if token.should_prefetch() {
                     event
                         .instructions
                         .push(Instruction::FetchCredentials { did_expire: false });
                     SyncStateMachineTransition::Empty
                 } else {
-                    SyncStateMachineTransition::Empty
+                    // Periodically check whether any subscriptions that are part of this stream
+                    // have become expired. We currently do this by re-creating the request and
+                    // aborting the iteration if it has changed.
+                    let updated_request = self
+                        .adapter
+                        .collect_subscription_requests(self.options.include_defaults)?;
+                    if updated_request.request != target.explicit_stream_subscriptions().request {
+                        SyncStateMachineTransition::CloseIteration(CloseSyncStream {
+                            hide_disconnect: true,
+                        })
+                    } else {
+                        SyncStateMachineTransition::Empty
+                    }
                 }
             }
             SyncLine::UnknownSyncLine => {
@@ -423,7 +437,7 @@ impl StreamingSyncIteration {
         target: &mut SyncTarget,
         event: &mut ActiveEvent,
         transition: SyncStateMachineTransition,
-    ) -> bool {
+    ) -> Option<CloseSyncStream> {
         match transition {
             SyncStateMachineTransition::StartTrackingCheckpoint {
                 progress,
@@ -441,7 +455,7 @@ impl StreamingSyncIteration {
                 self.status
                     .update(|s| s.track_line(&line), &mut event.instructions);
             }
-            SyncStateMachineTransition::CloseIteration => return true,
+            SyncStateMachineTransition::CloseIteration(close) => return Some(close),
             SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
                 validated_but_not_applied,
             } => {
@@ -462,7 +476,7 @@ impl StreamingSyncIteration {
             SyncStateMachineTransition::Empty => {}
         };
 
-        false
+        None
     }
 
     /// Handles a single sync line.
@@ -474,17 +488,17 @@ impl StreamingSyncIteration {
         target: &mut SyncTarget,
         event: &mut ActiveEvent,
         line: &SyncLine,
-    ) -> Result<bool, PowerSyncError> {
+    ) -> Result<Option<CloseSyncStream>, PowerSyncError> {
         let transition = self.prepare_handling_sync_line(target, event, line)?;
         Ok(self.apply_transition(target, event, transition))
     }
 
     /// Runs a full sync iteration, returning nothing when it completes regularly or an error when
     /// the sync iteration should be interrupted.
-    async fn run(mut self) -> Result<(), PowerSyncError> {
+    async fn run(mut self) -> Result<CloseSyncStream, PowerSyncError> {
         let mut target = SyncTarget::BeforeCheckpoint(self.prepare_request().await?);
 
-        loop {
+        let hide_disconnect = loop {
             let event = Self::receive_event().await;
 
             let line: SyncLine = match event.event {
@@ -494,7 +508,7 @@ impl StreamingSyncIteration {
                 SyncEvent::TearDown => {
                     self.status
                         .update(|s| s.disconnect(), &mut event.instructions);
-                    break;
+                    break false;
                 }
                 SyncEvent::TextLine { data } => serde_json::from_str(data)
                     .map_err(|e| PowerSyncError::sync_protocol_error("invalid text line", e))?,
@@ -526,9 +540,25 @@ impl StreamingSyncIteration {
 
                     continue;
                 }
+                SyncEvent::DidUpdateSubscriptions { ref active_streams } => {
+                    self.adapter.increase_ttl(&active_streams)?;
+                    let new_request = self
+                        .adapter
+                        .collect_subscription_requests(self.options.include_defaults)?;
+
+                    if new_request.request != target.explicit_stream_subscriptions().request {
+                        // This changes stream requests, start another iteration.
+                        break true;
+                    } else {
+                        // Stream request unchanged, but update our references so that we don't
+                        // extend the expiry date of previous subscriptions.
+                        self.options.active_streams = Rc::clone(active_streams);
+                        continue;
+                    }
+                }
                 SyncEvent::DidRefreshToken => {
                     // Break so that the client SDK starts another iteration.
-                    break;
+                    break true;
                 }
             };
 
@@ -536,8 +566,8 @@ impl StreamingSyncIteration {
 
             match self.handle_line(&mut target, event, &line) {
                 Ok(end_iteration) => {
-                    if end_iteration {
-                        break;
+                    if let Some(options) = end_iteration {
+                        break options.hide_disconnect;
                     } else {
                         ()
                     }
@@ -549,9 +579,9 @@ impl StreamingSyncIteration {
             };
 
             self.status.emit_changes(&mut event.instructions);
-        }
+        };
 
-        Ok(())
+        Ok(CloseSyncStream { hide_disconnect })
     }
 
     fn load_progress(
@@ -621,7 +651,7 @@ impl StreamingSyncIteration {
                         error.subscription
                     {
                         let Some(local_id_for_error) =
-                            tracked.requested_subscription_ids.get(index)
+                            tracked.requested_subscriptions.subscription_ids.get(index)
                         else {
                             continue;
                         };
@@ -719,7 +749,8 @@ impl StreamingSyncIteration {
                             .map(|idx| default_stream_index[idx].1)
                     }
                     BucketSubscriptionReason::DerivedFromExplicitSubscription(index) => {
-                        let subscription_id = tracked.requested_subscription_ids.get(*index);
+                        let subscription_id =
+                            tracked.requested_subscriptions.subscription_ids.get(*index);
 
                         if let Some(subscription_id) = subscription_id {
                             tracked_subscriptions
@@ -800,7 +831,7 @@ impl StreamingSyncIteration {
         let requests = self.adapter.collect_bucket_requests()?;
         let local_bucket_names: Vec<String> = requests.iter().map(|s| s.name.clone()).collect();
         self.adapter.increase_ttl(&self.options.active_streams)?;
-        let (streams, index_to_id) = self
+        let stream_subscriptions = self
             .adapter
             .collect_subscription_requests(self.options.include_defaults)?;
 
@@ -811,7 +842,7 @@ impl StreamingSyncIteration {
             binary_data: true,
             client_id: client_id(self.db)?,
             parameters: self.options.parameters.take(),
-            streams,
+            streams: stream_subscriptions.request.clone(),
         };
 
         event
@@ -819,7 +850,7 @@ impl StreamingSyncIteration {
             .push(Instruction::EstablishSyncStream { request });
         Ok(BeforeCheckpoint {
             local_buckets: local_bucket_names,
-            explicit_stream_subscriptions: Rc::new(index_to_id),
+            stream_subscriptions: stream_subscriptions,
         })
     }
 
@@ -848,12 +879,7 @@ struct BeforeCheckpoint {
     /// Local bucket names, kept so that we can delete outdated ones when we receive the first
     /// checkpoint.
     local_buckets: Vec<String>,
-
-    /// Local stream subscription ids ([LocallyTrackedSubscription::id]), in order in which they
-    /// appear in the [StreamSubscriptionRequest]. This is used to associate buckets, which
-    /// reference an index into this vector ([BucketSubscriptionReason::DerivedFromExplicitSubscription]),
-    /// with the local subscription.
-    explicit_stream_subscriptions: Rc<Vec<i64>>,
+    stream_subscriptions: RequestedStreamSubscriptions,
 }
 
 impl SyncTarget {
@@ -864,10 +890,10 @@ impl SyncTarget {
         }
     }
 
-    fn explicit_stream_subscriptions(&self) -> &Rc<Vec<i64>> {
+    fn explicit_stream_subscriptions(&self) -> &RequestedStreamSubscriptions {
         match self {
-            SyncTarget::Tracking(tracking) => &tracking.requested_subscription_ids,
-            SyncTarget::BeforeCheckpoint(before) => &before.explicit_stream_subscriptions,
+            SyncTarget::Tracking(tracking) => &tracking.requested_subscriptions,
+            SyncTarget::BeforeCheckpoint(before) => &before.stream_subscriptions,
         }
     }
 
@@ -901,10 +927,20 @@ impl SyncTarget {
                     .iter()
                     .map(OwnedStreamDescription::from_definition)
                     .collect(),
-                requested_subscription_ids: Rc::clone(self.explicit_stream_subscriptions()),
+                requested_subscriptions: self.explicit_stream_subscriptions().clone(),
             }),
         )
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct RequestedStreamSubscriptions {
+    pub request: Rc<StreamSubscriptionRequest>,
+    /// Local stream subscription ids ([LocallyTrackedSubscription::id]), in order in which they
+    /// appear in the [StreamSubscriptionRequest]. This is used to associate buckets, which
+    /// reference an index into this vector ([BucketSubscriptionReason::DerivedFromExplicitSubscription]),
+    /// with the local subscription.
+    pub subscription_ids: Rc<Vec<i64>>,
 }
 
 /// Information about the currently-tracked checkpoint of the sync client.
@@ -916,7 +952,7 @@ pub struct TrackedCheckpoint {
     pub checkpoint: OwnedCheckpoint,
     /// Streams included in the checkpoint
     pub streams: Vec<OwnedStreamDescription>,
-    pub requested_subscription_ids: Rc<Vec<i64>>,
+    pub requested_subscriptions: RequestedStreamSubscriptions,
 }
 
 impl TrackedCheckpoint {
@@ -1003,6 +1039,6 @@ enum SyncStateMachineTransition<'a> {
         partial: Option<BucketPriority>,
         timestamp: Timestamp,
     },
-    CloseIteration,
+    CloseIteration(CloseSyncStream),
     Empty,
 }
