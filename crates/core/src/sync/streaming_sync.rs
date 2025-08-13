@@ -407,8 +407,8 @@ impl StreamingSyncIteration {
                     SyncStateMachineTransition::Empty
                 } else {
                     // Periodically check whether any subscriptions that are part of this stream
-                    // have become expired. We currently do this by re-creating the request and
-                    // aborting the iteration if it has changed.
+                    // are expired. We currently do this by re-creating the request and aborting the
+                    // iteration if it has changed.
                     let updated_request = self
                         .adapter
                         .collect_subscription_requests(self.options.include_defaults)?;
@@ -600,6 +600,15 @@ impl StreamingSyncIteration {
         Ok(progress)
     }
 
+    /// Reconciles local stream subscriptions with service-side state received in a checkpoint.
+    ///
+    /// This involves:
+    ///
+    ///  1. Marking local streams that don't exist in the checkpoint as inactive or deleting them.
+    ///  2. Creating new subscriptions for auto-subscribed streams we weren't tracking before.
+    ///  3. Associating buckets in the checkpoint with the stream subscriptions that created them.
+    ///  4. Reporting errors for stream subscriptions that are marked as errorenous in the
+    ///     checkpoint.
     fn resolve_subscription_state(
         &self,
         tracked: &TrackedCheckpoint,
@@ -628,7 +637,6 @@ impl StreamingSyncIteration {
             });
         })?;
 
-        // If they don't exist already, create default subscriptions included in checkpoint
         for (server_index, subscription) in tracked.streams.iter().enumerate() {
             let matching_local_subscriptions = tracked_subscriptions
                 .iter_mut()
@@ -640,57 +648,56 @@ impl StreamingSyncIteration {
                 local.local.active = true;
                 local.local.is_default = subscription.is_default;
                 has_local = true;
+            }
 
-                // Warn if this local subscription has errors. This search is quadratic because we
-                // only get the index of the faulty subscription with an error, which we then map
-                // to the local id via `tracked.requested_subscription_ids` and finally compare with
-                // one of the matching subscription here. That's fine though because we don't expect
-                // most of the streams to error in practice.
-                for error in &*subscription.errors {
-                    if let StreamSubscriptionErrorCause::ExplicitSubscription(index) =
-                        error.subscription
-                    {
+            for error in &*subscription.errors {
+                match error.subscription {
+                    StreamSubscriptionErrorCause::Default => {
+                        event.instructions.push(Instruction::LogLine {
+                            severity: LogSeverity::WARNING,
+                            line: Cow::Owned(format!(
+                                "Default subscription {} has errors: {}",
+                                subscription.name, error.message
+                            )),
+                        });
+                    }
+                    StreamSubscriptionErrorCause::ExplicitSubscription(index) => {
                         let Some(local_id_for_error) =
                             tracked.requested_subscriptions.subscription_ids.get(index)
                         else {
                             continue;
                         };
 
-                        if *local_id_for_error == local.local.id {
-                            let mut desc = String::new();
-                            let _ = write!(
-                                &mut desc,
-                                "Subscription to stream {} ",
-                                local.local.stream_name
-                            );
-                            if let Some(params) = &local.local.local_params {
-                                let _ = write!(&mut desc, "(with parameters {params})");
-                            } else {
-                                desc.push_str("(without parameters)");
-                            }
+                        // Find the matching explicit subscription to contextualize this error
+                        // message with the name of the stream and parameters used for the
+                        // subscription.
+                        for local in &tracked_subscriptions {
+                            if *local_id_for_error == local.local.id {
+                                let mut desc = String::new();
+                                let _ = write!(
+                                    &mut desc,
+                                    "Subscription to stream {} ",
+                                    local.local.stream_name
+                                );
+                                if let Some(params) = &local.local.local_params {
+                                    let _ = write!(&mut desc, "(with parameters {params})");
+                                } else {
+                                    desc.push_str("(without parameters)");
+                                }
 
-                            let _ = write!(&mut desc, " could not be resolved: {}", error.message);
-                            event.instructions.push(Instruction::LogLine {
-                                severity: LogSeverity::WARNING,
-                                line: Cow::Owned(desc),
-                            });
+                                let _ =
+                                    write!(&mut desc, " could not be resolved: {}", error.message);
+                                event.instructions.push(Instruction::LogLine {
+                                    severity: LogSeverity::WARNING,
+                                    line: Cow::Owned(desc),
+                                });
+                            }
                         }
                     }
-                }
+                };
             }
 
-            for error in &*subscription.errors {
-                if let StreamSubscriptionErrorCause::Default = error.subscription {
-                    event.instructions.push(Instruction::LogLine {
-                        severity: LogSeverity::WARNING,
-                        line: Cow::Owned(format!(
-                            "Default subscription {} has errors: {}",
-                            subscription.name, error.message
-                        )),
-                    });
-                }
-            }
-
+            // If they don't exist already, create default subscriptions included in checkpoint
             if !has_local && subscription.is_default {
                 let local = self.adapter.create_default_subscription(subscription)?;
                 tracked_subscriptions.push(LocalAndServerSubscription {
