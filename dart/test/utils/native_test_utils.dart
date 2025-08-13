@@ -8,7 +8,7 @@ import 'package:path/path.dart' as p;
 
 const defaultSqlitePath = 'libsqlite3.so.0';
 
-const libPath = '../target/debug';
+const cargoDebugPath = '../target/debug';
 var didLoadExtension = false;
 
 void applyOpenOverride() {
@@ -44,16 +44,45 @@ CommonDatabase openTestDatabase(
 void loadExtension() {
   applyOpenOverride();
 
-  var lib = DynamicLibrary.open(getLibraryForPlatform(path: libPath));
+  // Using an absolute path is required for macOS, where Dart can't dlopen
+  // relative paths due to being a "hardened program".
+  var lib =
+      DynamicLibrary.open(p.normalize(p.absolute(resolvePowerSyncLibrary())));
   var extension = SqliteExtension.inLibrary(lib, 'sqlite3_powersync_init');
   sqlite3.ensureExtensionLoaded(extension);
   didLoadExtension = true;
 }
 
-String getLibraryForPlatform({String? path = "."}) {
-  // Using an absolute path is required for macOS, where Dart can't dlopen
-  // relative paths due to being a "hardened program".
-  return p.normalize(p.absolute(switch (Abi.current()) {
+String resolvePowerSyncLibrary() {
+  if (Directory('assets').existsSync()) {
+    // For the CI tests, we download prebuilt artifacts from an earlier step
+    // into assets. Use that.
+    const prefix = 'assets';
+
+    return p.join(
+        prefix,
+        switch (Abi.current()) {
+          Abi.macosX64 => 'libpowersync_x64.dylib',
+          Abi.macosArm64 => 'libpowersync_aarch64.dylib',
+          Abi.windowsX64 => 'powersync_x64.dll',
+          Abi.windowsArm64 => 'powersync_aarch64.dll',
+          Abi.linuxX64 => 'libpowersync_x64.so',
+          Abi.linuxArm => 'libpowersync_armv7.so',
+          Abi.linuxArm64 => 'libpowersync_aarch64.so',
+          Abi.linuxRiscv64 => 'libpowersync_riscv64gc.so',
+          _ => throw ArgumentError(
+              'Unsupported processor architecture "${Abi.current()}". '
+              'Please open an issue on GitHub to request it.',
+            )
+        });
+  } else {
+    // Otherwise, use a local build from ../target/debug/.
+    return _getLibraryForPlatform();
+  }
+}
+
+String _getLibraryForPlatform({String? path = cargoDebugPath}) {
+  return switch (Abi.current()) {
     Abi.androidArm ||
     Abi.androidArm64 ||
     Abi.androidX64 =>
@@ -70,5 +99,5 @@ String getLibraryForPlatform({String? path = "."}) {
         'Unsupported processor architecture "${Abi.current()}". '
         'Please open an issue on GitHub to request it.',
       )
-  }));
+  };
 }

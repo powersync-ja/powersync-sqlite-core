@@ -152,6 +152,19 @@ jobs:
           dart run tool/download_sqlite3.dart
           dart analyze
       
+      - name: Download libs
+        uses: actions/download-artifact@v5
+        with:
+          merge-multiple: true
+          name: linux-library,macos-library,windows-library
+          path: dart/assets
+
+      - name: View downloaded artifacts
+        if: runner.os == 'Linux'
+        working-directory: dart
+        run: |
+          ls -al assets/
+      
       - name: Dart tests on Linux
         if: runner.os == 'Linux'
         working-directory: dart
