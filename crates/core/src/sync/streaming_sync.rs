@@ -707,7 +707,7 @@ impl StreamingSyncIteration {
             }
         }
 
-        // Clean up default subscriptions that are no longer active.
+        // Clean up subscriptions that are no longer active and haven't been requested explicitly.
         for subscription in &tracked_subscriptions {
             if !subscription.local.has_subscribed_manually() && subscription.server.is_none() {
                 self.adapter.delete_subscription(subscription.local.id)?;
