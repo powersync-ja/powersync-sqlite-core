@@ -4,9 +4,11 @@ use core::ffi::{c_int, c_void};
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
 use crate::constants::SUBTYPE_JSON;
+use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
+use crate::sync::storage_adapter::StorageAdapter;
 use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
@@ -285,5 +287,33 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
         Some(destroy),
     )?;
 
+    db.create_function_v2(
+        "powersync_offline_sync_status",
+        0,
+        sqlite::UTF8 | sqlite::DIRECTONLY | SQLITE_RESULT_SUBTYPE,
+        None,
+        Some(powersync_offline_sync_status),
+        None,
+        None,
+        None,
+    )?;
+
     Ok(())
 }
+
+fn powersync_offline_sync_status_impl(
+    ctx: *mut sqlite::context,
+    _args: &[*mut sqlite::value],
+) -> Result<String, PowerSyncError> {
+    let adapter = StorageAdapter::new(ctx.db_handle())?;
+    let state = adapter.offline_sync_state()?;
+    let serialized = serde_json::to_string(&state).map_err(PowerSyncError::internal)?;
+
+    Ok(serialized)
+}
+
+create_sqlite_text_fn!(
+    powersync_offline_sync_status,
+    powersync_offline_sync_status_impl,
+    "powersync_offline_sync_status"
+);

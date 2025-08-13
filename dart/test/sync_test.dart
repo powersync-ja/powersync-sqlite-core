@@ -317,6 +317,22 @@ void _syncTests<T>({
         ),
       ),
     );
+
+    final [row] = db.select('select powersync_offline_sync_status();');
+    expect(json.decode(row[0]), {
+      'connected': false,
+      'connecting': false,
+      'priority_status': [
+        {'priority': 2, 'last_synced_at': 1740823800, 'has_synced': true},
+        {
+          'priority': 2147483647,
+          'last_synced_at': 1740823200,
+          'has_synced': true
+        }
+      ],
+      'downloading': null,
+      'streams': [],
+    });
   });
 
   test('clearing database clears sync status', () {
