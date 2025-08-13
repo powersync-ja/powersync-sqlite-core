@@ -28,8 +28,42 @@ jobs:
           body="Release $tag"
           gh release create --draft "$tag" --title "$tag" --notes "$body"
 
-  build_android:
-    name: Build Android
+  libs_linux:
+    name: Building Linux libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build Android
+        uses: ./.github/actions/linux
+
+  libs_macos:
+    name: Building macOS libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build macOS
+        uses: ./.github/actions/macos
+
+  libs_windows:
+    name: Building Windows libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build Windows
+        uses: ./.github/actions/windows
+
+  libs_android:
+    name: Building Android libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,12 +75,35 @@ jobs:
           gpg-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-password: ${{ secrets.GPG_PASSWORD }}
 
+  libs_wasm:
+    name: Basic WASM build
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Build wasm
+        uses: ./.github/actions/wasm
+
+  libs_xcframework:
+    name: Build XCFramework
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build XCFramework
+        uses: ./.github/actions/xcframework
+
   publish_android:
     permissions:
       contents: read
       packages: write
     name: Publish Android
-    needs: [ draft_release, build_android ]
+    needs: [ draft_release, libs_android ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,32 +121,17 @@ jobs:
 
   publish_ios_pod_and_spm_package:
     name: Publish iOS
-    needs: [ draft_release ]
+    needs: [ draft_release, libs_xcframework ]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
 
-      - name: Setup
-        run: |
-          rustup toolchain install nightly-2025-04-15-aarch64-apple-darwin
-          rustup component add rust-src --toolchain nightly-2025-04-15-aarch64-apple-darwin
-          rustup target add \
-            x86_64-apple-darwin \
-            aarch64-apple-darwin \
-            aarch64-apple-ios \
-            aarch64-apple-ios-sim \
-            x86_64-apple-ios
-
-      - name: setup-cocoapods
-        uses: maxim-lobanov/setup-cocoapods@v1
+      - name: Download libs
+        uses: actions/download-artifact@v5
         with:
-          version: 1.16.2
-
-      - name: Build iOS & macOS xcframework
-        run: |
-          ./tool/build_xcframework.sh
+          name: xcframework
 
       - name: Lint pod
         run: |
@@ -130,153 +172,54 @@ jobs:
               "fileName": "${{ steps.fileName.outputs.fileName }}"
             }
 
-  publish_linux_x86_64:
-    name: Publish Linux x86_64
-    needs: [ draft_release ]
+  publish_desktop:
+    name: Publish Desktop libraries
+    needs: [ draft_release, libs_linux, libs_macos, libs_windows ]
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
 
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download libs
+        uses: actions/download-artifact@v5
         with:
-          toolchain: nightly-2025-04-15
-          components: rust-src
-
-      - name: Build binaries
-        run: ./tool/build_linux.sh x64
+          name: linux-library
+          path: dart/assets
+      - name: Download libs
+        uses: actions/download-artifact@v5
+        with:
+          name: macos-library
+          path: dart/assets
+      - name: Download libs
+        uses: actions/download-artifact@v5
+        with:
+          name: windows-library
+          path: dart/assets
 
       - name: Upload binary
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_x64.so
-          tag: ${{ needs.draft_release.outputs.tag }}
-
-  publish_linux_aarch64:
-    name: Publish Linux aarch64
-    needs: [ draft_release ]
-    runs-on: ubuntu-arm64
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly-2025-04-15
-          components: rust-src
-
-      - name: Build binaries
-        run: ./tool/build_linux.sh aarch64
-
-      - name: Upload binary
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_aarch64.so
-          tag: ${{ needs.draft_release.outputs.tag }}
-
-  publish_windows_x64:
-    name: Publish Windows x64
-    needs: [ draft_release ]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly-2025-04-15
-          components: rust-src
-
-      - name: Build binary
-        run: bash tool/build_windows.sh x64
-
-      - name: Upload binary
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: powersync_x64.dll
-          tag: ${{ needs.draft_release.outputs.tag }}
-
-  publish_macOS_aarch64:
-    name: Publish macOS aarch64
-    needs: [ draft_release ]
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly-2025-04-15
-          components: rust-src
-
-      - name: Build binary
-        run: ./tool/build_macos.sh aarch64
-
-      - name: Upload binary
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_aarch64.dylib
-          tag: ${{ needs.draft_release.outputs.tag }}
-
-  publish_macOS_x64:
-    name: Publish macOS x64
-    needs: [ draft_release ]
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          submodules: true
-
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly-2025-04-15
-          components: rust-src
-
-      - name: Build binary
-        run: ./tool/build_macos.sh x64
-
-      - name: Upload binary
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync_x64.dylib
-          tag: ${{ needs.draft_release.outputs.tag }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "${{ inputs.tag }}" *.dll
+          gh release upload "${{ inputs.tag }}" *.dylib
+          gh release upload "${{ inputs.tag }}" *.so
 
   publish_wasm:
     name: Publish WASM builds
-    needs: [ draft_release ]
+    needs: [ draft_release, libs_wasm ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
 
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
+      - name: Download wasm bundle
+        uses: actions/download-artifact@v5
         with:
-          toolchain: nightly-2025-04-15
-          components: rust-src
-
-      - name: Setup emsdk
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 4.0.10
-
-      - name: Build WASM
-        run: ./tool/build_wasm.sh
+          name: wasm-library
 
       - name: Upload libpowersync.wasm
         uses: ./.github/actions/upload
@@ -308,11 +251,7 @@ jobs:
       - draft_release
       - publish_android
       - publish_ios_pod_and_spm_package
-      - publish_linux_x86_64
-      - publish_linux_aarch64
-      - publish_windows_x64
-      - publish_macOS_aarch64
-      - publish_macOS_x64
+      - publish_desktop
       - publish_wasm
     steps:
       - name: Create issue
