@@ -12,7 +12,7 @@ use crate::error::{PSResult, PowerSyncError};
 use crate::fix_data::apply_v035_fix;
 use crate::sync::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 10;
+pub const LATEST_VERSION: i32 = 11;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -378,6 +378,27 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 9')
 INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
   json_object('sql', 'SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated'''),
   json_object('sql', 'DELETE FROM ps_migration WHERE id >= 10')
+));
+        ",
+            )
+            .into_db_result(local_db)?;
+    }
+
+    if current_version < 11 && target_version >= 11 {
+        local_db.exec_safe("PRAGMA writable_schema = ON;")?;
+        local_db
+            .exec_safe("UPDATE sqlite_schema SET sql = replace(sql, 'data TEXT', 'data ANY') WHERE name = 'ps_oplog'")?;
+        local_db.exec_safe("PRAGMA writable_schema = RESET;")?;
+
+        local_db
+            .exec_safe(
+                "\
+INSERT INTO ps_migration(id, down_migrations) VALUES (11, json_array(
+  json_object('sql', 'PRAGMA writable_schema = ON;'),
+  json_object('sql', 'UPDATE ps_oplog SET data = json(data) WHERE typeof(data) = ''blob'';'),
+  json_object('sql', 'UPDATE sqlite_schema SET sql = replace(sql, ''data ANY'', ''data TEXT'') WHERE name = ''ps_oplog'';'),
+  json_object('sql', 'PRAGMA writable_schema = OFF;'),
+  json_object('sql', 'DELETE FROM ps_migration WHERE id >= 11')
 ));
         ",
             )
