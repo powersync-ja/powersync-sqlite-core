@@ -1,4 +1,10 @@
-use alloc::{boxed::Box, collections::btree_map::BTreeMap, rc::Rc, string::String, vec::Vec};
+use alloc::{
+    boxed::Box,
+    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    rc::Rc,
+    string::String,
+    vec::Vec,
+};
 use core::{
     cell::RefCell,
     cmp::min,
@@ -276,7 +282,7 @@ pub struct ActiveStreamSubscription {
     pub id: i64,
     pub name: String,
     pub parameters: Option<Box<JsonString>>,
-    pub associated_buckets: Vec<String>,
+    pub associated_buckets: BTreeSet<String>,
     pub priority: Option<BucketPriority>,
     pub active: bool,
     pub is_default: bool,
@@ -293,7 +299,7 @@ impl ActiveStreamSubscription {
             parameters: local.local_params.clone(),
             is_default: local.is_default,
             priority: None,
-            associated_buckets: Vec::new(),
+            associated_buckets: BTreeSet::new(),
             active: local.active,
 
             has_explicit_subscription: local.has_subscribed_manually(),
@@ -303,17 +309,8 @@ impl ActiveStreamSubscription {
     }
 
     pub fn mark_associated_with_bucket(&mut self, bucket: &OwnedBucketChecksum) {
-        match self.associated_buckets.binary_search(&bucket.bucket) {
-            Ok(_) => {
-                // The bucket is already part of the list
-                return;
-            }
-            Err(position) => {
-                // Insert here to keep vec sorted
-                self.associated_buckets
-                    .insert(position, bucket.bucket.clone());
-            }
-        };
+        self.associated_buckets
+            .get_or_insert_with(&bucket.bucket, |key| key.clone());
 
         self.priority = Some(match self.priority {
             None => bucket.priority,
