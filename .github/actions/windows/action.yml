@@ -16,6 +16,7 @@ runs:
       run: |
         ./tool/build_windows.sh x64
         ./tool/build_windows.sh aarch64
+        ./tool/build_windows.sh x86
 
     - uses: actions/upload-artifact@v4
       with:

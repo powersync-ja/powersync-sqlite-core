@@ -9,7 +9,7 @@ runs:
       with:
         toolchain: nightly-2025-04-15
         components: rust-src
-        targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,riscv64gc-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
+        targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,i686-unknown-linux-gnu,riscv64gc-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
     
     - name: Install cross-compiling GCC
       shell: bash
@@ -21,6 +21,7 @@ runs:
       run: |
         ./tool/build_linux.sh x64
         ./tool/build_linux.sh aarch64
+        ./tool/build_linux.sh x86
         ./tool/build_linux.sh armv7
         ./tool/build_linux.sh riscv64gc
 
@@ -30,6 +31,7 @@ runs:
         retention-days: 14
         path: |
           libpowersync_x64.so
+          libpowersync_x86.so
           libpowersync_aarch64.so
           libpowersync_armv7.so
           libpowersync_riscv64gc.so
