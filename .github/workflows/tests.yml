@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - name: Build Android
+      - name: Build Linux libraries
         uses: ./.github/actions/linux
 
   libs_macos:

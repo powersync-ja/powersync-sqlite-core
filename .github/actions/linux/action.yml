@@ -14,7 +14,7 @@ runs:
     - name: Install cross-compiling GCC
       shell: bash
       run: |
-        sudo apt install -y gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu gcc-arm-linux-gnueabihf
+        sudo apt install -y gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu gcc-arm-linux-gnueabihf gcc-i686-linux-gnu
 
     - name: Build binaries
       shell: bash
