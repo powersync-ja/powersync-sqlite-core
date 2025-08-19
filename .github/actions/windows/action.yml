@@ -9,8 +9,8 @@ runs:
       with:
         toolchain: nightly-2025-04-15
         components: rust-src
-        targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
-    
+        targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc,i686-pc-windows-msvc
+
     - name: Build binaries
       shell: bash
       run: |
@@ -24,3 +24,4 @@ runs:
         path: |
           powersync_x64.dll
           powersync_aarch64.dll
+          powersync_x86.dll          
