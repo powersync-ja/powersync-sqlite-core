@@ -1,0 +1,26 @@
+name: "Build macoS libraries"
+description: "Create artifact for macOS libraries"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust Nightly
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: nightly-2025-04-15
+        components: rust-src
+        targets: x86_64-apple-darwin,aarch64-apple-darwin
+    
+    - name: Build binaries
+      shell: bash
+      run: |
+        ./tool/build_macos.sh x64
+        ./tool/build_macos.sh aarch64
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: macos-library
+        retention-days: 14
+        path: |
+          libpowersync_x64.dylib
+          libpowersync_aarch64.dylib

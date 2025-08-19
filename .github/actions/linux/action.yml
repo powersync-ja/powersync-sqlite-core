@@ -1,0 +1,37 @@
+name: "Build Linux libraries"
+description: "Create artifact for Linux libraries"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust Nightly
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: nightly-2025-04-15
+        components: rust-src
+        targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,i686-unknown-linux-gnu,riscv64gc-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
+    
+    - name: Install cross-compiling GCC
+      shell: bash
+      run: |
+        sudo apt install -y gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu gcc-arm-linux-gnueabihf gcc-i686-linux-gnu
+
+    - name: Build binaries
+      shell: bash
+      run: |
+        ./tool/build_linux.sh x64
+        ./tool/build_linux.sh aarch64
+        ./tool/build_linux.sh x86
+        ./tool/build_linux.sh armv7
+        ./tool/build_linux.sh riscv64gc
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: linux-library
+        retention-days: 14
+        path: |
+          libpowersync_x64.so
+          libpowersync_x86.so
+          libpowersync_aarch64.so
+          libpowersync_armv7.so
+          libpowersync_riscv64gc.so

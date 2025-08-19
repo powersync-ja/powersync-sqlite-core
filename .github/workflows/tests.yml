@@ -4,20 +4,87 @@ on:
 name: "tests"
 
 jobs:
-  build:
-    name: Testing on ${{ matrix.os }}
+  libs_linux:
+    name: Building Linux libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build Linux libraries
+        uses: ./.github/actions/linux
+
+  libs_macos:
+    name: Building macOS libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build macOS
+        uses: ./.github/actions/macos
+
+  libs_windows:
+    name: Building Windows libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build Windows
+        uses: ./.github/actions/windows
+
+  libs_android:
+    name: Building Android libraries
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build Android
+        uses: ./.github/actions/android
+        with:
+          sign-publication: '0'
+
+  libs_wasm:
+    name: Basic WASM build
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Build wasm
+        uses: ./.github/actions/wasm
+
+  libs_xcframework:
+    name: Build XCFramework
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Build XCFramework
+        uses: ./.github/actions/xcframework
+
+  rust_unit_tests:
+    name: Rust unit tests on ${{ matrix.os }}
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-24.04, macos-latest]
-
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: dart-lang/setup-dart@v1
 
       - name: Ubuntu setup
         if: matrix.os == 'ubuntu-24.04'
@@ -55,11 +122,28 @@ jobs:
         run: |
           ./target/release/sqlite3 ":memory:" ".load ./target/release/libpowersync" "select powersync_rs_version()"
 
+  build:
+    name: Testing on ${{ matrix.os }}
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    runs-on: ${{ matrix.os }}
+    needs: [libs_linux, libs_macos, libs_windows]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-arm64, macos-latest, windows-latest, windows-11-arm]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dart-lang/setup-dart@v1
+
       - uses: actions/cache@v4
         id: sqlite_build
         with:
           path: dart/.dart_tool/sqlite3/
-          key: ${{ runner.os }}-${{ hashFiles('dart/tool/') }}
+          key: ${{ matrix.os }}-${{ hashFiles('dart/tool/') }}
 
       - name: Setup Dart tests
         working-directory: dart
@@ -67,6 +151,28 @@ jobs:
           dart pub get
           dart run tool/download_sqlite3.dart
           dart analyze
+      
+      - name: Download libs
+        uses: actions/download-artifact@v5
+        with:
+          name: linux-library
+          path: dart/assets
+      - name: Download libs
+        uses: actions/download-artifact@v5
+        with:
+          name: macos-library
+          path: dart/assets
+      - name: Download libs
+        uses: actions/download-artifact@v5
+        with:
+          name: windows-library
+          path: dart/assets
+
+      - name: View downloaded artifacts
+        if: runner.os == 'Linux'
+        working-directory: dart
+        run: |
+          ls -al assets/
       
       - name: Dart tests on Linux
         if: runner.os == 'Linux'
@@ -82,3 +188,27 @@ jobs:
         run: |
           CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test -P skip_slow
           CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test -P skip_slow
+
+  valgrind:
+    name: Testing with Valgrind on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install valgrind
+        run: sudo apt update && sudo apt install -y valgrind
+
+      - name: Install Cargo Valgrind
+        run: |
+          cargo install cargo-valgrind
+
+      - name: Test Core
+        run: |
+          cargo valgrind test -p powersync_core --features loadable_extension

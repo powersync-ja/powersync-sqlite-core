@@ -1,0 +1,45 @@
+name: "Build xcframework"
+description: "Create artifact with XCFramework for apple targets"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup
+      shell: bash
+      run: |
+        rustup toolchain install nightly-2025-04-15-aarch64-apple-darwin
+        rustup component add rust-src --toolchain nightly-2025-04-15-aarch64-apple-darwin
+        rustup target add \
+          x86_64-apple-darwin \
+          aarch64-apple-darwin \
+          aarch64-apple-ios \
+          aarch64-apple-ios-sim \
+          x86_64-apple-ios
+
+    - name: setup-cocoapods
+      uses: maxim-lobanov/setup-cocoapods@v1
+      with:
+        version: 1.16.2
+
+    - name: Set up XCode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
+    - name: Build iOS & macOS xcframework
+      shell: bash
+      run: |
+        ./tool/build_xcframework.sh
+
+    - name: Lint pod
+      shell: bash
+      run: |
+        pod lib lint
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: xcframework
+        retention-days: 14
+        compression: 0 # We're uploading a zip archive, no need to compress agan
+        path: |
+          powersync-sqlite-core.xcframework.zip

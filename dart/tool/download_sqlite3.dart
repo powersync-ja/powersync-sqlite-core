@@ -1,6 +1,9 @@
+import 'dart:ffi';
 import 'dart:io';
 
+import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as p;
+import 'package:http/http.dart';
 
 typedef SqliteVersion = ({String version, String year});
 
@@ -21,6 +24,12 @@ Future<void> main(List<String> args) async {
 extension on SqliteVersion {
   String get autoconfUrl =>
       'https://sqlite.org/$year/sqlite-autoconf-$version.tar.gz';
+
+  String get windowsArm64Url =>
+      'https://sqlite.org/$year/sqlite-dll-win-arm64-$version.zip';
+
+  String get windowsX64Url =>
+      'https://sqlite.org/$year/sqlite-dll-win-x64-$version.zip';
 }
 
 Future<void> _downloadAndCompile(String name, SqliteVersion version,
@@ -51,6 +60,40 @@ Future<void> _downloadAndCompile(String name, SqliteVersion version,
   final temporaryDir =
       await Directory.systemTemp.createTemp('powersync-core-compile-sqlite3');
   final temporaryDirPath = temporaryDir.path;
+
+  // Compiling on Windows is ugly because we need users to have Visual Studio
+  // installed and all those tools activated in the current shell.
+  // Much easier to just download precompiled builds.
+  if (Platform.isWindows) {
+    final windowsUri = Abi.current() == Abi.windowsX64
+        ? version.windowsX64Url
+        : version.windowsArm64Url;
+    final sqlite3Zip = p.join(temporaryDirPath, 'sqlite3.zip');
+    final client = Client();
+    final response = await client
+        .send(Request('GET', Uri.parse(windowsUri))..followRedirects = true);
+    if (response.statusCode != 200) {
+      print(
+          'Could not download $windowsUri, status code ${response.statusCode}');
+      exit(1);
+    }
+    await response.stream.pipe(File(sqlite3Zip).openWrite());
+
+    final inputStream = InputFileStream(sqlite3Zip);
+    final archive = ZipDecoder().decodeStream(inputStream);
+
+    for (final file in archive.files) {
+      if (file.isFile && file.name == 'sqlite3.dll') {
+        final outputStream = OutputFileStream(p.join(target, 'sqlite3.dll'));
+
+        file.writeContent(outputStream);
+        outputStream.close();
+      }
+    }
+
+    await File(p.join(target, 'version')).writeAsString(version.version);
+    exit(0);
+  }
 
   await _run('curl -L ${version.autoconfUrl} --output sqlite.tar.gz',
       workingDirectory: temporaryDirPath);

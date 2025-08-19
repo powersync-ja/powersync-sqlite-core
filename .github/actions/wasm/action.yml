@@ -1,0 +1,29 @@
+name: "Build wasm libraries"
+description: "Create artifact for wasm libraries"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust Nightly
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: nightly-2025-04-15
+        components: rust-src
+
+    - name: Setup emsdk
+      uses: mymindstorm/setup-emsdk@v14
+      with:
+        version: 4.0.10
+
+    - name: Build WASM
+      shell: bash
+      run: ./tool/build_wasm.sh
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wasm-library
+        retention-days: 14
+        path: |
+          libpowersync-async.wasm
+          libpowersync.wasm
+          libpowersync-wasm.a
