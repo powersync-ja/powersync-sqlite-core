@@ -589,6 +589,9 @@ impl StreamingSyncIteration {
             buckets: requests,
             include_checksum: true,
             raw_data: true,
+            // Clients are not supposed to set this field, but old versions of the PowerSync service
+            // will break if it's not set and the SDK requests sync data as BSON.
+            // For details, see https://github.com/powersync-ja/powersync-service/pull/332
             binary_data: true,
             client_id: client_id(self.db)?,
             parameters: self.options.parameters.take(),
