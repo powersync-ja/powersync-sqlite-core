@@ -24,6 +24,10 @@ The following commands are supported:
    - The client will emit an instruction to stop the current stream, clients should restart by sending another `start`
      command.
 6. `completed_upload`: Notify the sync implementation that all local changes have been uploaded.
+7. `update_subscriptions`: Notify the sync implementation that subscriptions which are currently active in the app
+   have changed. Depending on the TTL of caches, this may cause it to request a reconnect.
+8. `subscriptions`: Store a new sync steam subscription in the database or remove it.
+   This command can run outside of a sync iteration and does not affect it.
 
 `powersync_control` returns a JSON-encoded array of instructions for the client:
 
@@ -33,7 +37,7 @@ type Instruction = { LogLine: LogLine }
    | { EstablishSyncStream: EstablishSyncStream }
    | { FetchCredentials: FetchCredentials }
    // Close a connection previously started after EstablishSyncStream
-   | { CloseSyncStream: {} }
+   | { CloseSyncStream: { hide_disconnect: boolean } }
    // For the Dart web client, flush the (otherwise non-durable) file system.
    | { FlushFileSystem: {} }
    // Notify clients that a checkpoint was completed. Clients can clear the

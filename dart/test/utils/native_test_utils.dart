@@ -1,10 +1,13 @@
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:fake_async/fake_async.dart';
+import 'package:meta/meta.dart';
 import 'package:sqlite3/common.dart';
 import 'package:sqlite3/open.dart' as sqlite_open;
 import 'package:sqlite3/sqlite3.dart';
 import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
 
 const defaultSqlitePath = 'libsqlite3.so.0';
 
@@ -100,4 +103,12 @@ String _getLibraryForPlatform({String? path = cargoDebugPath}) {
         'Please open an issue on GitHub to request it.',
       )
   };
+}
+
+@isTest
+void syncTest(String description, void Function(FakeAsync controller) body) {
+  return test(description, () {
+    // Give each test the same starting time to make goldens easier to compare.
+    fakeAsync(body, initialTime: DateTime.utc(2025, 3, 1, 10));
+  });
 }

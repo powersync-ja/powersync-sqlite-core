@@ -3,9 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:bson/bson.dart';
-import 'package:fake_async/fake_async.dart';
 import 'package:file/local.dart';
-import 'package:meta/meta.dart';
 import 'package:sqlite3/common.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:sqlite3_test/sqlite3_test.dart';
@@ -13,16 +11,8 @@ import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:path/path.dart';
 
-import 'utils/matchers.dart';
 import 'utils/native_test_utils.dart';
-
-@isTest
-void syncTest(String description, void Function(FakeAsync controller) body) {
-  return test(description, () {
-    // Give each test the same starting time to make goldens easier to compare.
-    fakeAsync(body, initialTime: DateTime.utc(2025, 3, 1, 10));
-  });
-}
+import 'utils/test_utils.dart';
 
 void main() {
   final vfs =
@@ -85,7 +75,7 @@ void _syncTests<T>({
   setUp(() async {
     db = openTestDatabase(vfs: vfs)
       ..select('select powersync_init();')
-      ..select('select powersync_replace_schema(?)', [json.encode(_schema)])
+      ..select('select powersync_replace_schema(?)', [json.encode(testSchema)])
       ..execute('update ps_kv set value = ?2 where key = ?1',
           ['client_id', 'test-test-test-test']);
 
@@ -132,23 +122,11 @@ void _syncTests<T>({
 
   List<Object?> pushCheckpoint(
       {int lastOpId = 1, List<Object> buckets = const []}) {
-    return syncLine({
-      'checkpoint': {
-        'last_op_id': '$lastOpId',
-        'write_checkpoint': null,
-        'buckets': buckets,
-      },
-    });
+    return syncLine(checkpoint(lastOpId: lastOpId, buckets: buckets));
   }
 
   List<Object?> pushCheckpointComplete({int? priority, String lastOpId = '1'}) {
-    return syncLine({
-      priority == null ? 'checkpoint_complete' : 'partial_checkpoint_complete':
-          {
-        'last_op_id': lastOpId,
-        if (priority != null) 'priority': priority,
-      },
-    });
+    return syncLine(checkpointComplete(priority: priority, lastOpId: lastOpId));
   }
 
   ResultSet fetchRows() {
@@ -339,6 +317,22 @@ void _syncTests<T>({
         ),
       ),
     );
+
+    final [row] = db.select('select powersync_offline_sync_status();');
+    expect(json.decode(row[0]), {
+      'connected': false,
+      'connecting': false,
+      'priority_status': [
+        {'priority': 2, 'last_synced_at': 1740823800, 'has_synced': true},
+        {
+          'priority': 2147483647,
+          'last_synced_at': 1740823200,
+          'has_synced': true
+        }
+      ],
+      'downloading': null,
+      'streams': [],
+    });
   });
 
   test('clearing database clears sync status', () {
@@ -725,7 +719,9 @@ void _syncTests<T>({
                   "Checksums didn't match, failed for: a (expected 0x000004d2, got 0x000010e1 = 0x000010e1 (op) + 0x00000000 (add))")
             }
           },
-          {'CloseSyncStream': {}},
+          {
+            'CloseSyncStream': {'hide_disconnect': false}
+          },
         ],
       );
 
@@ -755,7 +751,8 @@ void _syncTests<T>({
 
         db = openTestDatabase(fileName: fileName)
           ..select('select powersync_init();')
-          ..select('select powersync_replace_schema(?)', [json.encode(_schema)])
+          ..select(
+              'select powersync_replace_schema(?)', [json.encode(testSchema)])
           ..execute('update ps_kv set value = ?2 where key = ?1',
               ['client_id', 'test-test-test-test']);
 
@@ -811,7 +808,7 @@ void _syncTests<T>({
                 'downloading',
                 {
                   'buckets': {
-                    'a': {
+                    'prio_3': {
                       'priority': 3,
                       'at_last': 0,
                       'since_last': 1,
@@ -993,27 +990,6 @@ END;
       expect(db.select('SELECT * FROM ps_crud'), isEmpty);
     });
   });
-}
-
-const _schema = {
-  'tables': [
-    {
-      'name': 'items',
-      'columns': [
-        {'name': 'col', 'type': 'text'}
-      ],
-    }
-  ]
-};
-
-Object bucketDescription(String name,
-    {int checksum = 0, int priority = 3, int count = 1}) {
-  return {
-    'bucket': name,
-    'checksum': checksum,
-    'priority': priority,
-    'count': count,
-  };
 }
 
 final priorityBuckets = [

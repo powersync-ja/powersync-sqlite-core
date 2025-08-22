@@ -4,10 +4,16 @@ use core::fmt::{Display, Write};
 
 use alloc::format;
 use alloc::string::{String, ToString};
+use core::{cmp::Ordering, hash::Hash};
 
+use alloc::boxed::Box;
+use serde::Serialize;
+use serde_json::value::RawValue;
+use sqlite_nostd::{ColumnType, ManagedStmt};
+
+use crate::error::PowerSyncError;
 #[cfg(not(feature = "getrandom"))]
 use crate::sqlite;
-use serde::de::Visitor;
 
 use uuid::Uuid;
 
@@ -60,60 +66,88 @@ pub fn quote_identifier_prefixed(prefix: &str, name: &str) -> String {
     return format!("\"{:}{:}\"", prefix, name.replace("\"", "\"\""));
 }
 
-pub fn deserialize_string_to_i64<'de, D>(deserializer: D) -> Result<i64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    struct ValueVisitor;
-
-    impl<'de> Visitor<'de> for ValueVisitor {
-        type Value = i64;
-
-        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-            formatter.write_str("a string representation of a number")
-        }
-
-        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            v.parse::<i64>().map_err(serde::de::Error::custom)
-        }
+/// Calls [read] to read a column if it's not null, otherwise returns [None].
+#[inline]
+pub fn column_nullable<T, R: FnOnce() -> Result<T, PowerSyncError>>(
+    stmt: &ManagedStmt,
+    index: i32,
+    read: R,
+) -> Result<Option<T>, PowerSyncError> {
+    if stmt.column_type(index)? == ColumnType::Null {
+        Ok(None)
+    } else {
+        Ok(Some(read()?))
     }
-
-    // Using a custom visitor here to avoid an intermediate string allocation
-    deserializer.deserialize_str(ValueVisitor)
 }
 
-pub fn deserialize_optional_string_to_i64<'de, D>(deserializer: D) -> Result<Option<i64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    struct ValueVisitor;
+/// An opaque wrapper around a JSON-serialized value.
+///
+/// This wraps [RawValue] from `serde_json`, adding implementations for comparisons and hashes.
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct JsonString(pub RawValue);
 
-    impl<'de> Visitor<'de> for ValueVisitor {
-        type Value = Option<i64>;
-
-        fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
-            formatter.write_str("a string or null")
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E>
-        where
-            E: serde::de::Error,
-        {
-            Ok(None)
-        }
-
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            Ok(Some(deserialize_string_to_i64(deserializer)?))
+impl JsonString {
+    pub fn from_string(string: String) -> Result<Box<Self>, PowerSyncError> {
+        let underlying =
+            RawValue::from_string(string).map_err(PowerSyncError::as_argument_error)?;
+        unsafe {
+            // Safety: repr(transparent)
+            core::mem::transmute(underlying)
         }
     }
+}
 
-    deserializer.deserialize_option(ValueVisitor)
+impl Hash for JsonString {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.get().hash(state);
+    }
+}
+
+impl PartialEq for JsonString {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.get() == other.0.get()
+    }
+}
+
+impl Eq for JsonString {}
+
+impl PartialOrd for JsonString {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for JsonString {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.get().cmp(other.0.get())
+    }
+}
+
+impl Serialize for JsonString {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl Clone for Box<JsonString> {
+    fn clone(&self) -> Self {
+        let raw_value_box: &Box<RawValue> = unsafe {
+            // SAFETY: repr(transparent)
+            core::mem::transmute(self)
+        };
+
+        unsafe { core::mem::transmute(raw_value_box.clone()) }
+    }
+}
+
+impl Display for JsonString {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
+    }
 }
 
 // Use getrandom crate to generate UUID.
