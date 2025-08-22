@@ -1,6 +1,7 @@
 use alloc::{
     boxed::Box,
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    format,
     rc::Rc,
     string::String,
     vec::Vec,
@@ -9,9 +10,13 @@ use core::{
     cell::RefCell,
     cmp::min,
     hash::{BuildHasher, Hash},
+    ops::AddAssign,
 };
 use rustc_hash::FxBuildHasher;
-use serde::Serialize;
+use serde::{
+    Serialize,
+    ser::{SerializeMap, SerializeStruct},
+};
 use sqlite_nostd::ResultCode;
 
 use crate::{
@@ -28,7 +33,7 @@ use super::{
 };
 
 /// Information about a progressing download.
-#[derive(Serialize, Hash)]
+#[derive(Hash)]
 pub struct DownloadSyncStatus {
     /// Whether the socket to the sync service is currently open and connected.
     ///
@@ -136,6 +141,72 @@ impl Default for DownloadSyncStatus {
     }
 }
 
+impl Serialize for DownloadSyncStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        struct SerializeStreamsWithProgress<'a>(&'a DownloadSyncStatus);
+
+        impl<'a> Serialize for SerializeStreamsWithProgress<'a> {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                #[derive(Serialize)]
+                struct StreamWithProgress<'a> {
+                    #[serde(flatten)]
+                    subscription: &'a ActiveStreamSubscription,
+                    progress: ProgressCounters,
+                }
+
+                let streams = self.0.streams.iter().map(|sub| {
+                    let mut stream_progress = ProgressCounters::default();
+                    if let Some(sync_progress) = &self.0.downloading {
+                        for bucket in &sub.associated_buckets {
+                            if let Some(bucket_progress) = sync_progress.buckets.get(bucket) {
+                                stream_progress += bucket_progress;
+                            }
+                        }
+                    }
+
+                    StreamWithProgress {
+                        subscription: sub,
+                        progress: stream_progress,
+                    }
+                });
+
+                serializer.collect_seq(streams)
+            }
+        }
+
+        let mut serializer = serializer.serialize_struct("DownloadSyncStatus", 4)?;
+        serializer.serialize_field("connected", &self.connected)?;
+        serializer.serialize_field("connecting", &self.connecting)?;
+        serializer.serialize_field("priority_status", &self.priority_status)?;
+        serializer.serialize_field("downloading", &self.downloading)?;
+        serializer.serialize_field("streams", &SerializeStreamsWithProgress(self))?;
+
+        serializer.end()
+    }
+}
+
+#[derive(Serialize, Default)]
+struct ProgressCounters {
+    total: i64,
+    downloaded: i64,
+}
+
+impl<'a> AddAssign<&'a BucketProgress> for ProgressCounters {
+    fn add_assign(&mut self, rhs: &'a BucketProgress) {
+        let downloaded = rhs.since_last;
+        let total = rhs.target_count - rhs.at_last;
+
+        self.total += total;
+        self.downloaded += downloaded;
+    }
+}
+
 pub struct SyncStatusContainer {
     status: Rc<RefCell<DownloadSyncStatus>>,
     last_published_hash: u64,
@@ -204,9 +275,55 @@ pub struct BucketProgress {
     pub target_count: i64,
 }
 
-#[derive(Serialize, Hash)]
+#[derive(Hash)]
 pub struct SyncDownloadProgress {
     buckets: BTreeMap<String, BucketProgress>,
+}
+
+impl Serialize for SyncDownloadProgress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // When we publish a SyncDownloadProgress to clients, avoid serializing every bucket since
+        // that can lead to very large status updates.
+        // Instead, we report one entry per priority group.
+        let mut by_priority = BTreeMap::<BucketPriority, ProgressCounters>::new();
+        for progress in self.buckets.values() {
+            let priority_progress = by_priority.entry(progress.priority).or_default();
+            *priority_progress += progress;
+        }
+
+        // We used to serialize SyncDownloadProgress as-is. To keep backwards-compatibility with the
+        // general format, we're now synthesizing a fake bucket id for each priority and then report
+        // each priority as a single-bucket item. This allows keeping client logic unchanged.
+        struct SerializeWithFakeBucketNames(BTreeMap<BucketPriority, ProgressCounters>);
+
+        impl Serialize for SerializeWithFakeBucketNames {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let mut serializer = serializer.serialize_map(Some(self.0.len()))?;
+                for (priority, progress) in &self.0 {
+                    serializer.serialize_entry(
+                        &format!("prio_{}", priority.number),
+                        &BucketProgress {
+                            priority: *priority,
+                            at_last: 0,
+                            since_last: progress.downloaded,
+                            target_count: progress.total,
+                        },
+                    )?;
+                }
+                serializer.end()
+            }
+        }
+
+        let mut serializer = serializer.serialize_struct("SyncDownloadProgress", 1)?;
+        serializer.serialize_field("buckets", &SerializeWithFakeBucketNames(by_priority))?;
+        serializer.end()
+    }
 }
 
 pub struct SyncProgressFromCheckpoint {
@@ -282,6 +399,7 @@ pub struct ActiveStreamSubscription {
     pub id: i64,
     pub name: String,
     pub parameters: Option<Box<JsonString>>,
+    #[serde(skip)]
     pub associated_buckets: BTreeSet<String>,
     pub priority: Option<BucketPriority>,
     pub active: bool,

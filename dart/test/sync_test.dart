@@ -808,7 +808,7 @@ void _syncTests<T>({
                 'downloading',
                 {
                   'buckets': {
-                    'a': {
+                    'prio_3': {
                       'priority': 3,
                       'at_last': 0,
                       'since_last': 1,

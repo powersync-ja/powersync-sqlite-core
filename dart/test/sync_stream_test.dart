@@ -90,7 +90,7 @@ void main() {
             {
               'name': 'my_default_stream',
               'parameters': null,
-              'associated_buckets': ['a'],
+              'progress': {'total': 1, 'downloaded': 0},
               'active': true,
               'is_default': true,
               'has_explicit_subscription': false,
@@ -638,7 +638,7 @@ void main() {
             'name': 'a',
             'parameters': null,
             // not persisted, only needed for download progress
-            'associated_buckets': [],
+            'progress': {'total': 0, 'downloaded': 0},
             'priority': null, // same
             'active': true,
             'is_default': false,
