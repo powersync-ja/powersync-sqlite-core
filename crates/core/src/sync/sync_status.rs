@@ -1,10 +1,31 @@
-use alloc::{collections::btree_map::BTreeMap, rc::Rc, string::String, vec::Vec};
-use core::{cell::RefCell, hash::BuildHasher};
+use alloc::{
+    boxed::Box,
+    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    format,
+    rc::Rc,
+    string::String,
+    vec::Vec,
+};
+use core::{
+    cell::RefCell,
+    cmp::min,
+    hash::{BuildHasher, Hash},
+    ops::AddAssign,
+};
 use rustc_hash::FxBuildHasher;
-use serde::Serialize;
+use serde::{
+    Serialize,
+    ser::{SerializeMap, SerializeStruct},
+};
 use sqlite_nostd::ResultCode;
 
-use crate::sync::storage_adapter::StorageAdapter;
+use crate::{
+    sync::{
+        checkpoint::OwnedBucketChecksum, storage_adapter::StorageAdapter,
+        subscriptions::LocallyTrackedSubscription,
+    },
+    util::JsonString,
+};
 
 use super::{
     bucket_priority::BucketPriority, interface::Instruction, line::DataLine,
@@ -12,7 +33,7 @@ use super::{
 };
 
 /// Information about a progressing download.
-#[derive(Serialize, Hash)]
+#[derive(Hash)]
 pub struct DownloadSyncStatus {
     /// Whether the socket to the sync service is currently open and connected.
     ///
@@ -31,6 +52,7 @@ pub struct DownloadSyncStatus {
     /// When a download is active (that is, a `checkpoint` or `checkpoint_diff` line has been
     /// received), information about how far the download has progressed.
     pub downloading: Option<SyncDownloadProgress>,
+    pub streams: Vec<ActiveStreamSubscription>,
 }
 
 impl DownloadSyncStatus {
@@ -47,11 +69,10 @@ impl DownloadSyncStatus {
         self.downloading = None;
     }
 
-    pub fn start_connecting(&mut self, status: Vec<SyncPriorityStatus>) {
+    pub fn start_connecting(&mut self) {
         self.connected = false;
         self.downloading = None;
         self.connecting = true;
-        self.priority_status = status;
         self.debug_assert_priority_status_is_sorted();
     }
 
@@ -63,10 +84,15 @@ impl DownloadSyncStatus {
     /// Transitions state after receiving a checkpoint line.
     ///
     /// This sets the [downloading] state to include [progress].
-    pub fn start_tracking_checkpoint<'a>(&mut self, progress: SyncDownloadProgress) {
+    pub fn start_tracking_checkpoint<'a>(
+        &mut self,
+        progress: SyncDownloadProgress,
+        subscriptions: Vec<ActiveStreamSubscription>,
+    ) {
         self.mark_connected();
 
         self.downloading = Some(progress);
+        self.streams = subscriptions;
     }
 
     /// Increments [SyncDownloadProgress] progress for the given [DataLine].
@@ -110,7 +136,74 @@ impl Default for DownloadSyncStatus {
             connecting: false,
             downloading: None,
             priority_status: Vec::new(),
+            streams: Vec::new(),
         }
+    }
+}
+
+impl Serialize for DownloadSyncStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        struct SerializeStreamsWithProgress<'a>(&'a DownloadSyncStatus);
+
+        impl<'a> Serialize for SerializeStreamsWithProgress<'a> {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                #[derive(Serialize)]
+                struct StreamWithProgress<'a> {
+                    #[serde(flatten)]
+                    subscription: &'a ActiveStreamSubscription,
+                    progress: ProgressCounters,
+                }
+
+                let streams = self.0.streams.iter().map(|sub| {
+                    let mut stream_progress = ProgressCounters::default();
+                    if let Some(sync_progress) = &self.0.downloading {
+                        for bucket in &sub.associated_buckets {
+                            if let Some(bucket_progress) = sync_progress.buckets.get(bucket) {
+                                stream_progress += bucket_progress;
+                            }
+                        }
+                    }
+
+                    StreamWithProgress {
+                        subscription: sub,
+                        progress: stream_progress,
+                    }
+                });
+
+                serializer.collect_seq(streams)
+            }
+        }
+
+        let mut serializer = serializer.serialize_struct("DownloadSyncStatus", 4)?;
+        serializer.serialize_field("connected", &self.connected)?;
+        serializer.serialize_field("connecting", &self.connecting)?;
+        serializer.serialize_field("priority_status", &self.priority_status)?;
+        serializer.serialize_field("downloading", &self.downloading)?;
+        serializer.serialize_field("streams", &SerializeStreamsWithProgress(self))?;
+
+        serializer.end()
+    }
+}
+
+#[derive(Serialize, Default)]
+struct ProgressCounters {
+    total: i64,
+    downloaded: i64,
+}
+
+impl<'a> AddAssign<&'a BucketProgress> for ProgressCounters {
+    fn add_assign(&mut self, rhs: &'a BucketProgress) {
+        let downloaded = rhs.since_last;
+        let total = rhs.target_count - rhs.at_last;
+
+        self.total += total;
+        self.downloaded += downloaded;
     }
 }
 
@@ -125,6 +218,10 @@ impl SyncStatusContainer {
             status: Rc::new(RefCell::new(Default::default())),
             last_published_hash: 0,
         }
+    }
+
+    pub fn inner(&self) -> &Rc<RefCell<DownloadSyncStatus>> {
+        &self.status
     }
 
     /// Invokes a function to update the sync status, then emits an [Instruction::UpdateSyncStatus]
@@ -178,9 +275,55 @@ pub struct BucketProgress {
     pub target_count: i64,
 }
 
-#[derive(Serialize, Hash)]
+#[derive(Hash)]
 pub struct SyncDownloadProgress {
     buckets: BTreeMap<String, BucketProgress>,
+}
+
+impl Serialize for SyncDownloadProgress {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // When we publish a SyncDownloadProgress to clients, avoid serializing every bucket since
+        // that can lead to very large status updates.
+        // Instead, we report one entry per priority group.
+        let mut by_priority = BTreeMap::<BucketPriority, ProgressCounters>::new();
+        for progress in self.buckets.values() {
+            let priority_progress = by_priority.entry(progress.priority).or_default();
+            *priority_progress += progress;
+        }
+
+        // We used to serialize SyncDownloadProgress as-is. To keep backwards-compatibility with the
+        // general format, we're now synthesizing a fake bucket id for each priority and then report
+        // each priority as a single-bucket item. This allows keeping client logic unchanged.
+        struct SerializeWithFakeBucketNames(BTreeMap<BucketPriority, ProgressCounters>);
+
+        impl Serialize for SerializeWithFakeBucketNames {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let mut serializer = serializer.serialize_map(Some(self.0.len()))?;
+                for (priority, progress) in &self.0 {
+                    serializer.serialize_entry(
+                        &format!("prio_{}", priority.number),
+                        &BucketProgress {
+                            priority: *priority,
+                            at_last: 0,
+                            since_last: progress.downloaded,
+                            target_count: progress.total,
+                        },
+                    )?;
+                }
+                serializer.end()
+            }
+        }
+
+        let mut serializer = serializer.serialize_struct("SyncDownloadProgress", 1)?;
+        serializer.serialize_field("buckets", &SerializeWithFakeBucketNames(by_priority))?;
+        serializer.end()
+    }
 }
 
 pub struct SyncProgressFromCheckpoint {
@@ -246,6 +389,57 @@ impl SyncDownloadProgress {
     pub fn increment_download_count(&mut self, line: &DataLine) {
         if let Some(info) = self.buckets.get_mut(&*line.bucket) {
             info.since_last += line.data.len() as i64
+        }
+    }
+}
+
+#[derive(Serialize, Hash)]
+pub struct ActiveStreamSubscription {
+    #[serde(skip)]
+    pub id: i64,
+    pub name: String,
+    pub parameters: Option<Box<JsonString>>,
+    #[serde(skip)]
+    pub associated_buckets: BTreeSet<String>,
+    pub priority: Option<BucketPriority>,
+    pub active: bool,
+    pub is_default: bool,
+    pub has_explicit_subscription: bool,
+    pub expires_at: Option<Timestamp>,
+    pub last_synced_at: Option<Timestamp>,
+}
+
+impl ActiveStreamSubscription {
+    pub fn from_local(local: &LocallyTrackedSubscription) -> Self {
+        Self {
+            id: local.id,
+            name: local.stream_name.clone(),
+            parameters: local.local_params.clone(),
+            is_default: local.is_default,
+            priority: None,
+            associated_buckets: BTreeSet::new(),
+            active: local.active,
+
+            has_explicit_subscription: local.has_subscribed_manually(),
+            expires_at: local.expires_at.clone().map(|e| Timestamp(e)),
+            last_synced_at: local.last_synced_at.map(|e| Timestamp(e)),
+        }
+    }
+
+    pub fn mark_associated_with_bucket(&mut self, bucket: &OwnedBucketChecksum) {
+        self.associated_buckets
+            .get_or_insert_with(&bucket.bucket, |key| key.clone());
+
+        self.priority = Some(match self.priority {
+            None => bucket.priority,
+            Some(prio) => min(prio, bucket.priority),
+        });
+    }
+
+    pub fn is_in_priority(&self, prio: Option<BucketPriority>) -> bool {
+        match prio {
+            None => true,
+            Some(prio) => self.priority >= Some(prio),
         }
     }
 }

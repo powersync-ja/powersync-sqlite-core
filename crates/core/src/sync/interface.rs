@@ -4,9 +4,12 @@ use core::ffi::{c_int, c_void};
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
 use crate::constants::SUBTYPE_JSON;
+use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
+use crate::sync::storage_adapter::StorageAdapter;
+use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -18,14 +21,43 @@ use sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 use sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite_nostd::{Connection, Context};
 
+use crate::sync::BucketPriority;
+use crate::util::JsonString;
+
 /// Payload provided by SDKs when requesting a sync iteration.
-#[derive(Default, Deserialize)]
+#[derive(Deserialize)]
 pub struct StartSyncStream {
     /// Bucket parameters to include in the request when opening a sync stream.
     #[serde(default)]
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub schema: Schema,
+
+    /// Whether to request default streams in the generated sync request.
+    #[serde(default = "StartSyncStream::include_defaults_by_default")]
+    pub include_defaults: bool,
+    /// Streams that are currently active in the app.
+    ///
+    /// We will increase the expiry date for those streams at the time we connect and disconnect.
+    #[serde(default)]
+    pub active_streams: Rc<Vec<StreamKey>>,
+}
+
+impl StartSyncStream {
+    pub const fn include_defaults_by_default() -> bool {
+        true
+    }
+}
+
+impl Default for StartSyncStream {
+    fn default() -> Self {
+        Self {
+            parameters: Default::default(),
+            schema: Default::default(),
+            include_defaults: Self::include_defaults_by_default(),
+            active_streams: Default::default(),
+        }
+    }
 }
 
 /// A request sent from a client SDK to the [SyncClient] with a `powersync_control` invocation.
@@ -59,6 +91,12 @@ pub enum SyncEvent<'a> {
     TextLine { data: &'a str },
     /// Forward a binary line (BSON) received from the sync service.
     BinaryLine { data: &'a [u8] },
+    /// The active stream subscriptions (as in, `SyncStreamSubscription` instances active right now)
+    /// have changed.
+    ///
+    /// The client will compare the new active subscriptions with the current one and will issue a
+    /// request to restart the sync iteration if necessary.
+    DidUpdateSubscriptions { active_streams: Rc<Vec<StreamKey>> },
 }
 
 /// An instruction sent by the core extension to the SDK.
@@ -84,11 +122,18 @@ pub enum Instruction {
     // These are defined like this because deserializers in Kotlin can't support either an
     // object or a literal value
     /// Close the websocket / HTTP stream to the sync service.
-    CloseSyncStream {},
+    CloseSyncStream(CloseSyncStream),
     /// Flush the file-system if it's non-durable (only applicable to the Dart SDK).
     FlushFileSystem {},
     /// Notify that a sync has been completed, prompting client SDKs to clear earlier errors.
     DidCompleteSync {},
+}
+
+#[derive(Serialize, Default)]
+pub struct CloseSyncStream {
+    /// Whether clients should hide the brief disconnected status from the public sync status and
+    /// reconnect immediately.
+    pub hide_disconnect: bool,
 }
 
 #[derive(Serialize)]
@@ -106,6 +151,22 @@ pub struct StreamingSyncRequest {
     pub binary_data: bool,
     pub client_id: String,
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
+    pub streams: Rc<StreamSubscriptionRequest>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct StreamSubscriptionRequest {
+    pub include_defaults: bool,
+    pub subscriptions: Vec<RequestedStreamSubscription>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct RequestedStreamSubscription {
+    /// The name of the sync stream to subscribe to.
+    pub stream: String,
+    /// Parameters to make available in the stream's definition.
+    pub parameters: Option<Box<JsonString>>,
+    pub override_priority: Option<BucketPriority>,
 }
 
 #[derive(Serialize)]
@@ -177,6 +238,17 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
                 "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
+                "update_subscriptions" => {
+                    SyncControlRequest::SyncEvent(SyncEvent::DidUpdateSubscriptions {
+                        active_streams: serde_json::from_str(payload.text())
+                            .map_err(PowerSyncError::as_argument_error)?,
+                    })
+                }
+                "subscriptions" => {
+                    let request = serde_json::from_str(payload.text())
+                        .map_err(PowerSyncError::as_argument_error)?;
+                    return apply_subscriptions(ctx.db_handle(), request);
+                }
                 _ => {
                     return Err(PowerSyncError::argument_error("Unknown operation"));
                 }
@@ -215,5 +287,33 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
         Some(destroy),
     )?;
 
+    db.create_function_v2(
+        "powersync_offline_sync_status",
+        0,
+        sqlite::UTF8 | sqlite::DIRECTONLY | SQLITE_RESULT_SUBTYPE,
+        None,
+        Some(powersync_offline_sync_status),
+        None,
+        None,
+        None,
+    )?;
+
     Ok(())
 }
+
+fn powersync_offline_sync_status_impl(
+    ctx: *mut sqlite::context,
+    _args: &[*mut sqlite::value],
+) -> Result<String, PowerSyncError> {
+    let adapter = StorageAdapter::new(ctx.db_handle())?;
+    let state = adapter.offline_sync_state()?;
+    let serialized = serde_json::to_string(&state).map_err(PowerSyncError::internal)?;
+
+    Ok(serialized)
+}
+
+create_sqlite_text_fn!(
+    powersync_offline_sync_status,
+    powersync_offline_sync_status_impl,
+    "powersync_offline_sync_status"
+);
