@@ -3,9 +3,6 @@ on:
   push:
     tags:
       - v[0-9]+.[0-9]+.[0-9]+
-    branches:
-      - fix-release-ci
-
 jobs:
   draft_release:
     name: Create Draft GitHub Release
@@ -20,9 +17,9 @@ jobs:
       - name: Set tag name
         id: tag
         run: |
-          echo "tag=v0.4.5" >> $GITHUB_OUTPUT
+          tag=$(basename "${{ github.ref }}")
+          echo "tag=$tag" >> $GITHUB_OUTPUT
       - name: Create Release
-        if: false
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -63,7 +60,6 @@ jobs:
 
   libs_android:
     name: Building Android libraries
-    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,7 +73,6 @@ jobs:
 
   libs_wasm:
     name: Basic WASM build
-    if: false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +97,6 @@ jobs:
       contents: read
       packages: write
     name: Publish Android
-    if: false
     needs: [ draft_release, libs_android ]
     runs-on: ubuntu-latest
     steps:
@@ -211,7 +205,6 @@ jobs:
           gh release upload "${{ needs.draft_release.outputs.tag }}" *.so
 
   publish_wasm:
-    if: false
     name: Publish WASM builds
     needs: [ draft_release, libs_wasm ]
     runs-on: ubuntu-latest
@@ -253,8 +246,10 @@ jobs:
     runs-on: macos-latest
     needs:
       - draft_release
+      - publish_android
       - publish_ios_pod_and_spm_package
       - publish_desktop
+      - publish_wasm
     steps:
       - name: Create issue
         run: |
