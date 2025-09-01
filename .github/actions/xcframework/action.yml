@@ -40,6 +40,6 @@ runs:
       with:
         name: xcframework
         retention-days: 14
-        compression: 0 # We're uploading a zip archive, no need to compress agan
+        compression-level: 0 # We're uploading a zip archive, no need to compress agan
         path: |
           powersync-sqlite-core.xcframework.zip
