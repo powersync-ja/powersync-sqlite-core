@@ -648,4 +648,18 @@ void main() {
           }
         ]));
   });
+
+  syncTest('clearing database clears subscriptions', (_) {
+    control(
+      'subscriptions',
+      json.encode({
+        'subscribe': {
+          'stream': {'name': 'a'},
+        }
+      }),
+    );
+    expect(db.select('select * from ps_stream_subscriptions'), isNotEmpty);
+    db.execute('select powersync_clear(0);');
+    expect(db.select('select * from ps_stream_subscriptions'), isEmpty);
+  });
 }
