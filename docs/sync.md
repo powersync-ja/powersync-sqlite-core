@@ -16,6 +16,8 @@ The following commands are supported:
     - A `schema: { tables: Table[], raw_tables: RawTable[] }` entry specifying the schema of the database to
       use. Regular tables are also inferred from the database itself, but raw tables need to be specified.
       If no raw tables are used, the `schema` entry can be omitted.
+    - `active_streams`: An array of `{name: string, params: Record<string, any>}` entries representing streams that
+      have an active subscription object in the application at the time the stream was opened.
 2. `stop`: No payload, requests the current sync iteration (if any) to be shut down.
 3. `line_text`: Payload is a serialized JSON object received from the sync service.
 4. `line_binary`: Payload is a BSON-encoded object received from the sync service.
@@ -26,8 +28,14 @@ The following commands are supported:
 6. `completed_upload`: Notify the sync implementation that all local changes have been uploaded.
 7. `update_subscriptions`: Notify the sync implementation that subscriptions which are currently active in the app
    have changed. Depending on the TTL of caches, this may cause it to request a reconnect.
-8. `subscriptions`: Store a new sync steam subscription in the database or remove it.
+8. `connection`: Notify the sync implementation about the connection being opened (second parameter should be `established`)
+   or the HTTP stream closing (second parameter should be `end`).
+   This is used to set `connected` to true in the sync status without waiting for the first sync line.
+9. `subscriptions`: Store a new sync steam subscription in the database or remove it.
    This command can run outside of a sync iteration and does not affect it.
+10. `update_subscriptions`: Second parameter is a JSON-encoded array of `{name: string, params: Record<string, any>}`.
+    If a new subscription is created, or when a subscription without a TTL has been removed, the client will ask to
+    restart the connection.
 
 `powersync_control` returns a JSON-encoded array of instructions for the client:
 
