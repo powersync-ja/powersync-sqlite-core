@@ -556,6 +556,14 @@ impl StreamingSyncIteration {
                         continue;
                     }
                 }
+                SyncEvent::ConnectionEstablished => {
+                    self.status
+                        .update(|s| s.mark_connected(), &mut event.instructions);
+                    continue;
+                }
+                SyncEvent::StreamEnded => {
+                    break false;
+                }
                 SyncEvent::DidRefreshToken => {
                     // Break so that the client SDK starts another iteration.
                     break true;

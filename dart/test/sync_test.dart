@@ -173,6 +173,19 @@ void _syncTests<T>({
     });
   });
 
+  test('handles connection events', () {
+    invokeControl('start', null);
+    expect(invokeControl('connection', 'established'), [
+      containsPair('UpdateSyncStatus',
+          containsPair('status', containsPair('connected', true)))
+    ]);
+    expect(invokeControl('connection', 'end'), [
+      {
+        'CloseSyncStream': {'hide_disconnect': false}
+      }
+    ]);
+  });
+
   test('does not publish until reaching checkpoint', () {
     invokeControl('start', null);
     pushCheckpoint(buckets: priorityBuckets);

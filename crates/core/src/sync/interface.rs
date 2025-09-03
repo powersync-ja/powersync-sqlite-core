@@ -87,16 +87,24 @@ pub enum SyncEvent<'a> {
     /// If pending CRUD entries have previously prevented a sync from completing, this even can be
     /// used to try again.
     UploadFinished,
+    ConnectionEstablished,
+    StreamEnded,
     /// Forward a text line (JSON) received from the sync service.
-    TextLine { data: &'a str },
+    TextLine {
+        data: &'a str,
+    },
     /// Forward a binary line (BSON) received from the sync service.
-    BinaryLine { data: &'a [u8] },
+    BinaryLine {
+        data: &'a [u8],
+    },
     /// The active stream subscriptions (as in, `SyncStreamSubscription` instances active right now)
     /// have changed.
     ///
     /// The client will compare the new active subscriptions with the current one and will issue a
     /// request to restart the sync iteration if necessary.
-    DidUpdateSubscriptions { active_streams: Rc<Vec<StreamKey>> },
+    DidUpdateSubscriptions {
+        active_streams: Rc<Vec<StreamKey>>,
+    },
 }
 
 /// An instruction sent by the core extension to the SDK.
@@ -244,6 +252,13 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
                             .map_err(PowerSyncError::as_argument_error)?,
                     })
                 }
+                "connection" => SyncControlRequest::SyncEvent(match payload.text() {
+                    "established" => SyncEvent::ConnectionEstablished,
+                    "end" => SyncEvent::StreamEnded,
+                    _ => {
+                        return Err(PowerSyncError::argument_error("unknown connection event"));
+                    }
+                }),
                 "subscriptions" => {
                     let request = serde_json::from_str(payload.text())
                         .map_err(PowerSyncError::as_argument_error)?;
