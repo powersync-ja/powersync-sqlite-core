@@ -102,17 +102,10 @@ impl<'a> SyncOperation<'a> {
         if needs_check {
             // language=SQLite
             let statement = self.db.prepare_v2(
-                "\
-    SELECT group_concat(name)
-    FROM ps_buckets
-    WHERE target_op > last_op AND name = '$local'",
+                "SELECT 1 FROM ps_buckets WHERE target_op > last_op AND name = '$local'",
             )?;
 
-            if statement.step()? != ResultCode::ROW {
-                return Err(PowerSyncError::unknown_internal());
-            }
-
-            if statement.column_type(0)? == ColumnType::Text {
+            if statement.step()? == ResultCode::ROW {
                 return Ok(false);
             }
 
