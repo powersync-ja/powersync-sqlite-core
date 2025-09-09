@@ -463,16 +463,12 @@ impl StorageAdapter {
     pub fn local_state(&self) -> Result<Option<LocalState>, PowerSyncError> {
         let stmt = self
             .db
-            .prepare_v2("SELECT target_op, last_op FROM ps_buckets WHERE name = ?")?;
+            .prepare_v2("SELECT target_op FROM ps_buckets WHERE name = ?")?;
         stmt.bind_text(1, "$local", sqlite_nostd::Destructor::STATIC)?;
 
         Ok(if stmt.step()? == ResultCode::ROW {
             let target_op = stmt.column_int64(0);
-            let last_op = stmt.column_int64(1);
-            Some(LocalState {
-                target_op,
-                _last_op: last_op,
-            })
+            Some(LocalState { target_op })
         } else {
             None
         })
@@ -481,7 +477,6 @@ impl StorageAdapter {
 
 pub struct LocalState {
     pub target_op: i64,
-    pub _last_op: i64,
 }
 
 pub struct BucketInfo {
