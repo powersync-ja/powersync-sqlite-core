@@ -11,7 +11,7 @@ Object checkpoint({
   return {
     'checkpoint': {
       'last_op_id': '$lastOpId',
-      'write_checkpoint': null,
+      'write_checkpoint': writeCheckpoint,
       'buckets': buckets,
       'streams': streams,
     }

@@ -121,8 +121,14 @@ void _syncTests<T>({
   }
 
   List<Object?> pushCheckpoint(
-      {int lastOpId = 1, List<Object> buckets = const []}) {
-    return syncLine(checkpoint(lastOpId: lastOpId, buckets: buckets));
+      {int lastOpId = 1,
+      List<Object> buckets = const [],
+      String? writeCheckpoint}) {
+    return syncLine(checkpoint(
+      lastOpId: lastOpId,
+      buckets: buckets,
+      writeCheckpoint: writeCheckpoint,
+    ));
   }
 
   List<Object?> pushCheckpointComplete({int? priority, String lastOpId = '1'}) {
@@ -673,6 +679,123 @@ void _syncTests<T>({
 
       addCheckpointComplete();
       expect(progress, isNull);
+    });
+  });
+
+  group('applies pending changes', () {
+    test('write checkpoint before upload complete', () {
+      // local write while offline
+      db.execute("insert into items (id, col) values ('local', 'data');");
+      invokeControl('start', null);
+
+      // Start upload process. Assume data has been uploaded and a write
+      // checkpoint has been requested, but not received yet.
+      db.execute('DELETE FROM ps_crud');
+      pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+      pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
+      expect(pushCheckpointComplete(), [
+        containsPair('LogLine', {
+          'severity': 'INFO',
+          'line': contains('Will retry at completed upload')
+        })
+      ]);
+
+      // Now complete the upload process.
+      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      invokeControl('completed_upload', null);
+
+      // This should apply the pending write checkpoint.
+      expect(fetchRows(), [
+        {'id': 'row-0', 'col': 'hi'}
+      ]);
+    });
+
+    test('write checkpoint with synced data', () {
+      // local write while offline
+      db.execute("insert into items (id, col) values ('local', 'data');");
+      invokeControl('start', null);
+
+      // Complete upload process
+      db.execute('DELETE FROM ps_crud');
+      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      expect(invokeControl('completed_upload', null), isEmpty);
+
+      // Sync afterwards containing data and write checkpoint.
+      pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+      pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
+      pushCheckpointComplete();
+      expect(fetchRows(), [
+        {'id': 'row-0', 'col': 'hi'}
+      ]);
+    });
+
+    test('write checkpoint after synced data', () {
+      // local write while offline
+      db.execute("insert into items (id, col) values ('local', 'data');");
+      invokeControl('start', null);
+
+      // Upload changes, assume that triggered a checkpoint.
+      db.execute('DELETE FROM ps_crud');
+      pushCheckpoint(buckets: priorityBuckets);
+      pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
+      expect(pushCheckpointComplete(), [
+        containsPair('LogLine', {
+          'severity': 'INFO',
+          'line': contains('Will retry at completed upload')
+        })
+      ]);
+
+      // Now the upload is complete and requests a write checkpoint
+      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      expect(invokeControl('completed_upload', null), isEmpty);
+
+      // Which triggers a new iteration
+      pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+      expect(
+          pushCheckpointComplete(),
+          contains(containsPair('LogLine', {
+            'severity': 'DEBUG',
+            'line': contains('Validated and applied checkpoint')
+          })));
+
+      expect(fetchRows(), [
+        {'id': 'row-0', 'col': 'hi'}
+      ]);
+    });
+
+    test('second local write', () {
+      // first local write while offline
+      db.execute("insert into items (id, col) values ('local', 'data');");
+      invokeControl('start', null);
+
+      // Upload changes, assume that triggered a checkpoint.
+      db.execute('DELETE FROM ps_crud');
+      pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+      pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
+      expect(pushCheckpointComplete(), [
+        containsPair('LogLine', {
+          'severity': 'INFO',
+          'line': contains('Will retry at completed upload')
+        })
+      ]);
+
+      // Second local write during sync
+      db.execute("insert into items (id, col) values ('local2', 'data2');");
+
+      // Now the upload is complete and requests a write checkpoint
+      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      expect(invokeControl('completed_upload', null), [
+        containsPair('LogLine', {
+          'severity': 'WARNING',
+          'line':
+              'Could not apply pending checkpoint even after completed upload'
+        })
+      ]);
+
+      expect(fetchRows(), [
+        {'id': 'local', 'col': 'data'},
+        {'id': 'local2', 'col': 'data2'},
+      ]);
     });
   });
 

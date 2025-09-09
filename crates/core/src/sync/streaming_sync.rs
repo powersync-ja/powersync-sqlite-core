@@ -448,6 +448,12 @@ impl StreamingSyncIteration {
                     |s| s.start_tracking_checkpoint(progress, subscription_state),
                     &mut event.instructions,
                 );
+
+                // Technically, we could still try to apply a pending checkpoint after receiving a
+                // new one. However, sync_local assumes it's only called in a state where there's no
+                // pending checkpoint, so we'd have to take the oplog state at the time we've
+                // originally received the validated-but-not-applied checkpoint. This is likely not
+                // something worth doing.
                 self.validated_but_not_applied = None;
                 *target = updated_target;
             }
@@ -515,28 +521,7 @@ impl StreamingSyncIteration {
                 SyncEvent::BinaryLine { data } => bson::from_bytes(data)
                     .map_err(|e| PowerSyncError::sync_protocol_error("invalid binary line", e))?,
                 SyncEvent::UploadFinished => {
-                    if let Some(checkpoint) = self.validated_but_not_applied.take() {
-                        let result = self.sync_local(&checkpoint, None)?;
-
-                        match result {
-                            SyncLocalResult::ChangesApplied => {
-                                event.instructions.push(Instruction::LogLine {
-                                    severity: LogSeverity::DEBUG,
-                                    line: "Applied pending checkpoint after completed upload"
-                                        .into(),
-                                });
-
-                                self.handle_checkpoint_applied(event, self.adapter.now()?);
-                            }
-                            _ => {
-                                event.instructions.push(Instruction::LogLine {
-                                    severity: LogSeverity::WARNING,
-                                    line: "Could not apply pending checkpoint even after completed upload"
-                                        .into(),
-                                });
-                            }
-                        }
-                    }
+                    self.try_applying_write_after_completed_upload(event)?;
 
                     continue;
                 }
@@ -606,6 +591,43 @@ impl StreamingSyncIteration {
         }
 
         Ok(progress)
+    }
+
+    fn try_applying_write_after_completed_upload(
+        &mut self,
+        event: &mut ActiveEvent,
+    ) -> Result<(), PowerSyncError> {
+        let Some(checkpoint) = self.validated_but_not_applied.take() else {
+            return Ok(());
+        };
+
+        let target_write = self.adapter.local_state()?.map(|e| e.target_op);
+        if checkpoint.write_checkpoint < target_write {
+            // Note: None < Some(x). The pending checkpoint does not contain the write
+            // checkpoint created during the upload, so we don't have to try applying it, it's
+            // guaranteed to be outdated.
+            return Ok(());
+        }
+
+        let result = self.sync_local(&checkpoint, None)?;
+        match result {
+            SyncLocalResult::ChangesApplied => {
+                event.instructions.push(Instruction::LogLine {
+                    severity: LogSeverity::DEBUG,
+                    line: "Applied pending checkpoint after completed upload".into(),
+                });
+
+                self.handle_checkpoint_applied(event, self.adapter.now()?);
+            }
+            _ => {
+                event.instructions.push(Instruction::LogLine {
+                    severity: LogSeverity::WARNING,
+                    line: "Could not apply pending checkpoint even after completed upload".into(),
+                });
+            }
+        }
+
+        Ok(())
     }
 
     /// Reconciles local stream subscriptions with service-side state received in a checkpoint.
