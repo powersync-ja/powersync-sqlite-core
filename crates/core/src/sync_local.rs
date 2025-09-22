@@ -153,12 +153,12 @@ impl<'a> SyncOperation<'a> {
                             let parsed: serde_json::Value = serde_json::from_str(data)
                                 .map_err(PowerSyncError::json_local_error)?;
                             stmt.bind_for_put(id, &parsed)?;
-                            stmt.stmt.exec()?;
+                            stmt.exec(self.db, type_name, id, Some(&parsed))?;
                         }
                         Err(_) => {
                             let stmt = raw.delete_statement(self.db)?;
                             stmt.bind_for_delete(id)?;
-                            stmt.stmt.exec()?;
+                            stmt.exec(self.db, type_name, id, None)?;
                         }
                     }
                 } else {
@@ -597,5 +597,27 @@ impl<'a> PreparedPendingStatement<'a> {
         }
 
         Ok(())
+    }
+
+    /// Executes the prepared statement, contextualizing errors with the id / data that we've tried
+    /// to insert.
+    pub fn exec(
+        &self,
+        db: *mut sqlite::sqlite3,
+        table: &str,
+        id: &str,
+        data: Option<&serde_json::Value>,
+    ) -> Result<(), PowerSyncError> {
+        match self.stmt.exec() {
+            Ok(_) => Ok(()),
+            Err(rc) => {
+                let context = match data {
+                    None => format!("deleting from {table}, id = {id}"),
+                    Some(data) => format!("replacing into {table}, id = {id}, data = {data}"),
+                };
+
+                Err(PowerSyncError::from_sqlite(db, rc, context))
+            }
+        }
     }
 }

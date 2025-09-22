@@ -1021,35 +1021,65 @@ END;
   });
 
   group('raw tables', () {
-    syncTest('smoke test', (_) {
-      db.execute(
-          'CREATE TABLE users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
-
-      invokeControl(
-        'start',
-        json.encode({
-          'schema': {
-            'raw_tables': [
-              {
-                'name': 'users',
-                'put': {
-                  'sql':
-                      'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
-                  'params': [
-                    'Id',
-                    {'Column': 'name'}
-                  ],
-                },
-                'delete': {
-                  'sql': 'DELETE FROM users WHERE id = ?',
-                  'params': ['Id'],
-                },
-              }
+    const schema = {
+      'raw_tables': [
+        {
+          'name': 'users',
+          'put': {
+            'sql': 'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
+            'params': [
+              'Id',
+              {'Column': 'name'}
             ],
-            'tables': [],
           },
-        }),
-      );
+          'delete': {
+            'sql': 'DELETE FROM users WHERE id = ?',
+            'params': ['Id'],
+          },
+        }
+      ],
+      'tables': [],
+    };
+
+    void setupRawTables() {
+      db.execute('''
+CREATE TABLE users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;
+
+CREATE TRIGGER users_insert
+   AFTER INSERT ON users
+   FOR EACH ROW
+   BEGIN
+      INSERT INTO powersync_crud (op, id, type, data) VALUES ('PUT', NEW.id, 'users', json_object(
+         'name', NEW.name
+      ));
+   END;
+
+CREATE TRIGGER users_update
+   AFTER UPDATE ON users
+   FOR EACH ROW
+   BEGIN
+      SELECT CASE
+         WHEN (OLD.id != NEW.id)
+         THEN RAISE (FAIL, 'Cannot update id')
+      END;
+
+      INSERT INTO powersync_crud (op, id, type, data) VALUES ('PATCH', NEW.id, 'users', json_object(
+         'name', NEW.name
+      ));
+   END;
+
+CREATE TRIGGER users_delete
+   AFTER DELETE ON users
+   FOR EACH ROW
+   BEGIN
+      INSERT INTO powersync_crud (op, id, type) VALUES ('DELETE', OLD.id, 'users');
+   END;
+''');
+    }
+
+    syncTest('smoke test', (_) {
+      setupRawTables();
+      invokeControl('start', json.encode({'schema': schema}));
 
       // Insert
       pushCheckpoint(buckets: [bucketDescription('a')]);
@@ -1083,33 +1113,70 @@ END;
       expect(db.select('SELECT * FROM users'), isEmpty);
     });
 
-    test("crud vtab is no-op during sync", () {
-      db.execute(
-          'CREATE TABLE users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
+    test('reports errors from underlying statements', () {
+      setupRawTables();
+      invokeControl('start', json.encode({'schema': schema}));
 
-      invokeControl(
-        'start',
-        json.encode({
-          'schema': {
-            'raw_tables': [
-              {
-                'name': 'users',
-                'put': {
-                  'sql': "INSERT INTO powersync_crud_(data) VALUES (?);",
-                  'params': [
-                    {'Column': 'name'}
-                  ],
-                },
-                'delete': {
-                  'sql': 'DELETE FROM users WHERE id = ?',
-                  'params': ['Id'],
-                },
-              }
-            ],
-            'tables': [],
-          },
-        }),
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {},
+        objectType: 'users',
       );
+
+      expect(
+        pushCheckpointComplete,
+        throwsA(
+          isSqliteException(
+            1299,
+            'powersync_control: replacing into users, id = my_user, data = {}: '
+            'internal SQLite call returned CONSTRAINT_NOTNULL: '
+            'NOT NULL constraint failed: users.name',
+          ),
+        ),
+      );
+    });
+
+    test('crud vtab', () {
+      // This is mostly a test for the triggers, validating the suggestions we
+      // give on https://docs.powersync.com/usage/use-case-examples/raw-tables#capture-local-writes-with-triggers
+      setupRawTables();
+
+      db.execute('''
+BEGIN;
+INSERT INTO users (id, name) VALUES ('test-id', 'test user');
+UPDATE users SET name = name || '2';
+DELETE FROM users;
+END;
+''');
+
+      expect(db.select('SELECT * FROM ps_crud'), [
+        {
+          'id': 1,
+          'data':
+              '{"op":"PUT","id":"test-id","type":"users","data":{"name":"test user"}}',
+          'tx_id': 1
+        },
+        {
+          'id': 2,
+          'data':
+              '{"op":"PATCH","id":"test-id","type":"users","data":{"name":"test user2"}}',
+          'tx_id': 1
+        },
+        {
+          'id': 3,
+          'data': '{"op":"DELETE","id":"test-id","type":"users"}',
+          'tx_id': 1
+        },
+      ]);
+    });
+
+    test("crud vtab is no-op during sync", () {
+      setupRawTables();
+      invokeControl('start', json.encode({'schema': schema}));
 
       // Insert
       pushCheckpoint(buckets: [bucketDescription('a')]);
