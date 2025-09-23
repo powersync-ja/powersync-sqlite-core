@@ -370,6 +370,38 @@ void _syncTests<T>({
     expect(db.select('SELECT * FROM ps_sync_state'), hasLength(0));
   });
 
+  test('can soft clear', () {
+    invokeControl('start', null);
+    pushCheckpoint(buckets: [bucketDescription('a', count: 1)]);
+    pushSyncData('a', '1', 'row-0', 'PUT', {'col': 'hi'});
+    pushCheckpointComplete();
+
+    expect(db.select('SELECT * FROM items'), hasLength(1));
+
+    // Soft clear
+    db.execute('SELECT powersync_clear(2)');
+    db.select('select powersync_replace_schema(?)', [json.encode(testSchema)]);
+    expect(db.select('SELECT * FROM items'), hasLength(0));
+
+    final request = invokeControl('start', null);
+    expect(
+      request,
+      contains(containsPair(
+        'EstablishSyncStream',
+        {
+          // Should request state from before clear
+          'request': containsPair('buckets', [
+            {'name': 'a', 'after': '1'}
+          ]),
+        },
+      )),
+    );
+
+    pushCheckpoint(buckets: [bucketDescription('a', count: 1)]);
+    pushCheckpointComplete();
+    expect(db.select('SELECT * FROM items'), hasLength(1));
+  });
+
   test('persists download progress', () {
     const bucket = 'bkt';
     void expectProgress(int atLast, int sinceLast) {

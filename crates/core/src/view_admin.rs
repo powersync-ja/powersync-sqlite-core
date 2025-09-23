@@ -150,14 +150,21 @@ fn powersync_clear_impl(
 ) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
 
-    let clear_local = args[0].int();
+    let flags = PowerSyncClearFlags(args[0].int());
+
+    if !flags.soft_clear() {
+        // With a soft clear, we want to delete public data while keeping internal data around. When
+        // connect() is called with compatible JWTs yielding a large overlap of buckets, this can
+        // speed up the next sync.
+        local_db.exec_safe("DELETE FROM ps_oplog; DELETE FROM ps_buckets")?;
+    } else {
+        local_db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0")?;
+    }
 
     // language=SQLite
     local_db.exec_safe(
         "\
-DELETE FROM ps_oplog;
 DELETE FROM ps_crud;
-DELETE FROM ps_buckets;
 DELETE FROM ps_untyped;
 DELETE FROM ps_updated_rows;
 DELETE FROM ps_kv WHERE key != 'client_id';
@@ -166,7 +173,7 @@ DELETE FROM ps_stream_subscriptions;
 ",
     )?;
 
-    let table_glob = if clear_local != 0 {
+    let table_glob = if flags.clear_local() {
         "ps_data_*"
     } else {
         "ps_data__*"
@@ -197,6 +204,22 @@ DELETE FROM {table};",
     }
 
     Ok(String::from(""))
+}
+
+#[derive(Clone, Copy)]
+struct PowerSyncClearFlags(i32);
+
+impl PowerSyncClearFlags {
+    const MASK_CLEAR_LOCAL: i32 = 0x01;
+    const MASK_SOFT_CLEAR: i32 = 0x02;
+
+    fn clear_local(self) -> bool {
+        self.0 & Self::MASK_CLEAR_LOCAL != 0
+    }
+
+    fn soft_clear(self) -> bool {
+        self.0 & Self::MASK_SOFT_CLEAR != 0
+    }
 }
 
 create_auto_tx_function!(powersync_clear_tx, powersync_clear_impl);
