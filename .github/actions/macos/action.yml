@@ -22,5 +22,5 @@ runs:
         name: macos-library
         retention-days: 14
         path: |
-          libpowersync_x64.dylib
-          libpowersync_aarch64.dylib
+          *.dylib
+          *.macos.a

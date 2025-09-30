@@ -30,8 +30,5 @@ runs:
         name: linux-library
         retention-days: 14
         path: |
-          libpowersync_x64.so
-          libpowersync_x86.so
-          libpowersync_aarch64.so
-          libpowersync_armv7.so
-          libpowersync_riscv64gc.so
+          *.so
+          *.linux.a

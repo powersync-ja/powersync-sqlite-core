@@ -23,6 +23,5 @@ runs:
         name: windows-library
         retention-days: 14
         path: |
-          powersync_x64.dll
-          powersync_aarch64.dll
-          powersync_x86.dll          
+          *.dll
+          *.lib

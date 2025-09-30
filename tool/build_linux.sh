@@ -1,26 +1,32 @@
 #!/bin/sh
 set -e
 
+function compile() {
+  local triple=$1
+  local suffix=$2
+
+  cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target $triple
+  cargo build -p powersync_static -Z build-std=panic_abort,core,alloc --release --target $triple
+
+  mv "target/$triple/release/libpowersync.so" "libpowersync_$suffix.so"
+  mv "target/$triple/release/libpowersync.a" "libpowersync_$suffix.linux.a"
+}
+
 case "$1" in
   x64)
-    cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target x86_64-unknown-linux-gnu
-    mv "target/x86_64-unknown-linux-gnu/release/libpowersync.so" "libpowersync_x64.so"
+    compile x86_64-unknown-linux-gnu x64
     ;;
   x86)
-    cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target i686-unknown-linux-gnu
-    mv "target/i686-unknown-linux-gnu/release/libpowersync.so" "libpowersync_x86.so"
+    compile i686-unknown-linux-gnu x86
     ;;
   aarch64)
-    cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target aarch64-unknown-linux-gnu
-    mv "target/aarch64-unknown-linux-gnu/release/libpowersync.so" "libpowersync_aarch64.so"
+    compile aarch64-unknown-linux-gnu aarch64
     ;;
   armv7)
-    cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target armv7-unknown-linux-gnueabihf
-    mv "target/armv7-unknown-linux-gnueabihf/release/libpowersync.so" "libpowersync_armv7.so"
+    compile armv7-unknown-linux-gnueabihf armv7
     ;;
   riscv64gc)
-    cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target riscv64gc-unknown-linux-gnu
-    mv "target/riscv64gc-unknown-linux-gnu/release/libpowersync.so" "libpowersync_riscv64gc.so"
+    compile riscv64gc-unknown-linux-gnu riscv64gc
     ;;
   *)
     echo "Unknown architecture"

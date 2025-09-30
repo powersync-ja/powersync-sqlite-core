@@ -1,18 +1,26 @@
 #!/bin/sh
 set -e
 
+function compile() {
+  local triple=$1
+  local suffix=$2
+
+  cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target $triple
+  cargo build -p powersync_static -Z build-std=panic_abort,core,alloc --release --target $triple
+
+  mv "target/$triple/release/powersnc.dll" "powersync_$suffix.dll"
+  mv "target/$triple/release/powersync.lib" "powersync_$suffix.lib"
+}
+
 case "$1" in
   x64)
-    cargo build -Z build-std=panic_abort,core,alloc -p powersync_loadable --release --target x86_64-pc-windows-msvc
-    mv "target/x86_64-pc-windows-msvc/release/powersync.dll" "powersync_x64.dll"
+    compile x86_64-pc-windows-msvc x64
     ;;
   x86)
-    cargo build -Z build-std=panic_abort,core,alloc -p powersync_loadable --release --target i686-pc-windows-msvc
-    mv "target/i686-pc-windows-msvc/release/powersync.dll" "powersync_x86.dll"
+    compile i686-pc-windows-msvc x86
     ;;
   aarch64)
-    cargo build -Z build-std=panic_abort,core,alloc -p powersync_loadable --release --target aarch64-pc-windows-msvc
-    mv "target/aarch64-pc-windows-msvc/release/powersync.dll" "powersync_aarch64.dll"
+    compile aarch64-pc-windows-msvc aarch64
     ;;
   *)
     echo "Unknown architecture"
