@@ -179,18 +179,26 @@ jobs:
         with:
           submodules: true
 
-      - name: Download libs
+      - name: Download Linux libraries
         uses: actions/download-artifact@v5
         with:
           name: linux-library
-      - name: Download libs
+      - name: Download macOS libraries
         uses: actions/download-artifact@v5
         with:
           name: macos-library
-      - name: Download libs
+      - name: Download Windows libraries
         uses: actions/download-artifact@v5
         with:
           name: windows-library
+      - name: Download Windows libraries
+        uses: actions/download-artifact@v5
+        with:
+          name: windows-library
+      - name: Download static Android libraries
+        uses: actions/download-artifact@v5
+        with:
+          name: android-static
 
       - name: List libraries
         run: ls -al

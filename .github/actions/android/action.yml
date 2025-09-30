@@ -14,10 +14,10 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - uses: actions/setup-java@v4
+    - uses: actions/setup-java@v5
       with:
         distribution: "temurin"
-        java-version: "17"
+        java-version: "25"
 
     - name: Validate Gradle wrapper
       uses: gradle/actions/wrapper-validation@v4
@@ -39,7 +39,7 @@ runs:
       if: ${{ inputs.sign-publication == '1' }}
       run: |
         cd android
-        ./gradlew build zipPublication -PgpgKey=${{ inputs.gpg-key }} -PgpgPassword=${{ inputs.gpg-password }}
+        ./gradlew build zipPublication  -PgpgKey=${{ inputs.gpg-key }} -PgpgPassword=${{ inputs.gpg-password }}
         ls -lh build/outputs/aar
         find build/repository
 
@@ -60,3 +60,19 @@ runs:
         compression-level: 0 # We're uploading a zip, no need to compress again
         path: android/build/distributions/powersync_android.zip
         if-no-files-found: error
+
+    - name: Copy static libraries
+      shell: bash
+      run: |
+        cp target/aarch64-linux-android/release/libpowersync.a libpowersync_aarch64.android.a
+        cp target/armv7-linux-androideabi/release/libpowersync.a libpowersync_armv7.android.a
+        cp target/i686-linux-android/release/libpowersync.a libpowersync_x86.android.a
+        cp target/x86_64-linux-android/release/libpowersync.a libpowersync_x64.android.a
+
+    - name: Upload static libraries
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-static
+        retention-days: 14
+        path: |
+          *.a
