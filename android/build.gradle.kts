@@ -1,4 +1,3 @@
-import org.gradle.tooling.BuildException
 import java.util.Base64
 import java.util.Properties
 import kotlin.io.path.Path
@@ -54,30 +53,48 @@ fun ndkPath(): String {
     error("Expected an NDK 28 or later installation in $ndks")
 }
 
-val buildRust = tasks.register<Exec>("buildRust") {
+fun Exec.rustCompilation(project: String, output: String? = null) {
     group = "build"
     environment("ANDROID_NDK_HOME", ndkPath())
 
     workingDir("..")
-    commandLine(
-        "cargo",
-        "ndk",
-        "-t",
-        "armeabi-v7a",
-        "-t",
-        "arm64-v8a",
-        "-t",
-        "x86",
-        "-t",
-        "x86_64",
-        "-o",
-        "./android/build/intermediates/jniLibs",
-        "build",
-        "--release",
-        "-Zbuild-std",
-        "-p",
-        "powersync_loadable"
-    )
+    val args = buildList<String> {
+        this += listOf(
+            "cargo",
+            "ndk",
+            "-t",
+            "armeabi-v7a",
+            "-t",
+            "arm64-v8a",
+            "-t",
+            "x86",
+            "-t",
+            "x86_64",
+        )
+
+        output?.let {
+            this += "-o"
+            this += it
+        }
+
+        this += listOf(
+            "build",
+            "--release",
+            "-Zbuild-std",
+            "-p",
+            project,
+        )
+    }
+
+    commandLine(args)
+}
+
+val buildRust = tasks.register<Exec>("buildRust") {
+    rustCompilation("powersync_loadable", "./android/build/intermediates/jniLibs")
+}
+
+val buildRustStatic = tasks.register<Exec>("buildRustStatic") {
+    rustCompilation("powersync_static")
 }
 
 val prefabAar = tasks.register<Zip>("prefabAar") {
@@ -199,5 +216,5 @@ val zipPublication by tasks.registering(Zip::class) {
 }
 
 tasks.named("build") {
-    dependsOn(prefabAar)
+    dependsOn(prefabAar, buildRustStatic)
 }
