@@ -1,10 +1,19 @@
 #!/bin/sh
 set -e
 
+function compile() {
+  local triple=$1
+  local suffix=$2
+
+  cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target $triple
+  cargo build -p powersync_static -Z build-std=panic_abort,core,alloc --release --target $triple
+
+  mv "target/$triple/release/libpowersync.dylib" "libpowersync_$suffix.dylib"
+  mv "target/$triple/release/libpowersync.a" "libpowersync_$suffix.macos.a"
+}
+
 if [ "$1" = "x64" ]; then
-  cargo build -Z build-std=panic_abort,core,alloc -p powersync_loadable --release --target x86_64-apple-darwin
-  mv "target/x86_64-apple-darwin/release/libpowersync.dylib" "libpowersync_x64.dylib"
+  compile x86_64-apple-darwin x64
 else
-  cargo build -Z build-std=panic_abort,core,alloc -p powersync_loadable --release --target aarch64-apple-darwin
-  mv "target/aarch64-apple-darwin/release/libpowersync.dylib" "libpowersync_aarch64.dylib"
+  compile aarch64-apple-darwin aarch64
 fi
