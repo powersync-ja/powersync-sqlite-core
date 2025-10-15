@@ -65,8 +65,8 @@ String resolvePowerSyncLibrary() {
     return p.join(
         prefix,
         switch (Abi.current()) {
-          Abi.macosX64 => 'libpowersync_x64.dylib',
-          Abi.macosArm64 => 'libpowersync_aarch64.dylib',
+          Abi.macosX64 => 'libpowersync_x64.macos.dylib',
+          Abi.macosArm64 => 'libpowersync_aarch64.macos.dylib',
           Abi.windowsX64 => 'powersync_x64.dll',
           Abi.windowsArm64 => 'powersync_aarch64.dll',
           Abi.linuxX64 => 'libpowersync_x64.so',
