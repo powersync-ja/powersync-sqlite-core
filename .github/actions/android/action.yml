@@ -65,9 +65,16 @@ runs:
       shell: bash
       run: |
         cp target/aarch64-linux-android/release/libpowersync.a libpowersync_aarch64.android.a
+        cp target/aarch64-linux-android/release/libpowersync.so libpowersync_aarch64.android.so
+
         cp target/armv7-linux-androideabi/release/libpowersync.a libpowersync_armv7.android.a
+        cp target/armv7-linux-androideabi/release/libpowersync.so libpowersync_armv7.android.so
+
         cp target/i686-linux-android/release/libpowersync.a libpowersync_x86.android.a
+        cp target/i686-linux-android/release/libpowersync.so libpowersync_x86.android.so
+
         cp target/x86_64-linux-android/release/libpowersync.a libpowersync_x64.android.a
+        cp target/x86_64-linux-android/release/libpowersync.so libpowersync_x64.android.so
 
     - name: Upload static libraries
       uses: actions/upload-artifact@v4
@@ -76,3 +83,4 @@ runs:
         retention-days: 14
         path: |
           *.a
+          *.so

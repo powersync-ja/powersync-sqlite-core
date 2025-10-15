@@ -69,10 +69,10 @@ String resolvePowerSyncLibrary() {
           Abi.macosArm64 => 'libpowersync_aarch64.macos.dylib',
           Abi.windowsX64 => 'powersync_x64.dll',
           Abi.windowsArm64 => 'powersync_aarch64.dll',
-          Abi.linuxX64 => 'libpowersync_x64.so',
-          Abi.linuxArm => 'libpowersync_armv7.so',
-          Abi.linuxArm64 => 'libpowersync_aarch64.so',
-          Abi.linuxRiscv64 => 'libpowersync_riscv64gc.so',
+          Abi.linuxX64 => 'libpowersync_x64.linux.so',
+          Abi.linuxArm => 'libpowersync_armv7.linux.so',
+          Abi.linuxArm64 => 'libpowersync_aarch64.linux.so',
+          Abi.linuxRiscv64 => 'libpowersync_riscv64gc.linux.so',
           _ => throw ArgumentError(
               'Unsupported processor architecture "${Abi.current()}". '
               'Please open an issue on GitHub to request it.',

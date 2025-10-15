@@ -8,7 +8,7 @@ function compile() {
   cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target $triple
   cargo build -p powersync_static -Z build-std=panic_abort,core,alloc --release --target $triple
 
-  mv "target/$triple/release/libpowersync.so" "libpowersync_$suffix.so"
+  mv "target/$triple/release/libpowersync.so" "libpowersync_$suffix.linux.so"
   mv "target/$triple/release/libpowersync.a" "libpowersync_$suffix.linux.a"
 }
 
