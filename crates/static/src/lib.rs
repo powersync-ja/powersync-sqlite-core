@@ -24,8 +24,3 @@ static ALLOCATOR: SQLite3Allocator = SQLite3Allocator {};
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     core::intrinsics::abort()
 }
-
-#[cfg(not(target_family = "wasm"))]
-#[cfg(not(test))]
-#[lang = "eh_personality"]
-extern "C" fn eh_personality() {}
