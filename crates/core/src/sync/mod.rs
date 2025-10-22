@@ -1,4 +1,4 @@
-use alloc::sync::Arc;
+use alloc::rc::Rc;
 use sqlite_nostd::{self as sqlite, ResultCode};
 
 mod bucket_priority;
@@ -17,6 +17,6 @@ pub use checksum::Checksum;
 
 use crate::state::DatabaseState;
 
-pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     interface::register(db, state)
 }

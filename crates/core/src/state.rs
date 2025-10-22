@@ -1,35 +1,49 @@
 use core::{
-    cell::RefCell,
+    cell::{Ref, RefCell},
     ffi::{c_int, c_void},
     sync::atomic::{AtomicBool, Ordering},
 };
 
 use alloc::{
     collections::btree_set::BTreeSet,
+    rc::Rc,
     string::{String, ToString},
-    sync::Arc,
 };
 use sqlite::{Connection, ResultCode};
 use sqlite_nostd::{self as sqlite, Context};
+
+use crate::schema::Schema;
 
 /// State that is shared for a SQLite database connection after the core extension has been
 /// registered on it.
 ///
 /// `init_extension` allocates an instance of this in an `Arc` that is shared as user-data for
 /// functions/vtabs that need access to it.
+#[derive(Default)]
 pub struct DatabaseState {
     pub is_in_sync_local: AtomicBool,
+    schema: RefCell<Option<Schema>>,
     pending_updates: RefCell<BTreeSet<String>>,
     commited_updates: RefCell<BTreeSet<String>>,
 }
 
 impl DatabaseState {
     pub fn new() -> Self {
-        DatabaseState {
-            is_in_sync_local: AtomicBool::new(false),
-            pending_updates: Default::default(),
-            commited_updates: Default::default(),
+        Self::default()
+    }
+
+    pub fn view_schema(&self) -> Option<Ref<Schema>> {
+        let schema_ref = self.schema.borrow();
+        if schema_ref.is_none() {
+            None
+        } else {
+            Some(Ref::map(schema_ref, |f| f.as_ref().unwrap()))
         }
+    }
+
+    /// Marks the given [Schema] as being the one currently installed to the database.
+    pub fn set_schema(&self, schema: Schema) {
+        self.schema.replace(Some(schema));
     }
 
     pub fn sync_local_guard<'a>(&'a self) -> impl Drop + use<'a> {
@@ -72,19 +86,48 @@ impl DatabaseState {
         core::mem::replace(&mut *committed, Default::default())
     }
 
-    pub unsafe extern "C" fn destroy_arc(ptr: *mut c_void) {
-        drop(unsafe { Arc::from_raw(ptr.cast::<DatabaseState>()) });
+    /// ## Safety
+    ///
+    /// This is only safe to call when an `Rc<DatabaseState>` has been installed as the `user_data`
+    /// pointer when registering the function.
+    pub unsafe fn from_context(context: &impl Context) -> &Self {
+        let user_data = context.user_data().cast::<DatabaseState>();
+        unsafe {
+            // Safety: user_data() points to valid DatabaseState reference alive as long as the
+            // context.
+            &*user_data
+        }
+    }
+
+    /// ## Safety
+    ///
+    /// This is only save to call if `context` is the user-data pointer of a function or virtual
+    /// table created with an `Rc<DatabaesState`, and only from within a call where that pointer is
+    /// guaranteed to still be valid.
+    pub unsafe fn clone_from(context: *const c_void) -> Rc<Self> {
+        let context = context as *mut DatabaseState;
+
+        unsafe {
+            // Safety: It's a valid pointer that has at least one reference (owned by SQLite while
+            // the function is registered).
+            Rc::increment_strong_count(context);
+            // Safety: Moves the clone we've just created into Rust.
+            Rc::from_raw(context)
+        }
+    }
+
+    pub unsafe extern "C" fn destroy_rc(ptr: *mut c_void) {
+        drop(unsafe { Rc::from_raw(ptr.cast::<DatabaseState>()) });
     }
 }
 
-pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     unsafe extern "C" fn func(
         ctx: *mut sqlite::context,
         _argc: c_int,
         _argv: *mut *mut sqlite::value,
     ) {
-        let data = ctx.user_data().cast::<DatabaseState>();
-        let data = unsafe { data.as_ref() }.unwrap();
+        let data = unsafe { DatabaseState::from_context(&ctx) };
 
         ctx.result_int(if data.is_in_sync_local.load(Ordering::Relaxed) {
             1
@@ -97,11 +140,11 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
         "powersync_in_sync_operation",
         0,
         0,
-        Some(Arc::into_raw(state) as *mut c_void),
+        Some(Rc::into_raw(state) as *mut c_void),
         Some(func),
         None,
         None,
-        Some(DatabaseState::destroy_arc),
+        Some(DatabaseState::destroy_rc),
     )?;
     Ok(())
 }

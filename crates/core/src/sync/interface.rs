@@ -13,7 +13,6 @@ use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
-use alloc::sync::Arc;
 use alloc::{string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
 use sqlite::{ResultCode, Value};
@@ -191,7 +190,7 @@ struct SqlController {
     client: SyncClient,
 }
 
-pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     extern "C" fn control(
         ctx: *mut sqlite::context,
         argc: c_int,

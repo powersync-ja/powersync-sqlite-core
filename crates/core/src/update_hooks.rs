@@ -4,7 +4,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use alloc::{boxed::Box, sync::Arc};
+use alloc::{boxed::Box, rc::Rc};
 use sqlite_nostd::{
     self as sqlite, Connection, Context, ResultCode, Value, bindings::SQLITE_RESULT_SUBTYPE,
 };
@@ -20,7 +20,7 @@ use crate::{constants::SUBTYPE_JSON, error::PowerSyncError, state::DatabaseState
 ///
 /// The update hooks don't have to be uninstalled manually, that happens when the connection is
 /// closed and the function is unregistered.
-pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     let state = Box::new(HookState {
         has_registered_hooks: AtomicBool::new(false),
         db,
@@ -43,7 +43,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(
 struct HookState {
     has_registered_hooks: AtomicBool,
     db: *mut sqlite::sqlite3,
-    state: Arc<DatabaseState>,
+    state: Rc<DatabaseState>,
 }
 
 extern "C" fn destroy_function(ctx: *mut c_void) {
@@ -88,7 +88,7 @@ extern "C" fn powersync_update_hooks(
                 db_state,
                 db.update_hook(
                     Some(update_hook_impl),
-                    Arc::into_raw(db_state.clone()) as *mut c_void,
+                    Rc::into_raw(db_state.clone()) as *mut c_void,
                 ),
             );
             check_previous(
@@ -96,7 +96,7 @@ extern "C" fn powersync_update_hooks(
                 db_state,
                 db.commit_hook(
                     Some(commit_hook_impl),
-                    Arc::into_raw(db_state.clone()) as *mut c_void,
+                    Rc::into_raw(db_state.clone()) as *mut c_void,
                 ),
             );
             check_previous(
@@ -104,7 +104,7 @@ extern "C" fn powersync_update_hooks(
                 db_state,
                 db.rollback_hook(
                     Some(rollback_hook_impl),
-                    Arc::into_raw(db_state.clone()) as *mut c_void,
+                    Rc::into_raw(db_state.clone()) as *mut c_void,
                 ),
             );
             state.has_registered_hooks.store(true, Ordering::Relaxed);
@@ -155,8 +155,8 @@ unsafe extern "C" fn rollback_hook_impl(ctx: *mut c_void) {
     state.track_rollback();
 }
 
-fn check_previous(desc: &'static str, expected: &Arc<DatabaseState>, previous: *const c_void) {
-    let expected = Arc::as_ptr(expected);
+fn check_previous(desc: &'static str, expected: &Rc<DatabaseState>, previous: *const c_void) {
+    let expected = Rc::as_ptr(expected);
 
     assert!(
         previous.is_null() || previous == expected.cast(),
@@ -165,7 +165,7 @@ fn check_previous(desc: &'static str, expected: &Arc<DatabaseState>, previous: *
     if !previous.is_null() {
         // The hook callbacks own an Arc<DatabaseState> that needs to be dropped now.
         unsafe {
-            Arc::decrement_strong_count(previous);
+            Rc::decrement_strong_count(previous);
         }
     }
 }
