@@ -24,6 +24,8 @@ pub struct RawTable {
     pub name: String,
     pub put: PendingStatement,
     pub delete: PendingStatement,
+    #[serde(default)]
+    pub clear: Option<String>,
 }
 
 impl Table {

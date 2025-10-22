@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use alloc::sync::Arc;
+use alloc::rc::Rc;
 use const_format::formatcp;
 use core::ffi::{CStr, c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
@@ -42,7 +42,7 @@ struct VirtualTable {
     db: *mut sqlite::sqlite3,
     current_tx: Option<ActiveCrudTransaction>,
     is_simple: bool,
-    state: Arc<DatabaseState>,
+    state: Rc<DatabaseState>,
 }
 
 struct ActiveCrudTransaction {
@@ -301,14 +301,7 @@ extern "C" fn connect(
                 pModule: core::ptr::null(),
                 zErrMsg: core::ptr::null_mut(),
             },
-            state: {
-                // Increase refcount - we can't use from_raw alone because we don't own the aux
-                // data (connect could be called multiple times).
-                let state = Arc::from_raw(aux as *mut DatabaseState);
-                let clone = state.clone();
-                core::mem::forget(state);
-                clone
-            },
+            state: DatabaseState::clone_from(aux),
             db,
             current_tx: None,
             is_simple,
@@ -321,7 +314,7 @@ extern "C" fn connect(
 
 extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
     unsafe {
-        drop(Box::from_raw(vtab));
+        drop(Box::from_raw(vtab as *mut VirtualTable));
     }
     ResultCode::OK as c_int
 }
@@ -400,20 +393,20 @@ static MODULE: sqlite_nostd::module = sqlite_nostd::module {
     xIntegrity: None,
 };
 
-pub fn register(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     sqlite::convert_rc(sqlite::create_module_v2(
         db,
         SIMPLE_NAME.as_ptr(),
         &MODULE,
-        Arc::into_raw(state.clone()) as *mut c_void,
-        Some(DatabaseState::destroy_arc),
+        Rc::into_raw(state.clone()) as *mut c_void,
+        Some(DatabaseState::destroy_rc),
     ))?;
     sqlite::convert_rc(sqlite::create_module_v2(
         db,
         MANUAL_NAME.as_ptr(),
         &MODULE,
-        Arc::into_raw(state) as *mut c_void,
-        Some(DatabaseState::destroy_arc),
+        Rc::into_raw(state) as *mut c_void,
+        Some(DatabaseState::destroy_rc),
     ))?;
 
     Ok(())

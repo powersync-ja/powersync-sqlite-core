@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
@@ -19,17 +17,14 @@ void main() {
     });
 
     test('contain inner SQLite descriptions', () {
+      // Create a wrong migrations table for the core extension to trip over.
+      db.execute('CREATE TABLE IF NOT EXISTS ps_migration(foo TEXT)');
+
       expect(
-        () => db.execute('SELECT powersync_replace_schema(?)', [
-          json.encode({
-            // This fails because we're trying to json_extract from the string
-            // in e.g. update_tables.
-            'tables': ['invalid entry'],
-          })
-        ]),
+        () => db.execute('SELECT powersync_init()'),
         throwsA(isSqliteException(
           1,
-          'powersync_replace_schema: internal SQLite call returned ERROR: malformed JSON',
+          'powersync_init: internal SQLite call returned ERROR: no such column: id',
         )),
       );
     });

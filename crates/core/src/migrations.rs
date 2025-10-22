@@ -27,8 +27,9 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
     )?;
 
     // language=SQLite
-    let current_version_stmt =
-        local_db.prepare_v2("SELECT ifnull(max(id), 0) as version FROM ps_migration")?;
+    let current_version_stmt = local_db
+        .prepare_v2("SELECT ifnull(max(id), 0) as version FROM ps_migration")
+        .into_db_result(local_db)?;
     let rc = current_version_stmt.step()?;
     if rc != ResultCode::ROW {
         return Err(PowerSyncError::unknown_internal());

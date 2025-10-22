@@ -1068,6 +1068,7 @@ END;
             'sql': 'DELETE FROM users WHERE id = ?',
             'params': ['Id'],
           },
+          'clear': 'DELETE FROM users;',
         }
       ],
       'tables': [],
@@ -1223,6 +1224,16 @@ END;
 
       pushCheckpointComplete();
       expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+    });
+
+    test('clear', () {
+      setupRawTables();
+      db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+      db.execute('INSERT INTO users (id, name) VALUES (uuid(), ?)', ['test']);
+
+      expect(db.select('SELECT * FROM users'), hasLength(1));
+      db.execute('SELECT powersync_clear(0)');
+      expect(db.select('SELECT * FROM users'), hasLength(0));
     });
   });
 }

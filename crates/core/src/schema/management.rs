@@ -1,5 +1,6 @@
 extern crate alloc;
 
+use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::{format, vec};
@@ -11,6 +12,7 @@ use sqlite_nostd::Context;
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::ext::ExtendedDatabase;
+use crate::state::DatabaseState;
 use crate::util::{quote_identifier, quote_json_path};
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
@@ -138,10 +140,8 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
     Ok(())
 }
 
-fn update_indexes(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
+fn update_indexes(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerSyncError> {
     let mut statements: Vec<String> = alloc::vec![];
-    let schema =
-        serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::as_argument_error)?;
     let mut expected_index_names: Vec<String> = vec![];
 
     {
@@ -298,15 +298,20 @@ fn powersync_replace_schema_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let schema = args[0].text();
+    let state = unsafe { DatabaseState::from_context(&ctx) };
+    let parsed_schema =
+        serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::as_argument_error)?;
+
     let db = ctx.db_handle();
 
     // language=SQLite
     db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
 
     update_tables(db, schema)?;
-    update_indexes(db, schema)?;
+    update_indexes(db, &parsed_schema)?;
     update_views(db, schema)?;
 
+    state.set_schema(parsed_schema);
     Ok(String::from(""))
 }
 
@@ -317,16 +322,16 @@ create_sqlite_text_fn!(
     "powersync_replace_schema"
 );
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     db.create_function_v2(
         "powersync_replace_schema",
         1,
         sqlite::UTF8,
-        None,
+        Some(Rc::into_raw(state) as *mut _),
         Some(powersync_replace_schema),
         None,
         None,
-        None,
+        Some(DatabaseState::destroy_rc),
     )?;
 
     Ok(())

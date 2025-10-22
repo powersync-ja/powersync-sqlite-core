@@ -1,9 +1,10 @@
 extern crate alloc;
 
 use alloc::format;
+use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::ffi::c_int;
+use core::ffi::{c_int, c_void};
 
 use sqlite::{ResultCode, Value};
 use sqlite_nostd as sqlite;
@@ -11,6 +12,7 @@ use sqlite_nostd::{Connection, Context};
 
 use crate::error::PowerSyncError;
 use crate::migrations::{LATEST_VERSION, powersync_migrate};
+use crate::state::DatabaseState;
 use crate::util::quote_identifier;
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
@@ -149,6 +151,7 @@ fn powersync_clear_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
+    let state = unsafe { DatabaseState::from_context(&ctx) };
 
     let flags = PowerSyncClearFlags(args[0].int());
 
@@ -201,6 +204,20 @@ DELETE FROM {table};",
             table = quoted
         );
         local_db.exec_safe(&delete_sql)?;
+    }
+
+    if let Some(schema) = state.view_schema() {
+        for raw_table in &schema.raw_tables {
+            if let Some(stmt) = &raw_table.clear {
+                local_db.exec_safe(&stmt).map_err(|e| {
+                    PowerSyncError::from_sqlite(
+                        local_db,
+                        e,
+                        format!("Clearing raw table {}", raw_table.name),
+                    )
+                })?;
+            }
+        }
     }
 
     Ok(String::from(""))
@@ -294,7 +311,7 @@ fn setup_internal_views(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
     Ok(())
 }
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     // This entire module is just making it easier to edit sqlite_master using queries.
     // The primary interfaces exposed are:
     // 1. Individual views:
@@ -368,11 +385,11 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         "powersync_clear",
         1,
         sqlite::UTF8,
-        None,
+        Some(Rc::into_raw(state) as *mut c_void),
         Some(powersync_clear),
         None,
         None,
-        None,
+        Some(DatabaseState::destroy_rc),
     )?;
 
     db.create_function_v2(

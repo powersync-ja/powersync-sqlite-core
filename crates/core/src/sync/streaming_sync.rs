@@ -13,7 +13,6 @@ use alloc::{
     format,
     rc::Rc,
     string::{String, ToString},
-    sync::Arc,
     vec::Vec,
 };
 use futures_lite::FutureExt;
@@ -52,13 +51,13 @@ use super::{
 /// initialized.
 pub struct SyncClient {
     db: *mut sqlite::sqlite3,
-    db_state: Arc<DatabaseState>,
+    db_state: Rc<DatabaseState>,
     /// The current [ClientState] (essentially an optional [StreamingSyncIteration]).
     state: ClientState,
 }
 
 impl SyncClient {
-    pub fn new(db: *mut sqlite::sqlite3, state: Arc<DatabaseState>) -> Self {
+    pub fn new(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Self {
         Self {
             db,
             db_state: state,
@@ -146,7 +145,7 @@ impl SyncIterationHandle {
     fn new(
         db: *mut sqlite::sqlite3,
         options: StartSyncStream,
-        state: Arc<DatabaseState>,
+        state: Rc<DatabaseState>,
     ) -> Result<Self, PowerSyncError> {
         let runner = StreamingSyncIteration {
             db,
@@ -225,7 +224,7 @@ impl<'a> ActiveEvent<'a> {
 
 struct StreamingSyncIteration {
     db: *mut sqlite::sqlite3,
-    state: Arc<DatabaseState>,
+    state: Rc<DatabaseState>,
     adapter: StorageAdapter,
     options: StartSyncStream,
     status: SyncStatusContainer,
