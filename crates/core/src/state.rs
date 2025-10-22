@@ -1,7 +1,6 @@
 use core::{
-    cell::{Ref, RefCell},
+    cell::{Cell, Ref, RefCell},
     ffi::{c_int, c_void},
-    sync::atomic::{AtomicBool, Ordering},
 };
 
 use alloc::{
@@ -21,7 +20,7 @@ use crate::schema::Schema;
 /// functions/vtabs that need access to it.
 #[derive(Default)]
 pub struct DatabaseState {
-    pub is_in_sync_local: AtomicBool,
+    pub is_in_sync_local: Cell<bool>,
     schema: RefCell<Option<Schema>>,
     pending_updates: RefCell<BTreeSet<String>>,
     commited_updates: RefCell<BTreeSet<String>>,
@@ -47,15 +46,15 @@ impl DatabaseState {
     }
 
     pub fn sync_local_guard<'a>(&'a self) -> impl Drop + use<'a> {
-        self.is_in_sync_local
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-            .expect("should not be syncing already");
+        if self.is_in_sync_local.replace(true) {
+            panic!("Should ont be syncing already");
+        }
 
         struct ClearOnDrop<'a>(&'a DatabaseState);
 
         impl Drop for ClearOnDrop<'_> {
             fn drop(&mut self) {
-                self.0.is_in_sync_local.store(false, Ordering::Release);
+                self.0.is_in_sync_local.set(false);
             }
         }
 
@@ -129,11 +128,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
     ) {
         let data = unsafe { DatabaseState::from_context(&ctx) };
 
-        ctx.result_int(if data.is_in_sync_local.load(Ordering::Relaxed) {
-            1
-        } else {
-            0
-        });
+        ctx.result_int(if data.is_in_sync_local.get() { 1 } else { 0 });
     }
 
     db.create_function_v2(
