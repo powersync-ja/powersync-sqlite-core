@@ -1,7 +1,7 @@
 use core::{
+    cell::Cell,
     ffi::{CStr, c_char, c_int, c_void},
     ptr::null_mut,
-    sync::atomic::{AtomicBool, Ordering},
 };
 
 use alloc::{boxed::Box, rc::Rc};
@@ -22,7 +22,7 @@ use crate::{constants::SUBTYPE_JSON, error::PowerSyncError, state::DatabaseState
 /// closed and the function is unregistered.
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     let state = Box::new(HookState {
-        has_registered_hooks: AtomicBool::new(false),
+        has_registered_hooks: Cell::new(false),
         db,
         state,
     });
@@ -41,7 +41,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
 }
 
 struct HookState {
-    has_registered_hooks: AtomicBool,
+    has_registered_hooks: Cell<bool>,
     db: *mut sqlite::sqlite3,
     state: Rc<DatabaseState>,
 }
@@ -49,7 +49,7 @@ struct HookState {
 extern "C" fn destroy_function(ctx: *mut c_void) {
     let state = unsafe { Box::from_raw(ctx as *mut HookState) };
 
-    if state.has_registered_hooks.load(Ordering::Relaxed) {
+    if state.has_registered_hooks.get() {
         check_previous(
             "update",
             &state.state,
@@ -107,7 +107,7 @@ extern "C" fn powersync_update_hooks(
                     Rc::into_raw(db_state.clone()) as *mut c_void,
                 ),
             );
-            state.has_registered_hooks.store(true, Ordering::Relaxed);
+            state.has_registered_hooks.set(true);
         }
         "get" => {
             let state = unsafe { user_data.as_ref().unwrap_unchecked() };

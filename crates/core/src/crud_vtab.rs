@@ -4,7 +4,6 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use const_format::formatcp;
 use core::ffi::{CStr, c_char, c_int, c_void};
-use core::sync::atomic::Ordering;
 use serde::Serialize;
 use serde_json::value::RawValue;
 
@@ -88,7 +87,7 @@ impl VirtualTable {
             .ok_or_else(|| PowerSyncError::state_error("Not in tx"))?;
         let db = self.db;
 
-        if self.state.is_in_sync_local.load(Ordering::Relaxed) {
+        if self.state.is_in_sync_local.get() {
             // Don't collect CRUD writes while we're syncing the local database - writes made here
             // aren't writes we should upload.
             // This normally doesn't happen because we insert directly into the data tables, but
