@@ -162,6 +162,7 @@ fn powersync_clear_impl(
         local_db.exec_safe("DELETE FROM ps_oplog; DELETE FROM ps_buckets")?;
     } else {
         local_db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0")?;
+        local_db.exec_safe("DELETE FROM ps_buckets WHERE name = '$local'")?;
     }
 
     // language=SQLite
