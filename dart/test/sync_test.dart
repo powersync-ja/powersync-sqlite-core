@@ -376,12 +376,16 @@ void _syncTests<T>({
     pushSyncData('a', '1', 'row-0', 'PUT', {'col': 'hi'});
     pushCheckpointComplete();
 
-    expect(db.select('SELECT * FROM items'), hasLength(1));
+    db.execute(
+        'insert into items (id, col) values (uuid(), ?)', ['local item']);
+    expect(db.select('SELECT * FROM items'), hasLength(2));
 
     // Soft clear
     db.execute('SELECT powersync_clear(2)');
     db.select('select powersync_replace_schema(?)', [json.encode(testSchema)]);
     expect(db.select('SELECT * FROM items'), hasLength(0));
+    expect(
+        db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"), isEmpty);
 
     final request = invokeControl('start', null);
     expect(
