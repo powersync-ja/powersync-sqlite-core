@@ -25,7 +25,7 @@ TARGETS=(
   aarch64-apple-tvos-sim
   x86_64-apple-tvos
 )
-VERSION=0.4.7
+VERSION=0.4.8
 
 function generatePlist() {
   min_os_version=0
