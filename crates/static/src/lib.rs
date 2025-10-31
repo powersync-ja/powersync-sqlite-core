@@ -1,8 +1,6 @@
 #![no_std]
-#![feature(vec_into_raw_parts)]
-#![feature(core_intrinsics)]
 #![allow(internal_features)]
-#![feature(lang_items)]
+#![cfg_attr(feature = "nightly", feature(core_intrinsics))]
 
 extern crate alloc;
 
@@ -20,7 +18,16 @@ static ALLOCATOR: SQLite3Allocator = SQLite3Allocator {};
 
 // Custom Panic handler for WASM and other no_std builds
 #[cfg(not(test))]
-#[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    core::intrinsics::abort()
+mod panic_handler {
+    #[cfg(feature = "nightly")]
+    #[panic_handler]
+    fn panic(_info: &core::panic::PanicInfo) -> ! {
+        core::intrinsics::abort()
+    }
+
+    #[cfg(not(feature = "nightly"))]
+    #[panic_handler]
+    fn panic(_info: &core::panic::PanicInfo) -> ! {
+        loop {}
+    }
 }

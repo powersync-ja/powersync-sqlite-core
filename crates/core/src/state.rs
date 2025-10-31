@@ -63,7 +63,12 @@ impl DatabaseState {
 
     pub fn track_update(&self, tbl: &str) {
         let mut set = self.pending_updates.borrow_mut();
-        set.get_or_insert_with(tbl, str::to_string);
+        // TODO: Use set.get_or_insert_with(tbl, str::to_string) after btree_set_entry is stable,
+        // https://github.com/rust-lang/rust/issues/133549
+        if !set.contains(tbl) {
+            // Check whether the set contains the entry first to avoid an unconditional allocation.
+            set.insert(tbl.to_string());
+        }
     }
 
     pub fn track_rollback(&self) {
