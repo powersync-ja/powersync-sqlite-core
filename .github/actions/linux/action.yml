@@ -7,7 +7,7 @@ runs:
     - name: Install Rust Nightly
       uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: nightly-2025-04-15
+        toolchain: nightly-2025-10-31
         components: rust-src
         targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,i686-unknown-linux-gnu,riscv64gc-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
     
