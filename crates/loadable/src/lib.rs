@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(internal_features)]
 #![cfg_attr(feature = "nightly", feature(core_intrinsics))]
+#![cfg_attr(feature = "nightly", feature(lang_items))]
 
 extern crate alloc;
 
@@ -29,5 +30,19 @@ mod panic_handler {
     #[panic_handler]
     fn panic(_info: &core::panic::PanicInfo) -> ! {
         loop {}
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[cfg(feature = "nightly")]
+    #[lang = "eh_personality"]
+    extern "C" fn eh_personality() {}
+
+    #[cfg(not(target_family = "wasm"))]
+    #[cfg(not(feature = "nightly"))]
+    #[unsafe(no_mangle)]
+    extern "C" fn rust_eh_personality() {
+        // This avoids missing _rust_eh_personality symbol errors.
+        // This isn't used for any builds we distribute, but it's heplful to compile the library
+        // with stable Rust, which we do for testing.
     }
 }

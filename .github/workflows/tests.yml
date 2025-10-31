@@ -186,6 +186,40 @@ jobs:
           CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test -P skip_slow
           CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test -P skip_slow
 
+  build_stable_rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dart-lang/setup-dart@v1
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        id: sqlite_build
+        with:
+          path: dart/.dart_tool/sqlite3/
+          key: ${{ matrix.os }}-${{ hashFiles('dart/tool/') }}
+
+      - name: Setup Dart tests
+        working-directory: dart
+        run: |
+          dart pub get
+          dart run tool/download_sqlite3.dart
+          dart analyze
+
+      - name: Compile with stable Rust
+        run: |
+          cargo +stable build -p powersync_loadable
+
+      - name: Dart tests with stable Rust
+        working-directory: dart
+        run: |
+          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.so dart test
+          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.so dart test
+
   valgrind:
     name: Testing with Valgrind on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
