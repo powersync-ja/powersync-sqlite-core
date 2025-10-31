@@ -1,4 +1,4 @@
-use core::{assert_matches::debug_assert_matches, fmt::Display};
+use core::fmt::Display;
 
 use alloc::{rc::Rc, string::ToString, vec::Vec};
 use serde::Serialize;
@@ -140,7 +140,7 @@ impl StorageAdapter {
         Ok(())
     }
 
-    pub fn step_progress(&self) -> Result<Option<PersistedBucketProgress>, ResultCode> {
+    pub fn step_progress(&'_ self) -> Result<Option<PersistedBucketProgress<'_>>, ResultCode> {
         if self.progress_stmt.step()? == ResultCode::ROW {
             let bucket = self.progress_stmt.column_text(0)?;
             let count_at_last = self.progress_stmt.column_int64(1);
@@ -181,7 +181,7 @@ impl StorageAdapter {
             .into_db_result(self.db)?;
         bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
         let res = bucket_statement.step()?;
-        debug_assert_matches!(res, ResultCode::ROW);
+        debug_assert_eq!(res, ResultCode::ROW);
 
         let bucket_id = bucket_statement.column_int64(0);
         let last_applied_op = bucket_statement.column_int64(1);

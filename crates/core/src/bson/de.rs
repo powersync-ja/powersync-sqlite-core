@@ -1,5 +1,3 @@
-use core::assert_matches::debug_assert_matches;
-
 use serde::{
     de::{
         self, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, VariantAccess,
@@ -250,7 +248,10 @@ impl<'de> SeqAccess<'de> for Deserializer<'de> {
         }
 
         // Skip name
-        debug_assert_matches!(self.position, DeserializerPosition::BeforeName { .. });
+        assert!(matches!(
+            self.position,
+            DeserializerPosition::BeforeName { .. }
+        ));
         self.prepare_to_read(true)?;
 
         // And deserialize value!

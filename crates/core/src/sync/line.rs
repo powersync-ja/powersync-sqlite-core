@@ -325,27 +325,26 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
 
 #[cfg(test)]
 mod tests {
-    use core::assert_matches::assert_matches;
 
     use alloc::string::ToString;
 
     use super::*;
 
-    fn deserialize(source: &str) -> SyncLine {
+    fn deserialize(source: &'_ str) -> SyncLine<'_> {
         serde_json::from_str(source).expect("Should have deserialized")
     }
 
     #[test]
     fn parse_token_expires_in() {
-        assert_matches!(
+        assert!(matches!(
             deserialize(r#"{"token_expires_in": 123}"#),
             SyncLine::KeepAlive(TokenExpiresIn(123))
-        );
+        ));
     }
 
     #[test]
     fn parse_checkpoint() {
-        assert_matches!(
+        assert!(matches!(
             deserialize(r#"{"checkpoint": {"last_op_id": "10", "buckets": []}}"#),
             SyncLine::Checkpoint(Checkpoint {
                 last_op_id: 10,
@@ -353,7 +352,7 @@ mod tests {
                 buckets: _,
                 streams: _,
             })
-        );
+        ));
 
         let SyncLine::Checkpoint(checkpoint) = deserialize(
             r#"{"checkpoint": {"last_op_id": "10", "buckets": [{"bucket": "a", "checksum": 10}]}}"#,
@@ -379,7 +378,7 @@ mod tests {
         assert_eq!(bucket.checksum, 10u32.into());
         assert_eq!(bucket.priority, Some(BucketPriority { number: 1 }));
 
-        assert_matches!(
+        assert!(matches!(
             deserialize(
                 r#"{"checkpoint":{"write_checkpoint":null,"last_op_id":"1","buckets":[{"bucket":"a","checksum":0,"priority":3,"count":1}]}}"#
             ),
@@ -389,7 +388,7 @@ mod tests {
                 buckets: _,
                 streams: _,
             })
-        );
+        ));
     }
 
     #[test]
@@ -426,23 +425,23 @@ mod tests {
 
     #[test]
     fn parse_checkpoint_complete() {
-        assert_matches!(
+        assert!(matches!(
             deserialize(r#"{"checkpoint_complete": {"last_op_id": "10"}}"#),
             SyncLine::CheckpointComplete(CheckpointComplete {
                 // last_op_id: 10
             })
-        );
+        ));
     }
 
     #[test]
     fn parse_checkpoint_partially_complete() {
-        assert_matches!(
+        assert!(matches!(
             deserialize(r#"{"partial_checkpoint_complete": {"last_op_id": "10", "priority": 1}}"#),
             SyncLine::CheckpointPartiallyComplete(CheckpointPartiallyComplete {
                 //last_op_id: 10,
                 priority: BucketPriority { number: 1 }
             })
-        );
+        ));
     }
 
     #[test]
@@ -463,7 +462,7 @@ mod tests {
         assert_eq!(data.data.len(), 1);
         let entry = &data.data[0];
         assert_eq!(entry.checksum, 10u32.into());
-        assert_matches!(
+        assert!(matches!(
             &data.data[0],
             OplogEntry {
                 checksum: _,
@@ -474,13 +473,19 @@ mod tests {
                 subkey: None,
                 data: _,
             }
-        );
+        ));
     }
 
     #[test]
     fn parse_unknown() {
-        assert_matches!(deserialize("{\"foo\": {}}"), SyncLine::UnknownSyncLine);
-        assert_matches!(deserialize("{\"foo\": 123}"), SyncLine::UnknownSyncLine);
+        assert!(matches!(
+            deserialize("{\"foo\": {}}"),
+            SyncLine::UnknownSyncLine
+        ));
+        assert!(matches!(
+            deserialize("{\"foo\": 123}"),
+            SyncLine::UnknownSyncLine
+        ));
     }
 
     #[test]

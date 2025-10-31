@@ -31,7 +31,7 @@ impl DatabaseState {
         Self::default()
     }
 
-    pub fn view_schema(&self) -> Option<Ref<Schema>> {
+    pub fn view_schema(&'_ self) -> Option<Ref<'_, Schema>> {
         let schema_ref = self.schema.borrow();
         if schema_ref.is_none() {
             None

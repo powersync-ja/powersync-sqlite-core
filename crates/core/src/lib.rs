@@ -1,7 +1,5 @@
 #![no_std]
 #![feature(btree_set_entry)]
-#![feature(assert_matches)]
-#![feature(strict_overflow_ops)]
 #![feature(vec_into_raw_parts)]
 
 extern crate alloc;

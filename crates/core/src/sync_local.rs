@@ -483,16 +483,16 @@ impl<'a> RawTableWithCachedStatements<'a> {
     }
 
     fn put_statement(
-        &mut self,
+        &'_ mut self,
         db: *mut sqlite::sqlite3,
-    ) -> Result<&PreparedPendingStatement, PowerSyncError> {
+    ) -> Result<&'_ PreparedPendingStatement<'_>, PowerSyncError> {
         Self::prepare_lazily(db, &mut self.cached_put, &self.definition.put)
     }
 
     fn delete_statement(
-        &mut self,
+        &'_ mut self,
         db: *mut sqlite::sqlite3,
-    ) -> Result<&PreparedPendingStatement, PowerSyncError> {
+    ) -> Result<&'_ PreparedPendingStatement<'_>, PowerSyncError> {
         Self::prepare_lazily(db, &mut self.cached_delete, &self.definition.delete)
     }
 }
