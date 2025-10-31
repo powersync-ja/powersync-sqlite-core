@@ -102,9 +102,6 @@ jobs:
 
       - name: Build
         run: |
-          # Need a debug build for the dart tests
-          cargo build -p powersync_loadable
-
           cargo build -p powersync_loadable --release
           cargo build -p powersync_core --release --features static
           cargo build -p powersync_sqlite --release
@@ -201,6 +198,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2025-10-31
+          components: rust-src
 
       - name: Install valgrind
         run: sudo apt update && sudo apt install -y valgrind
