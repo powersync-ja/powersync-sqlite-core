@@ -83,6 +83,8 @@ fun Exec.rustCompilation(project: String, output: String? = null) {
             "-Zbuild-std",
             "-p",
             project,
+            "--features",
+            "nightly"
         )
     }
 

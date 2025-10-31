@@ -3,7 +3,7 @@
 # It was to fix this error when loading the loadable extension:
 #   undefined symbol: _Unwind_Resume
 # Now, we instead build using:
-#   -Z build-std=panic_immediate_abort,core,alloc
+#   -Z build-std=panic_abort,core,alloc
 # This fixes the same issue. We still keep -lgcc_eh,
 # to support manual builds without -Z build-std.
 
@@ -16,13 +16,6 @@
 # With -Z build-std, with -lgcc_eh:
 #   173K, loading works
 # Conclusion: -lgcc_eh has no effect when using -Z build-std.
-
-[profile.release]
-panic = "immediate-abort"
-
-[unstable]
-panic-immediate-abort = true
-build-std = ["core", "alloc", "panic_abort"]
 
 [target.'cfg(target_os = "linux")']
 rustflags = [

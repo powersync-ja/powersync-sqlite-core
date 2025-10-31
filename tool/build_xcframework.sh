@@ -188,9 +188,10 @@ for TARGET in ${TARGETS[@]}; do
       -p powersync_static \
       --profile release_apple \
       --features nightly \
-      --target $TARGET
+      --target $TARGET \
+      -Zbuild-std
   else
-    cargo build -p powersync_loadable --profile release_apple --features nightly --target $TARGET
+    cargo build -p powersync_loadable --profile release_apple --features nightly --target $TARGET -Zbuild-std
   fi
 done
 
