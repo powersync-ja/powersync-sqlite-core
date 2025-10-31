@@ -21,4 +21,5 @@ default-features = false
 features = []
 
 [features]
+nightly = []
 default = ["powersync_core/loadable_extension", "sqlite_nostd/loadable_extension", "powersync_core/getrandom"]

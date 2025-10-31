@@ -1,7 +1,4 @@
 #![no_std]
-#![feature(btree_set_entry)]
-#![feature(vec_into_raw_parts)]
-
 extern crate alloc;
 
 use core::ffi::{c_char, c_int};

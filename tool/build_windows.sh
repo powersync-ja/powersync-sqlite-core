@@ -5,8 +5,8 @@ function compile() {
   local triple=$1
   local suffix=$2
 
-  cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --release --target $triple
-  cargo build -p powersync_static -Z build-std=panic_abort,core,alloc --release --target $triple
+  cargo build -p powersync_loadable --features nightly,default --release --target $triple
+  cargo build -p powersync_static --features nightly,default --release --target $triple
 
   mv "target/$triple/release/powersync.dll" "powersync_$suffix.dll"
   mv "target/$triple/release/powersync.lib" "powersync_$suffix.lib"

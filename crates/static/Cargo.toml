@@ -21,4 +21,5 @@ default-features = false
 features = []
 
 [features]
+nightly = []
 default = ["powersync_core/static", "powersync_core/omit_load_extension", "sqlite_nostd/omit_load_extension"]

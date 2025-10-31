@@ -427,8 +427,11 @@ impl ActiveStreamSubscription {
     }
 
     pub fn mark_associated_with_bucket(&mut self, bucket: &OwnedBucketChecksum) {
-        self.associated_buckets
-            .get_or_insert_with(&bucket.bucket, |key| key.clone());
+        // This avoids an allocation if the bucket is already tracked. TODO: Use get_or_insert_with
+        // after https://github.com/rust-lang/rust/issues/133549 is stable.
+        if !self.associated_buckets.contains(&bucket.bucket) {
+            self.associated_buckets.insert(bucket.bucket.clone());
+        }
 
         self.priority = Some(match self.priority {
             None => bucket.priority,

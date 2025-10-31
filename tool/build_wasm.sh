@@ -9,8 +9,7 @@ RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2" \
     -p powersync_loadable \
     --profile wasm \
     --no-default-features \
-    --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension" \
-    -Z build-std=panic_abort,core,alloc \
+    --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension nightly" \
     --target wasm32-unknown-emscripten
 
 cp "target/wasm32-unknown-emscripten/wasm/powersync.wasm" "libpowersync.wasm"
@@ -22,8 +21,7 @@ RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2 -C link-arg=-sASYNCIFY=1 -C link-arg=-sJS
     -p powersync_loadable \
     --profile wasm_asyncify \
     --no-default-features \
-    --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension" \
-    -Z build-std=panic_abort,core,alloc \
+    --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension nightly" \
     --target wasm32-unknown-emscripten
 
 cp "target/wasm32-unknown-emscripten/wasm_asyncify/powersync.wasm" "libpowersync-async.wasm"
@@ -37,8 +35,7 @@ cargo build \
   -p powersync_loadable \
   --profile wasm \
   --no-default-features \
-  --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension" \
-  -Z build-std=panic_abort,core,alloc \
+  --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension nightly" \
   --target wasm32-wasip1
 
 cp "target/wasm32-wasip1/wasm/libpowersync.a" "libpowersync-wasm.a"
