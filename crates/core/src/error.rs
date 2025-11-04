@@ -6,7 +6,7 @@ use alloc::{
     string::{String, ToString},
 };
 use num_traits::FromPrimitive;
-use sqlite_nostd::{self as sqlite, Connection, Context, ResultCode, context, sqlite3};
+use powersync_sqlite_nostd::{self as sqlite, Connection, Context, ResultCode, context, sqlite3};
 use thiserror::Error;
 
 use crate::{

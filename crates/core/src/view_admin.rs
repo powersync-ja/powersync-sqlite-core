@@ -6,9 +6,9 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::ffi::{c_int, c_void};
 
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::{Connection, Context};
 use sqlite::{ResultCode, Value};
-use sqlite_nostd as sqlite;
-use sqlite_nostd::{Connection, Context};
 
 use crate::error::PowerSyncError;
 use crate::migrations::{LATEST_VERSION, powersync_migrate};

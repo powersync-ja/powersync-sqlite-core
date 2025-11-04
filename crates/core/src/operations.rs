@@ -3,9 +3,9 @@ use crate::sync::line::DataLine;
 use crate::sync::operations::insert_bucket_operations;
 use crate::sync::storage_adapter::StorageAdapter;
 use alloc::vec::Vec;
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::{Connection, ResultCode};
 use serde::Deserialize;
-use sqlite_nostd as sqlite;
-use sqlite_nostd::{Connection, ResultCode};
 
 use crate::ext::SafeManagedStmt;
 

@@ -4,8 +4,8 @@ extern crate alloc;
 use core::ffi::{c_char, c_int};
 
 use alloc::{ffi::CString, format, rc::Rc};
+use powersync_sqlite_nostd as sqlite;
 use sqlite::ResultCode;
-use sqlite_nostd as sqlite;
 
 use crate::{error::PowerSyncError, state::DatabaseState};
 

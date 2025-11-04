@@ -7,9 +7,9 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 use serde::Serialize;
 use serde_json::value::RawValue;
 
+use powersync_sqlite_nostd::ManagedStmt;
+use powersync_sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite::{Connection, ResultCode, Value};
-use sqlite_nostd::ManagedStmt;
-use sqlite_nostd::{self as sqlite, ColumnType};
 
 use crate::error::PowerSyncError;
 use crate::ext::SafeManagedStmt;
@@ -101,7 +101,7 @@ impl VirtualTable {
                 // Columns are (data TEXT, options INT HIDDEN)
                 let data = args[0].text();
                 let flags = match args[1].value_type() {
-                    sqlite_nostd::ColumnType::Null => TableInfoFlags::default(),
+                    sqlite::ColumnType::Null => TableInfoFlags::default(),
                     _ => TableInfoFlags(args[1].int() as u32),
                 };
 
@@ -114,7 +114,7 @@ impl VirtualTable {
             CrudTransactionMode::Simple(simple) => {
                 // Columns are (op TEXT, id TEXT, type TEXT, data TEXT, old_values TEXT, metadata TEXT, options INT HIDDEN)
                 let flags = match args[6].value_type() {
-                    sqlite_nostd::ColumnType::Null => TableInfoFlags::default(),
+                    sqlite::ColumnType::Null => TableInfoFlags::default(),
                     _ => TableInfoFlags(args[6].int() as u32),
                 };
                 let op = args[0].text();
@@ -364,7 +364,7 @@ extern "C" fn update(
 // Insert-only virtual table.
 // The primary functionality here is in begin, update, commit and rollback.
 // connect and disconnect configures the table and allocates the required resources.
-static MODULE: sqlite_nostd::module = sqlite_nostd::module {
+static MODULE: sqlite::module = sqlite::module {
     iVersion: 0,
     xCreate: None,
     xConnect: Some(connect),

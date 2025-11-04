@@ -7,8 +7,8 @@ use alloc::vec::Vec;
 use core::ffi::c_int;
 use core::fmt::Write;
 
+use powersync_sqlite_nostd::{self as sqlite};
 use sqlite::{Connection, Context, ResultCode, Value};
-use sqlite_nostd::{self as sqlite};
 
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;

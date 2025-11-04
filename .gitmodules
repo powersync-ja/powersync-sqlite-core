@@ -1,3 +1,0 @@
-[submodule "sqlite-rs-embedded"]
-	path = sqlite-rs-embedded
-	url = https://github.com/powersync-ja/sqlite-rs-embedded.git

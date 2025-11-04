@@ -1,5 +1,5 @@
 use alloc::rc::Rc;
-use sqlite_nostd::{self as sqlite, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite, ResultCode};
 
 mod bucket_priority;
 pub mod checkpoint;

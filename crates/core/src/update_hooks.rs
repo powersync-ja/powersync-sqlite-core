@@ -5,7 +5,7 @@ use core::{
 };
 
 use alloc::{boxed::Box, rc::Rc};
-use sqlite_nostd::{
+use powersync_sqlite_nostd::{
     self as sqlite, Connection, Context, ResultCode, Value, bindings::SQLITE_RESULT_SUBTYPE,
 };
 

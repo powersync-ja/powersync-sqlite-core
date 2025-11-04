@@ -1,9 +1,9 @@
 use core::time::Duration;
 
 use alloc::{boxed::Box, string::String};
+use powersync_sqlite_nostd::{self as sqlite, Connection};
 use serde::Deserialize;
 use serde_with::{DurationSeconds, serde_as};
-use sqlite_nostd::{self as sqlite, Connection};
 
 use crate::{
     error::{PSResult, PowerSyncError},

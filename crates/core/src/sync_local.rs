@@ -8,8 +8,8 @@ use crate::error::{PSResult, PowerSyncError};
 use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
-use sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
-use sqlite_nostd::{ColumnType, Connection, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
+use powersync_sqlite_nostd::{ColumnType, Connection, ResultCode};
 
 use crate::ext::SafeManagedStmt;
 use crate::util::quote_internal_name;

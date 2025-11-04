@@ -12,12 +12,12 @@ use core::{
     hash::{BuildHasher, Hash},
     ops::AddAssign,
 };
+use powersync_sqlite_nostd::ResultCode;
 use rustc_hash::FxBuildHasher;
 use serde::{
     Serialize,
     ser::{SerializeMap, SerializeStruct},
 };
-use sqlite_nostd::ResultCode;
 
 use crate::{
     sync::{

@@ -34,7 +34,7 @@ use crate::{
         sync_status::{ActiveStreamSubscription, Timestamp},
     },
 };
-use sqlite_nostd::{self as sqlite, Connection, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
 use super::{
     interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},

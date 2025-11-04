@@ -1,8 +1,8 @@
 use core::fmt::Display;
 
 use alloc::{rc::Rc, string::ToString, vec::Vec};
+use powersync_sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 use serde::Serialize;
-use sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
 
 use crate::{
     error::{PSResult, PowerSyncError},
@@ -379,12 +379,8 @@ impl StorageAdapter {
         )?;
 
         for stream in streams {
-            stmt.bind_text(1, &stream.name, sqlite_nostd::Destructor::STATIC)?;
-            stmt.bind_text(
-                2,
-                &stream.serialized_params(),
-                sqlite_nostd::Destructor::STATIC,
-            )?;
+            stmt.bind_text(1, &stream.name, sqlite::Destructor::STATIC)?;
+            stmt.bind_text(2, &stream.serialized_params(), sqlite::Destructor::STATIC)?;
             stmt.exec()?;
         }
 
@@ -411,7 +407,7 @@ impl StorageAdapter {
     ) -> Result<LocallyTrackedSubscription, PowerSyncError> {
         debug_assert!(stream.is_default);
         let stmt = self.db.prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, active, is_default) VALUES (?, TRUE, TRUE) RETURNING *;")?;
-        stmt.bind_text(1, &stream.name, sqlite_nostd::Destructor::STATIC)?;
+        stmt.bind_text(1, &stream.name, sqlite::Destructor::STATIC)?;
 
         if stmt.step()? == ResultCode::ROW {
             Self::read_stream_subscription(&stmt)
@@ -464,7 +460,7 @@ impl StorageAdapter {
         let stmt = self
             .db
             .prepare_v2("SELECT target_op FROM ps_buckets WHERE name = ?")?;
-        stmt.bind_text(1, "$local", sqlite_nostd::Destructor::STATIC)?;
+        stmt.bind_text(1, "$local", sqlite::Destructor::STATIC)?;
 
         Ok(if stmt.step()? == ResultCode::ROW {
             let target_op = stmt.column_int64(0);
