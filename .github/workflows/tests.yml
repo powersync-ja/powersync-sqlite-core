@@ -109,7 +109,7 @@ jobs:
 
       - name: Test powersync
         run: |
-          cargo test -p powersync_core --features loadable_extension
+          cargo test -p powersync_core
 
       - name: Check shell
         run: |
@@ -247,4 +247,4 @@ jobs:
 
       - name: Test Core
         run: |
-          cargo valgrind test -p powersync_core --features loadable_extension
+          cargo valgrind test -p powersync_core

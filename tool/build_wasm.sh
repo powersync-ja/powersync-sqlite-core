@@ -9,7 +9,7 @@ RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2" \
     -p powersync_loadable \
     --profile wasm \
     --no-default-features \
-    --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension nightly" \
+    --features "static nightly" \
     -Z build-std=panic_abort,core,alloc \
     --target wasm32-unknown-emscripten
 
@@ -22,7 +22,7 @@ RUSTFLAGS="-C link-arg=-sSIDE_MODULE=2 -C link-arg=-sASYNCIFY=1 -C link-arg=-sJS
     -p powersync_loadable \
     --profile wasm_asyncify \
     --no-default-features \
-    --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension nightly" \
+    --features "static nightly" \
     -Z build-std=panic_abort,core,alloc \
     --target wasm32-unknown-emscripten
 
@@ -37,7 +37,7 @@ cargo build \
   -p powersync_loadable \
   --profile wasm \
   --no-default-features \
-  --features "powersync_core/static powersync_core/omit_load_extension sqlite_nostd/omit_load_extension nightly" \
+  --features "static nightly" \
   -Z build-std=panic_abort,core,alloc \
   --target wasm32-wasip1
 

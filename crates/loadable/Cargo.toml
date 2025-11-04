@@ -22,4 +22,5 @@ features = []
 
 [features]
 nightly = []
+static = ["powersync_core/static"]
 default = ["powersync_core/getrandom"]
