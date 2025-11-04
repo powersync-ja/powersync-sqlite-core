@@ -3,9 +3,9 @@ extern crate alloc;
 use alloc::string::ToString;
 use core::ffi::{c_char, c_int};
 
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::VTab;
 use sqlite::ResultCode;
-use sqlite_nostd as sqlite;
-use sqlite_nostd::VTab;
 
 use crate::error::PowerSyncError;
 

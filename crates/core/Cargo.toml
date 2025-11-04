@@ -13,7 +13,7 @@ name = "powersync_core"
 crate-type = ["rlib"]
 
 [dependencies]
-sqlite_nostd = { workspace=true }
+powersync_sqlite_nostd = { version = "=0.4.8", path = "../sqlite_nostd" }
 bytes = { version = "1.4", default-features = false }
 num-traits = { version = "0.2.15", default-features = false }
 num-derive = "0.3"
@@ -37,9 +37,7 @@ features = []
 [features]
 default = ["getrandom"]
 
-loadable_extension = ["sqlite_nostd/loadable_extension"]
-static = ["sqlite_nostd/static"]
-omit_load_extension = ["sqlite_nostd/omit_load_extension"]
+static = ["powersync_sqlite_nostd/static"]
 # Enable to use the getrandom crate instead of sqlite3_randomness
 # Enable for Windows builds; do not enable for WASM
 getrandom = ["uuid/v4"]

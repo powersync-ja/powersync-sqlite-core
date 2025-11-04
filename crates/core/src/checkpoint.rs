@@ -4,11 +4,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::c_int;
 
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::{Connection, Context, Value};
 use serde::Serialize;
 use serde_json as json;
 use sqlite::ResultCode;
-use sqlite_nostd as sqlite;
-use sqlite_nostd::{Connection, Context, Value};
 
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;

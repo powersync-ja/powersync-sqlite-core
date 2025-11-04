@@ -1,8 +1,8 @@
 use alloc::format;
 use alloc::string::String;
 use num_traits::Zero;
-use sqlite_nostd::Connection;
-use sqlite_nostd::{self as sqlite, ResultCode};
+use powersync_sqlite_nostd::Connection;
+use powersync_sqlite_nostd::{self as sqlite, ResultCode};
 
 use crate::{
     error::{PSResult, PowerSyncError},

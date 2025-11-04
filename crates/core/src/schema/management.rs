@@ -6,9 +6,9 @@ use alloc::vec::Vec;
 use alloc::{format, vec};
 use core::ffi::c_int;
 
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::Context;
 use sqlite::{Connection, ResultCode, Value};
-use sqlite_nostd as sqlite;
-use sqlite_nostd::Context;
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::ext::ExtendedDatabase;

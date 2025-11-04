@@ -4,9 +4,9 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::{Connection, Context};
 use sqlite::ResultCode;
-use sqlite_nostd as sqlite;
-use sqlite_nostd::{Connection, Context};
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::fix_data::apply_v035_fix;

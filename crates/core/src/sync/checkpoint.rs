@@ -3,7 +3,7 @@ use num_traits::Zero;
 
 use crate::sync::line::{BucketChecksum, BucketSubscriptionReason};
 use crate::sync::{BucketPriority, Checksum};
-use sqlite_nostd::{self as sqlite, Connection, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite, Connection, ResultCode};
 
 /// A structure cloned from [BucketChecksum]s with an owned bucket name instead of one borrowed from
 /// a sync line.
@@ -61,7 +61,7 @@ FROM ps_buckets WHERE name = ?;",
     let mut failures: Vec<ChecksumMismatch> = Vec::new();
     for bucket in buckets {
         if bucket.is_in_priority(priority) {
-            statement.bind_text(1, &bucket.bucket, sqlite_nostd::Destructor::STATIC)?;
+            statement.bind_text(1, &bucket.bucket, sqlite::Destructor::STATIC)?;
 
             let (add_checksum, oplog_checksum) = match statement.step()? {
                 ResultCode::ROW => {

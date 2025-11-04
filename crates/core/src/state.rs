@@ -8,8 +8,8 @@ use alloc::{
     rc::Rc,
     string::{String, ToString},
 };
+use powersync_sqlite_nostd::{self as sqlite, Context};
 use sqlite::{Connection, ResultCode};
-use sqlite_nostd::{self as sqlite, Context};
 
 use crate::schema::Schema;
 

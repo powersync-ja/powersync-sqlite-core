@@ -6,10 +6,10 @@ use core::ffi::c_int;
 use crate::constants::SUBTYPE_JSON;
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::bindings::{SQLITE_RESULT_SUBTYPE, SQLITE_SUBTYPE};
+use powersync_sqlite_nostd::{Connection, Context, Value};
 use sqlite::ResultCode;
-use sqlite_nostd as sqlite;
-use sqlite_nostd::bindings::{SQLITE_RESULT_SUBTYPE, SQLITE_SUBTYPE};
-use sqlite_nostd::{Connection, Context, Value};
 
 extern "C" fn powersync_strip_subtype(
     ctx: *mut sqlite::context,

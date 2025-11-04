@@ -5,8 +5,8 @@ use alloc::string::String;
 
 use crate::create_sqlite_optional_text_fn;
 use crate::error::{PSResult, PowerSyncError};
-use sqlite_nostd::{self as sqlite, ColumnType, Value};
-use sqlite_nostd::{Connection, Context, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite, ColumnType, Value};
+use powersync_sqlite_nostd::{Connection, Context, ResultCode};
 
 use crate::ext::SafeManagedStmt;
 use crate::util::quote_identifier;

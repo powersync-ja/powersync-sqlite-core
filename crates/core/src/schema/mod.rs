@@ -2,9 +2,9 @@ mod management;
 mod table_info;
 
 use alloc::{rc::Rc, vec::Vec};
+use powersync_sqlite_nostd as sqlite;
 use serde::Deserialize;
 use sqlite::ResultCode;
-use sqlite_nostd as sqlite;
 pub use table_info::{
     Column, DiffIncludeOld, PendingStatement, PendingStatementValue, RawTable, Table,
     TableInfoFlags,

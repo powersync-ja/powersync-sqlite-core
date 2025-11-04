@@ -13,7 +13,7 @@ name = "powersync"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-sqlite_nostd = { workspace=true }
+powersync_sqlite_nostd = { path = "../sqlite_nostd" }
 
 [dependencies.powersync_core]
 path = "../core"
@@ -22,4 +22,4 @@ features = []
 
 [features]
 nightly = []
-default = ["powersync_core/loadable_extension", "sqlite_nostd/loadable_extension", "powersync_core/getrandom"]
+default = ["powersync_core/getrandom"]

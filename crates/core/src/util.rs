@@ -7,9 +7,9 @@ use alloc::string::{String, ToString};
 use core::{cmp::Ordering, hash::Hash};
 
 use alloc::boxed::Box;
+use powersync_sqlite_nostd::{ColumnType, ManagedStmt};
 use serde::Serialize;
 use serde_json::value::RawValue;
-use sqlite_nostd::{ColumnType, ManagedStmt};
 
 use crate::error::PowerSyncError;
 #[cfg(not(feature = "getrandom"))]

@@ -4,8 +4,8 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use core::ffi::{c_char, c_int, c_void};
 
+use powersync_sqlite_nostd as sqlite;
 use sqlite::{Connection, ResultCode, Value};
-use sqlite_nostd as sqlite;
 
 use crate::operations::{
     clear_remove_ops, delete_bucket, delete_pending_buckets, insert_operation,
@@ -115,7 +115,7 @@ extern "C" fn update(
 // Insert-only virtual table.
 // The primary functionality here is in update.
 // connect and disconnect configures the table and allocates the required resources.
-static MODULE: sqlite_nostd::module = sqlite_nostd::module {
+static MODULE: sqlite::module = sqlite::module {
     iVersion: 0,
     xCreate: None,
     xConnect: Some(connect),

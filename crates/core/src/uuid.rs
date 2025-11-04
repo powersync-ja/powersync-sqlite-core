@@ -4,9 +4,9 @@ use alloc::string::String;
 use alloc::string::ToString;
 use core::ffi::c_int;
 
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::{Connection, Context};
 use sqlite::ResultCode;
-use sqlite_nostd as sqlite;
-use sqlite_nostd::{Connection, Context};
 
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;

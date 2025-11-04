@@ -3,15 +3,15 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use core::ffi::c_int;
 
+use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::{Connection, Context, Value};
 use sqlite::ResultCode;
-use sqlite_nostd as sqlite;
-use sqlite_nostd::{Connection, Context, Value};
 
 use crate::constants::SUBTYPE_JSON;
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
+use powersync_sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 use serde_json as json;
-use sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 
 fn powersync_diff_impl(
     ctx: *mut sqlite::context,
