@@ -7,7 +7,8 @@ First, bump the version number in these places:
 3. android/build.gradle.kts
 4. android/src/prefab/prefab.json
 5. tool/build_xcframework.sh - `VERSION` variable.
-6. `cargo build` to update Cargo.lock
+6. Version dependency from `crates/core` to `crates/sqlite_nostd`.
+7. `cargo build` to update Cargo.lock
 
 Next, open a PR with these changes and wait for it to get approved and merged.
 
