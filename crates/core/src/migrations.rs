@@ -10,6 +10,7 @@ use sqlite::ResultCode;
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::fix_data::apply_v035_fix;
+use crate::schema::inspection::ExistingView;
 use crate::sync::BucketPriority;
 
 pub const LATEST_VERSION: i32 = 11;
@@ -188,15 +189,19 @@ VALUES(4,
         // Down migrations are less common, so we're okay about that breaking
         // in some cases.
 
+        for mut view in ExistingView::list(local_db)? {
+            view.delete_trigger_sql = String::default();
+            view.update_trigger_sql = String::default();
+            view.insert_trigger_sql = String::default();
+
+            // This drops everything, but immediately re-creates the CREATE VIEW statement.
+            view.create(local_db)?;
+        }
+
         // language=SQLite
         local_db
           .exec_safe(
               "\
-UPDATE powersync_views SET
-        delete_trigger_sql = '',
-        update_trigger_sql = '',
-        insert_trigger_sql = '';
-
 ALTER TABLE ps_buckets RENAME TO ps_buckets_old;
 ALTER TABLE ps_oplog RENAME TO ps_oplog_old;
 

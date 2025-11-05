@@ -1,3 +1,4 @@
+pub mod inspection;
 mod management;
 mod table_info;
 

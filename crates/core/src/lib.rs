@@ -64,7 +64,6 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
     let state = Rc::new(DatabaseState::new());
 
     crate::version::register(db)?;
-    crate::views::register(db)?;
     crate::uuid::register(db)?;
     crate::diff::register(db)?;
     crate::fix_data::register(db)?;
