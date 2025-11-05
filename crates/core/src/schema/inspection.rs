@@ -79,3 +79,53 @@ SELECT
         Ok(())
     }
 }
+
+pub struct ExistingTable {
+    pub name: String,
+    pub internal_name: String,
+    pub local_only: bool,
+}
+
+impl ExistingTable {
+    pub fn list(db: *mut sqlite::sqlite3) -> Result<Vec<Self>, PowerSyncError> {
+        let mut results = vec![];
+        let stmt = db
+            .prepare_v2(
+                "
+SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'ps_data_*';
+        ",
+            )
+            .into_db_result(db)?;
+
+        while stmt.step()? == ResultCode::ROW {
+            let internal_name = stmt.column_text(0)?;
+            let Some((name, local_only)) = Self::external_name(internal_name) else {
+                continue;
+            };
+
+            results.push(ExistingTable {
+                internal_name: internal_name.to_owned(),
+                name: name.to_owned(),
+                local_only: local_only,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Extracts the public name from a `ps_data__` or a `ps_data_local__` table.
+    ///
+    /// Also returns whether the name is from a local table.
+    pub fn external_name(name: &str) -> Option<(&str, bool)> {
+        const LOCAL_PREFIX: &str = "ps_data_local__";
+        const NORMAL_PREFIX: &str = "ps_data__";
+
+        if name.starts_with(LOCAL_PREFIX) {
+            Some((&name[LOCAL_PREFIX.len()..], true))
+        } else if name.starts_with(NORMAL_PREFIX) {
+            Some((&name[NORMAL_PREFIX.len()..], false))
+        } else {
+            None
+        }
+    }
+}

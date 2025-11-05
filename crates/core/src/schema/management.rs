@@ -14,7 +14,7 @@ use sqlite::{Connection, ResultCode, Value};
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::ext::ExtendedDatabase;
-use crate::schema::inspection::ExistingView;
+use crate::schema::inspection::{ExistingTable, ExistingView};
 use crate::state::DatabaseState;
 use crate::util::{quote_identifier, quote_json_path};
 use crate::views::{
@@ -25,112 +25,62 @@ use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 use super::Schema;
 
-fn update_tables(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
+fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerSyncError> {
+    let existing_tables = ExistingTable::list(db)?;
+    let mut existing_tables = {
+        let mut map = BTreeMap::new();
+        for table in &existing_tables {
+            map.insert(&*table.name, table);
+        }
+        map
+    };
+
     {
-        // In a block so that the statement is finalized before dropping tables
-        // language=SQLite
-        let statement = db
-            .prepare_v2(
-                "\
-SELECT
-        json_extract(json_each.value, '$.name') as name,
-        powersync_internal_table_name(json_each.value) as internal_name,
-        ifnull(json_extract(json_each.value, '$.local_only'), 0) as local_only
-      FROM json_each(json_extract(?, '$.tables'))
-        WHERE name NOT IN (SELECT name FROM powersync_tables)",
-            )
-            .into_db_result(db)?;
-        statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
+        // In a block so that all statements are finalized before dropping tables.
+        for table in &schema.tables {
+            if let Some(_) = existing_tables.remove(&*table.name) {
+                // This table exists already, nothing to do.
+                // TODO: Handle switch between local only <-> regular tables?
+            } else {
+                // New table.
+                let quoted_internal_name = quote_identifier(&table.internal_name());
 
-        while statement.step().into_db_result(db)? == ResultCode::ROW {
-            let name = statement.column_text(0)?;
-            let internal_name = statement.column_text(1)?;
-            let local_only = statement.column_int(2) != 0;
+                db.exec_safe(&format!(
+                    "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
+                    quoted_internal_name
+                ))
+                .into_db_result(db)?;
 
-            db.exec_safe(&format!(
-                "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
-                quote_identifier(internal_name)
-            ))
-            .into_db_result(db)?;
-
-            if !local_only {
-                // MOVE data if any
-                db.exec_text(
-                    &format!(
-                        "INSERT INTO {:}(id, data)
+                if !table.local_only() {
+                    // MOVE data if any
+                    db.exec_text(
+                        &format!(
+                            "INSERT INTO {:}(id, data)
     SELECT id, data
     FROM ps_untyped
     WHERE type = ?",
-                        quote_identifier(internal_name)
-                    ),
-                    name,
-                )
-                .into_db_result(db)?;
+                            quoted_internal_name
+                        ),
+                        &table.name,
+                    )
+                    .into_db_result(db)?;
 
-                // language=SQLite
-                db.exec_text(
-                    "DELETE
-    FROM ps_untyped
-    WHERE type = ?",
-                    name,
-                )?;
-            }
-
-            if !local_only {
-                // MOVE data if any
-                db.exec_text(
-                    &format!(
-                        "INSERT INTO {:}(id, data)
-    SELECT id, data
-    FROM ps_untyped
-    WHERE type = ?",
-                        quote_identifier(internal_name)
-                    ),
-                    name,
-                )
-                .into_db_result(db)?;
-
-                // language=SQLite
-                db.exec_text(
-                    "DELETE
-    FROM ps_untyped
-    WHERE type = ?",
-                    name,
-                )?;
+                    // language=SQLite
+                    db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
+                }
             }
         }
-    }
 
-    let mut tables_to_drop: Vec<String> = alloc::vec![];
-
-    {
-        // In a block so that the statement is finalized before dropping tables
-        // language=SQLite
-        let statement = db
-            .prepare_v2(
-                "\
-SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
-    SELECT json_extract(json_each.value, '$.name')
-    FROM json_each(json_extract(?, '$.tables'))
-  )",
-            )
-            .into_db_result(db)?;
-        statement.bind_text(1, schema, sqlite::Destructor::STATIC)?;
-
-        while statement.step()? == ResultCode::ROW {
-            let name = statement.column_text(0)?;
-            let internal_name = statement.column_text(1)?;
-            let local_only = statement.column_int(2) != 0;
-
-            tables_to_drop.push(String::from(internal_name));
-
-            if !local_only {
+        // Remaining tables need to be dropped. But first, we want to move their contents to
+        // ps_untyped.
+        for remaining in existing_tables.values() {
+            if !remaining.local_only {
                 db.exec_text(
                     &format!(
                         "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}",
-                        quote_identifier(internal_name)
+                        quote_identifier(&remaining.internal_name)
                     ),
-                    name,
+                    &remaining.name,
                 )
                 .into_db_result(db)?;
             }
@@ -139,8 +89,8 @@ SELECT name, internal_name, local_only FROM powersync_tables WHERE name NOT IN (
 
     // We cannot have any open queries on sqlite_master at the point that we drop tables, otherwise
     // we get "table is locked" errors.
-    for internal_name in tables_to_drop {
-        let q = format!("DROP TABLE {:}", quote_identifier(&internal_name));
+    for remaining in existing_tables.values() {
+        let q = format!("DROP TABLE {:}", quote_identifier(&remaining.internal_name));
         db.exec_safe(&q).into_db_result(db)?;
     }
 
@@ -305,7 +255,7 @@ fn powersync_replace_schema_impl(
     // language=SQLite
     db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
 
-    update_tables(db, schema)?;
+    update_tables(db, &parsed_schema)?;
     update_indexes(db, &parsed_schema)?;
     update_views(db, &parsed_schema)?;
 

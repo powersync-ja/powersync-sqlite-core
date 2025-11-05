@@ -35,8 +35,12 @@ impl Table {
             .unwrap_or(self.name.as_str())
     }
 
+    pub fn local_only(&self) -> bool {
+        self.flags.local_only()
+    }
+
     pub fn internal_name(&self) -> String {
-        if self.flags.local_only() {
+        if self.local_only() {
             format!("ps_data_local__{:}", self.name)
         } else {
             format!("ps_data__{:}", self.name)
