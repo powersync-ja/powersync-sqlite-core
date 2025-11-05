@@ -31,72 +31,10 @@ extern "C" fn powersync_drop_view(
     }
 }
 
-fn powersync_internal_table_name_impl(
-    ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, ResultCode> {
-    // schema: JSON
-    let schema = args[0].text();
-
-    let local_db = ctx.db_handle();
-
-    // language=SQLite
-    let stmt1 = local_db.prepare_v2(
-        "SELECT json_extract(?1, '$.name') as name, ifnull(json_extract(?1, '$.local_only'), 0)",
-    )?;
-    stmt1.bind_text(1, schema, sqlite::Destructor::STATIC)?;
-
-    let step_result = stmt1.step()?;
-    if step_result != ResultCode::ROW {
-        return Err(ResultCode::SCHEMA);
-    }
-
-    let name = stmt1.column_text(0)?;
-    let local_only = stmt1.column_int(1) != 0;
-
-    if local_only {
-        Ok(format!("ps_data_local__{:}", name))
-    } else {
-        Ok(format!("ps_data__{:}", name))
-    }
-}
-
-create_sqlite_text_fn!(
-    powersync_internal_table_name,
-    powersync_internal_table_name_impl,
-    "powersync_internal_table_name"
-);
-
-fn powersync_external_table_name_impl(
-    _ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
-    // name: full table name
-    let name = args[0].text();
-
-    if name.starts_with("ps_data_local__") {
-        Ok(String::from(&name[15..]))
-    } else if name.starts_with("ps_data__") {
-        Ok(String::from(&name[9..]))
-    } else {
-        Err(PowerSyncError::argument_error("not a powersync table"))
-    }
-}
-
-create_sqlite_text_fn!(
-    powersync_external_table_name,
-    powersync_external_table_name_impl,
-    "powersync_external_table_name"
-);
-
 fn powersync_init_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let local_db = ctx.db_handle();
-
-    setup_internal_views(local_db)?;
-
     powersync_migrate(ctx, LATEST_VERSION)?;
 
     Ok(String::from(""))
@@ -219,25 +157,6 @@ impl PowerSyncClearFlags {
 create_auto_tx_function!(powersync_clear_tx, powersync_clear_impl);
 create_sqlite_text_fn!(powersync_clear, powersync_clear_tx, "powersync_clear");
 
-fn setup_internal_views(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
-    // TODO: This should not be a public view - implement internally instead
-    // language=SQLite
-
-    // language=SQLite
-    db.exec_safe(
-        "\
-    CREATE TEMP VIEW IF NOT EXISTS powersync_tables(name, internal_name, local_only)
-    AS SELECT
-        powersync_external_table_name(name) as name,
-        name as internal_name,
-        name GLOB 'ps_data_local__*' as local_only
-        FROM sqlite_master
-        WHERE type = 'table' AND name GLOB 'ps_data_*';",
-    )?;
-
-    Ok(())
-}
-
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     // This entire module is just making it easier to edit sqlite_master using queries.
 
@@ -285,28 +204,6 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         None,
         None,
         Some(DatabaseState::destroy_rc),
-    )?;
-
-    db.create_function_v2(
-        "powersync_external_table_name",
-        1,
-        sqlite::UTF8 | sqlite::DETERMINISTIC,
-        None,
-        Some(powersync_external_table_name),
-        None,
-        None,
-        None,
-    )?;
-
-    db.create_function_v2(
-        "powersync_internal_table_name",
-        1,
-        sqlite::UTF8 | sqlite::DETERMINISTIC,
-        None,
-        Some(powersync_internal_table_name),
-        None,
-        None,
-        None,
     )?;
 
     Ok(())

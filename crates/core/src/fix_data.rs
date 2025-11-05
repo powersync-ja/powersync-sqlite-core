@@ -5,6 +5,7 @@ use alloc::string::String;
 
 use crate::create_sqlite_optional_text_fn;
 use crate::error::{PSResult, PowerSyncError};
+use crate::schema::inspection::ExistingTable;
 use powersync_sqlite_nostd::{self as sqlite, ColumnType, Value};
 use powersync_sqlite_nostd::{Connection, Context, ResultCode};
 
@@ -23,12 +24,15 @@ use crate::util::quote_identifier;
 pub fn apply_v035_fix(db: *mut sqlite::sqlite3) -> Result<i64, PowerSyncError> {
     // language=SQLite
     let statement = db
-      .prepare_v2("SELECT name, powersync_external_table_name(name) FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data__*'")
-      .into_db_result(db)?;
+        .prepare_v2("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data__*'")
+        .into_db_result(db)?;
 
     while statement.step()? == ResultCode::ROW {
         let full_name = statement.column_text(0)?;
-        let short_name = statement.column_text(1)?;
+        let Some((short_name, _)) = ExistingTable::external_name(full_name) else {
+            continue;
+        };
+
         let quoted = quote_identifier(full_name);
 
         // language=SQLite
