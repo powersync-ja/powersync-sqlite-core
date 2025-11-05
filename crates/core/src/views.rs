@@ -4,23 +4,13 @@ use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::ffi::c_int;
 use core::fmt::Write;
 
-use powersync_sqlite_nostd::{self as sqlite};
-use sqlite::{Connection, Context, ResultCode, Value};
-
-use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
 use crate::schema::{Column, DiffIncludeOld, Table};
 use crate::util::*;
 
-fn powersync_view_sql_impl(
-    _ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
-    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
-
+pub fn powersync_view_sql(table_info: &Table) -> String {
     let name = &table_info.name;
     let view_name = &table_info.view_name();
     let local_only = table_info.flags.local_only();
@@ -59,21 +49,10 @@ fn powersync_view_sql_impl(
         internal_name
     );
 
-    return Ok(view_statement);
+    return view_statement;
 }
 
-create_sqlite_text_fn!(
-    powersync_view_sql,
-    powersync_view_sql_impl,
-    "powersync_view_sql"
-);
-
-fn powersync_trigger_delete_sql_impl(
-    _ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
-    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
-
+pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String, PowerSyncError> {
     let name = &table_info.name;
     let view_name = &table_info.view_name();
     let local_only = table_info.flags.local_only();
@@ -153,18 +132,7 @@ END",
     };
 }
 
-create_sqlite_text_fn!(
-    powersync_trigger_delete_sql,
-    powersync_trigger_delete_sql_impl,
-    "powersync_trigger_delete_sql"
-);
-
-fn powersync_trigger_insert_sql_impl(
-    _ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
-    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
-
+pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String, PowerSyncError> {
     let name = &table_info.name;
     let view_name = &table_info.view_name();
     let local_only = table_info.flags.local_only();
@@ -226,18 +194,7 @@ fn powersync_trigger_insert_sql_impl(
     };
 }
 
-create_sqlite_text_fn!(
-    powersync_trigger_insert_sql,
-    powersync_trigger_insert_sql_impl,
-    "powersync_trigger_insert_sql"
-);
-
-fn powersync_trigger_update_sql_impl(
-    _ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
-    let table_info = Table::from_json(args[0].text()).map_err(PowerSyncError::as_argument_error)?;
-
+pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String, PowerSyncError> {
     let name = &table_info.name;
     let view_name = &table_info.view_name();
     let insert_only = table_info.flags.insert_only();
@@ -344,60 +301,6 @@ END"
     } else {
         Err(PowerSyncError::argument_error("invalid flags for table"))
     };
-}
-
-create_sqlite_text_fn!(
-    powersync_trigger_update_sql,
-    powersync_trigger_update_sql_impl,
-    "powersync_trigger_update_sql"
-);
-
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
-    db.create_function_v2(
-        "powersync_view_sql",
-        1,
-        sqlite::UTF8 | sqlite::DETERMINISTIC | sqlite::DIRECTONLY,
-        None,
-        Some(powersync_view_sql),
-        None,
-        None,
-        None,
-    )?;
-
-    db.create_function_v2(
-        "powersync_trigger_delete_sql",
-        1,
-        sqlite::UTF8 | sqlite::DETERMINISTIC | sqlite::DIRECTONLY,
-        None,
-        Some(powersync_trigger_delete_sql),
-        None,
-        None,
-        None,
-    )?;
-
-    db.create_function_v2(
-        "powersync_trigger_insert_sql",
-        1,
-        sqlite::UTF8 | sqlite::DETERMINISTIC | sqlite::DIRECTONLY,
-        None,
-        Some(powersync_trigger_insert_sql),
-        None,
-        None,
-        None,
-    )?;
-
-    db.create_function_v2(
-        "powersync_trigger_update_sql",
-        1,
-        sqlite::UTF8 | sqlite::DETERMINISTIC | sqlite::DIRECTONLY,
-        None,
-        Some(powersync_trigger_update_sql),
-        None,
-        None,
-        None,
-    )?;
-
-    Ok(())
 }
 
 /// Given a query returning column names, return a JSON object fragment for a trigger.

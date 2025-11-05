@@ -12,48 +12,24 @@ use sqlite::{ResultCode, Value};
 
 use crate::error::PowerSyncError;
 use crate::migrations::{LATEST_VERSION, powersync_migrate};
+use crate::schema::inspection::ExistingView;
 use crate::state::DatabaseState;
 use crate::util::quote_identifier;
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
-fn powersync_drop_view_impl(
+// Used in old down migrations, do not remove.
+extern "C" fn powersync_drop_view(
     ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, ResultCode> {
+    argc: c_int,
+    argv: *mut *mut sqlite::value,
+) {
+    let args = sqlite::args!(argc, argv);
     let name = args[0].text();
 
-    let local_db = ctx.db_handle();
-    let q = format!("DROP VIEW IF EXISTS {:}", quote_identifier(name));
-    let stmt2 = local_db.prepare_v2(&q)?;
-
-    if stmt2.step()? == ResultCode::ROW {
-        Ok(String::from(name))
-    } else {
-        Ok(String::from(""))
+    if let Err(e) = ExistingView::drop_by_name(ctx.db_handle(), name) {
+        e.apply_to_ctx("powersync_drop_view", ctx);
     }
 }
-
-create_sqlite_text_fn!(
-    powersync_drop_view,
-    powersync_drop_view_impl,
-    "powersync_drop_view"
-);
-
-fn powersync_exec_impl(
-    ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, ResultCode> {
-    let q = args[0].text();
-
-    if q != "" {
-        let local_db = ctx.db_handle();
-        local_db.exec_safe(q)?;
-    }
-
-    Ok(String::from(""))
-}
-
-create_sqlite_text_fn!(powersync_exec, powersync_exec_impl, "powersync_exec");
 
 fn powersync_internal_table_name_impl(
     ctx: *mut sqlite::context,
@@ -244,58 +220,8 @@ create_auto_tx_function!(powersync_clear_tx, powersync_clear_impl);
 create_sqlite_text_fn!(powersync_clear, powersync_clear_tx, "powersync_clear");
 
 fn setup_internal_views(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
-    // powersync_views - just filters sqlite_master, and combines the view and related triggers
-    // into one row.
-
-    // These views are only usable while the extension is loaded, so use TEMP views.
     // TODO: This should not be a public view - implement internally instead
     // language=SQLite
-    db.exec_safe("\
-    CREATE TEMP VIEW IF NOT EXISTS powersync_views(name, sql, delete_trigger_sql, insert_trigger_sql, update_trigger_sql)
-    AS SELECT
-        view.name name,
-        view.sql sql,
-        ifnull(group_concat(trigger1.sql, ';\n' ORDER BY trigger1.name DESC), '') delete_trigger_sql,
-        ifnull(trigger2.sql, '') insert_trigger_sql,
-        ifnull(trigger3.sql, '') update_trigger_sql
-        FROM sqlite_master view
-        LEFT JOIN sqlite_master trigger1
-            ON trigger1.tbl_name = view.name AND trigger1.type = 'trigger' AND trigger1.name GLOB 'ps_view_delete*'
-        LEFT JOIN sqlite_master trigger2
-            ON trigger2.tbl_name = view.name AND trigger2.type = 'trigger' AND trigger2.name GLOB 'ps_view_insert*'
-        LEFT JOIN sqlite_master trigger3
-            ON trigger3.tbl_name = view.name AND trigger3.type = 'trigger' AND trigger3.name GLOB 'ps_view_update*'
-        WHERE view.type = 'view' AND view.sql GLOB  '*-- powersync-auto-generated'
-        GROUP BY view.name;
-
-    CREATE TRIGGER IF NOT EXISTS powersync_views_insert
-    INSTEAD OF INSERT ON powersync_views
-    FOR EACH ROW
-    BEGIN
-        SELECT powersync_drop_view(NEW.name);
-        SELECT powersync_exec(NEW.sql);
-        SELECT powersync_exec(NEW.delete_trigger_sql);
-        SELECT powersync_exec(NEW.insert_trigger_sql);
-        SELECT powersync_exec(NEW.update_trigger_sql);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS powersync_views_update
-    INSTEAD OF UPDATE ON powersync_views
-    FOR EACH ROW
-    BEGIN
-        SELECT powersync_drop_view(OLD.name);
-        SELECT powersync_exec(NEW.sql);
-        SELECT powersync_exec(NEW.delete_trigger_sql);
-        SELECT powersync_exec(NEW.insert_trigger_sql);
-        SELECT powersync_exec(NEW.update_trigger_sql);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS powersync_views_delete
-    INSTEAD OF DELETE ON powersync_views
-    FOR EACH ROW
-    BEGIN
-        SELECT powersync_drop_view(OLD.name);
-    END;")?;
 
     // language=SQLite
     db.exec_safe(
@@ -314,27 +240,8 @@ fn setup_internal_views(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     // This entire module is just making it easier to edit sqlite_master using queries.
-    // The primary interfaces exposed are:
-    // 1. Individual views:
-    //
-    //    CREATE VIEW powersync_views(name TEXT, sql TEXT, delete_trigger_sql TEXT, insert_trigger_sql TEXT, update_trigger_sql TEXT)
-    //
-    // The views can be queried and updated using powersync_views.
-    // UPSERT is not supported on powersync_views (or any view or virtual table for that matter),
-    // but "INSERT OR REPLACE" is supported. However, it's a potentially expensive operation
-    // (drops and re-creates the view and trigger), so avoid where possible.
-    //
-    // 2. All-in-one schema updates:
-    //
-    //    INSERT INTO powersync_replace_schema(schema) VALUES('{"tables": [...]}');
-    //
-    // This takes care of updating, inserting and deleting powersync_views to get it in sync
-    // with the schema.
-    //
-    // The same results could be achieved using virtual tables, but the interface would remain the same.
-    // A potential disadvantage of using views is that the JSON may be re-parsed multiple times.
 
-    // Internal function, used in triggers for powersync_views.
+    // Internal function, used exclusively in existing migrations.
     db.create_function_v2(
         "powersync_drop_view",
         1,
@@ -346,19 +253,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         None,
     )?;
 
-    // Internal function, used in triggers for powersync_views.
-    db.create_function_v2(
-        "powersync_exec",
-        1,
-        sqlite::UTF8,
-        None,
-        Some(powersync_exec),
-        None,
-        None,
-        None,
-    )?;
-
-    // Initialize the extension internal tables.
+    // Initialize the extension internal tables, and start a migration.
     db.create_function_v2(
         "powersync_init",
         0,
@@ -381,7 +276,6 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         None,
     )?;
 
-    // Initialize the extension internal tables.
     db.create_function_v2(
         "powersync_clear",
         1,

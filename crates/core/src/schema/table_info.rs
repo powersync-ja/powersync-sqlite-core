@@ -29,10 +29,6 @@ pub struct RawTable {
 }
 
 impl Table {
-    pub fn from_json(text: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(text)
-    }
-
     pub fn view_name(&self) -> &str {
         self.view_name_override
             .as_deref()

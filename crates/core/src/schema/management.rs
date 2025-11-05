@@ -1,5 +1,7 @@
 extern crate alloc;
 
+use alloc::borrow::ToOwned;
+use alloc::collections::btree_map::BTreeMap;
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -12,8 +14,13 @@ use sqlite::{Connection, ResultCode, Value};
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::ext::ExtendedDatabase;
+use crate::schema::inspection::ExistingView;
 use crate::state::DatabaseState;
 use crate::util::{quote_identifier, quote_json_path};
+use crate::views::{
+    powersync_trigger_delete_sql, powersync_trigger_insert_sql, powersync_trigger_update_sql,
+    powersync_view_sql,
+};
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 use super::Schema;
@@ -236,55 +243,46 @@ SELECT
     Ok(())
 }
 
-fn update_views(db: *mut sqlite::sqlite3, schema: &str) -> Result<(), PowerSyncError> {
-    // Update existing views if modified
-    // language=SQLite
-    db.exec_text("\
-UPDATE powersync_views SET
-sql = gen.sql,
-delete_trigger_sql = gen.delete_trigger_sql,
-insert_trigger_sql = gen.insert_trigger_sql,
-update_trigger_sql = gen.update_trigger_sql
-FROM (SELECT
-      ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.value, '$.name')) as name,
-                   powersync_view_sql(json_each.value) as sql,
-                   powersync_trigger_delete_sql(json_each.value) as delete_trigger_sql,
-                   powersync_trigger_insert_sql(json_each.value) as insert_trigger_sql,
-                   powersync_trigger_update_sql(json_each.value) as update_trigger_sql
-                   FROM json_each(json_extract(?, '$.tables'))) as gen
-                   WHERE powersync_views.name = gen.name AND
-                       (powersync_views.sql IS NOT gen.sql OR
-                        powersync_views.delete_trigger_sql IS NOT gen.delete_trigger_sql OR
-                        powersync_views.insert_trigger_sql IS NOT gen.insert_trigger_sql OR
-                        powersync_views.update_trigger_sql IS NOT gen.update_trigger_sql)
-    ", schema).into_db_result(db)?;
+fn update_views(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerSyncError> {
+    // First, find all existing views and index them by name.
+    let existing = ExistingView::list(db)?;
+    let mut existing = {
+        let mut map = BTreeMap::new();
+        for entry in &existing {
+            map.insert(&*entry.name, entry);
+        }
+        map
+    };
 
-    // Create new views
-    // language=SQLite
-    db.exec_text("\
-INSERT INTO powersync_views(
-    name,
-    sql,
-    delete_trigger_sql,
-    insert_trigger_sql,
-    update_trigger_sql
-)
-SELECT
-ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.value, '$.name')) as name,
-             powersync_view_sql(json_each.value) as sql,
-             powersync_trigger_delete_sql(json_each.value) as delete_trigger_sql,
-             powersync_trigger_insert_sql(json_each.value) as insert_trigger_sql,
-             powersync_trigger_update_sql(json_each.value) as update_trigger_sql
-             FROM json_each(json_extract(?, '$.tables'))
-                            WHERE name NOT IN (SELECT name FROM powersync_views)", schema).into_db_result(db)?;
+    for table in &schema.tables {
+        let view_sql = powersync_view_sql(table);
+        let delete_trigger_sql = powersync_trigger_delete_sql(table)?;
+        let insert_trigger_sql = powersync_trigger_insert_sql(table)?;
+        let update_trigger_sql = powersync_trigger_update_sql(table)?;
 
-    // Delete old views
-    // language=SQLite
-    db.exec_text("\
-DELETE FROM powersync_views WHERE name NOT IN (
-    SELECT ifnull(json_extract(json_each.value, '$.view_name'), json_extract(json_each.value, '$.name'))
-                        FROM json_each(json_extract(?, '$.tables'))
-            )", schema).into_db_result(db)?;
+        let wanted_view = ExistingView {
+            name: table.view_name().to_owned(),
+            sql: view_sql,
+            delete_trigger_sql,
+            insert_trigger_sql,
+            update_trigger_sql,
+        };
+
+        if let Some(actual_view) = existing.remove(table.view_name()) {
+            if *actual_view == wanted_view {
+                // View exists with identical definition, don't re-create.
+                continue;
+            }
+        }
+
+        // View does not exist or has been defined differently, re-create.
+        wanted_view.create(db)?;
+    }
+
+    // Delete old views.
+    for remaining in existing.values() {
+        ExistingView::drop_by_name(db, &remaining.name)?;
+    }
 
     Ok(())
 }
@@ -309,7 +307,7 @@ fn powersync_replace_schema_impl(
 
     update_tables(db, schema)?;
     update_indexes(db, &parsed_schema)?;
-    update_views(db, schema)?;
+    update_views(db, &parsed_schema)?;
 
     state.set_schema(parsed_schema);
     Ok(String::from(""))
