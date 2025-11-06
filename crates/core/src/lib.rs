@@ -35,6 +35,10 @@ mod view_admin;
 mod views;
 mod vtab_util;
 
+/// The entrypoint for the PowerSync SQLite core extension.
+///
+/// When compiling this Rust crate into a dynamic library, it can be used by embedders to load it
+/// through [SQLite's opening mechanism](https://sqlite.org/loadext.html#loading_an_extension).
 #[unsafe(no_mangle)]
 pub extern "C" fn sqlite3_powersync_init(
     db: *mut sqlite::sqlite3,
@@ -85,7 +89,7 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
 unsafe extern "C" {
     #[cfg(feature = "static")]
     #[allow(non_snake_case)]
-    pub fn sqlite3_auto_extension(
+    fn sqlite3_auto_extension(
         xEntryPoint: Option<
             extern "C" fn(
                 *mut sqlite::sqlite3,
@@ -96,6 +100,10 @@ unsafe extern "C" {
     ) -> ::core::ffi::c_int;
 }
 
+/// Calls `sqlite3_auto_extension` with [sqlite3_powersync_init] to automatically load
+/// the PowerSync core extension into new connections.
+///
+/// For details, see https://sqlite.org/loadext.html#statically_linking_a_run_time_loadable_extension
 #[cfg(feature = "static")]
 #[unsafe(no_mangle)]
 pub extern "C" fn powersync_init_static() -> c_int {
