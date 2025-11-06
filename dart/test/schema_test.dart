@@ -45,6 +45,79 @@ void main() {
           greaterThan(versionAfter2['schema_version'] as int));
     });
 
+    group('migrate tables', () {
+      final local = {
+        "tables": [
+          {
+            "name": "users",
+            "local_only": true,
+            "insert_only": false,
+            "columns": [
+              {"name": "name", "type": "TEXT"},
+            ],
+          },
+        ]
+      };
+
+      final synced = {
+        "tables": [
+          {
+            "name": "users",
+            "local_only": false,
+            "insert_only": false,
+            "columns": [
+              {"name": "name", "type": "TEXT"},
+            ],
+          },
+        ]
+      };
+
+      test('from synced to local', () {
+        // Start with synced table, and sync row
+        db.execute('SELECT powersync_replace_schema(?)', [json.encode(synced)]);
+        db.execute(
+          'INSERT INTO ps_data__users (id, data) VALUES (?, ?)',
+          [
+            'synced-id',
+            json.encode({'name': 'name'})
+          ],
+        );
+
+        // Migrate to local table.
+        db.execute('SELECT powersync_replace_schema(?)', [json.encode(local)]);
+
+        // The synced table should not exist anymore.
+        expect(() => db.select('SELECT * FROM ps_data__users'),
+            throwsA(isA<SqliteException>()));
+
+        // Data should still be there.
+        expect(db.select('SELECT * FROM users'), [
+          {'id': 'synced-id', 'name': 'name'}
+        ]);
+
+        // Inserting into local-only table should not record CRUD item.
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['local']);
+        expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+      });
+
+      test('from local to synced', () {
+        // Start with local table, and local row
+        db.execute('SELECT powersync_replace_schema(?)', [json.encode(local)]);
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['local']);
+
+        // Migrate to synced table. Because the previous local write would never
+        // get uploaded, this clears local data.
+        db.execute('SELECT powersync_replace_schema(?)', [json.encode(synced)]);
+        expect(db.select('SELECT * FROM users'), isEmpty);
+
+        // The local table should not exist anymore.
+        expect(() => db.select('SELECT * FROM ps_data_local__users'),
+            throwsA(isA<SqliteException>()));
+      });
+    });
+
     group('metadata', () {
       // This is a special because we have two delete triggers when
       // include_metadata is true (one for actual `DELETE` statements and one
