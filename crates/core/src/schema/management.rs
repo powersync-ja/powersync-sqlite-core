@@ -38,36 +38,55 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
     {
         // In a block so that all statements are finalized before dropping tables.
         for table in &schema.tables {
-            if let Some(_) = existing_tables.remove(&*table.name) {
-                // This table exists already, nothing to do.
-                // TODO: Handle switch between local only <-> regular tables?
-            } else {
-                // New table.
-                let quoted_internal_name = quote_identifier(&table.internal_name());
+            if let Some(existing) = existing_tables.remove(&*table.name) {
+                if existing.local_only && !table.local_only() {
+                    // Migrate from a local-only to a synced table. Because none of the local writes
+                    // would have created CRUD entries, we'll have to re-create the table from
+                    // scratch.
 
-                db.exec_safe(&format!(
-                    "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
-                    quoted_internal_name
-                ))
-                .into_db_result(db)?;
+                    // To delete the old existing table in the end.
+                    existing_tables.insert(&existing.name, existing);
+                } else if !existing.local_only && table.local_only() {
+                    // Migrate from a synced table to a local-only table. We can keep existing rows
+                    // and will also keep existing CRUD data to be uploaded before the switch.
+                    db.exec_safe(&format!(
+                        "ALTER TABLE {} RENAME TO {}",
+                        quote_identifier(&existing.internal_name),
+                        quote_identifier(&table.internal_name()),
+                    ))
+                    .into_db_result(db)?;
+                    continue;
+                } else {
+                    // Identical table exists already, nothing to do.
+                    continue;
+                }
+            }
 
-                if !table.local_only() {
-                    // MOVE data if any
-                    db.exec_text(
-                        &format!(
-                            "INSERT INTO {:}(id, data)
+            // New table.
+            let quoted_internal_name = quote_identifier(&table.internal_name());
+
+            db.exec_safe(&format!(
+                "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
+                quoted_internal_name
+            ))
+            .into_db_result(db)?;
+
+            if !table.local_only() {
+                // MOVE data if any
+                db.exec_text(
+                    &format!(
+                        "INSERT INTO {:}(id, data)
     SELECT id, data
     FROM ps_untyped
     WHERE type = ?",
-                            quoted_internal_name
-                        ),
-                        &table.name,
-                    )
-                    .into_db_result(db)?;
+                        quoted_internal_name
+                    ),
+                    &table.name,
+                )
+                .into_db_result(db)?;
 
-                    // language=SQLite
-                    db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
-                }
+                // language=SQLite
+                db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
             }
         }
 
