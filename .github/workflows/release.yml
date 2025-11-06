@@ -243,7 +243,7 @@ jobs:
 
       - name: Publish powersync_sqlite_nostd
         run: cargo publish
-        working-directory: crates/core
+        working-directory: crates/sqlite_nostd
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
       - name: Publish powersync_core
