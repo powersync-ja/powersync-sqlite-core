@@ -12,5 +12,9 @@ pub const MIN_SQLITE_VERSION_NUMBER: c_int = 3044000;
 pub const SUBTYPE_JSON: u32 = 'J' as u32;
 
 pub fn short_git_hash() -> &'static str {
-    &FULL_GIT_HASH[..8]
+    if FULL_GIT_HASH.len() >= 8 {
+        &FULL_GIT_HASH[..8]
+    } else {
+        "no-git-unknown"
+    }
 }
