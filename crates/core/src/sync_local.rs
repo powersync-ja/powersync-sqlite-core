@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 use serde::Deserialize;
 
 use crate::error::{PSResult, PowerSyncError};
+use crate::schema::inspection::ExistingTable;
 use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
@@ -434,22 +435,16 @@ impl<'a> ParsedDatabaseSchema<'a> {
     }
 
     fn add_from_db(&mut self, db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
-        // language=SQLite
-        let statement = db
-            .prepare_v2(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data_*'",
-            )
-            .into_db_result(db)?;
+        let tables = ExistingTable::list(db)?;
+        for table in tables {
+            if !table.local_only {
+                let visible_name = table.name;
 
-        while statement.step()? == ResultCode::ROW {
-            let name = statement.column_text(0)?;
-            // Strip the ps_data__ prefix so that we can lookup tables by their sync protocol name.
-            let visible_name = name.get(9..).unwrap_or(name);
-
-            // Tables which haven't been passed explicitly are assumed to not be raw tables.
-            self.tables
-                .insert(String::from(visible_name), ParsedSchemaTable::json_table());
+                self.tables
+                    .insert(visible_name, ParsedSchemaTable::json_table());
+            }
         }
+
         Ok(())
     }
 }

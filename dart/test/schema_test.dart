@@ -91,9 +91,8 @@ void main() {
             throwsA(isA<SqliteException>()));
 
         // Data should still be there.
-        expect(db.select('SELECT * FROM users'), [
-          {'id': 'synced-id', 'name': 'name'}
-        ]);
+        expect(db.select('SELECT * FROM ps_untyped'), hasLength(1));
+        expect(db.select('SELECT * FROM users'), isEmpty);
 
         // Inserting into local-only table should not record CRUD item.
         db.execute(
