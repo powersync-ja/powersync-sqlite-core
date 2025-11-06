@@ -7,6 +7,8 @@ repository.workspace = true
 license.workspace = true
 authors.workspace = true
 keywords.workspace = true
+description = "The PowerSync SQLite extension"
+readme = "README.md"
 
 [lib]
 name = "powersync_core"
