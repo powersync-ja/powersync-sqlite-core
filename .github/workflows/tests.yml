@@ -10,8 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - name: Build Linux libraries
         uses: ./.github/actions/linux
 
@@ -21,8 +19,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - name: Build macOS
         uses: ./.github/actions/macos
 
@@ -32,8 +28,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
+
       - name: Build Windows
         uses: ./.github/actions/windows
 
@@ -43,8 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - name: Build Android
         uses: ./.github/actions/android
         with:
@@ -56,8 +49,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Build wasm
         uses: ./.github/actions/wasm
@@ -68,8 +59,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - name: Build XCFramework
         uses: ./.github/actions/xcframework
 
@@ -83,8 +72,6 @@ jobs:
         os: [ubuntu-24.04, macos-latest]
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Ubuntu setup
         if: matrix.os == 'ubuntu-24.04'
@@ -131,8 +118,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - uses: dart-lang/setup-dart@v1
 
@@ -190,8 +175,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - uses: dart-lang/setup-dart@v1
       - name: Install Rust Stable
@@ -230,8 +213,6 @@ jobs:
           - os: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - name: Install Rust Nightly
         uses: dtolnay/rust-toolchain@stable
         with:
