@@ -886,6 +886,7 @@ impl StreamingSyncIteration {
             client_id: client_id(self.db)?,
             parameters: self.options.parameters.take(),
             streams: stream_subscriptions.request.clone(),
+            app_metadata: self.options.app_metadata.take(),
         };
 
         event
