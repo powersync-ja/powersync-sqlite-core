@@ -12,6 +12,7 @@ use crate::sync::storage_adapter::StorageAdapter;
 use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
+use alloc::collections::btree_map::BTreeMap;
 use alloc::rc::Rc;
 use alloc::{string::String, vec::Vec};
 use powersync_sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
@@ -40,6 +41,19 @@ pub struct StartSyncStream {
     /// We will increase the expiry date for those streams at the time we connect and disconnect.
     #[serde(default)]
     pub active_streams: Rc<Vec<StreamKey>>,
+    /// Application metadata to include in the request when opening a sync stream.
+    ///
+    /// This should only contain a JSON map of strings.
+    ///
+    /// We use `BTreeMap<String, String>` instead of `serde_json::Map<String, serde_json::Value>`
+    /// (like `parameters` uses) because:
+    /// 1. It enforces type safety at compile time - values must be strings, not arbitrary JSON
+    /// 2. It requires no runtime validation to ensure values are strings
+    /// 3. It serializes to the same JSON format (a map with string values)
+    /// 4. `serde_json::Map<String, String>` doesn't implement `Serialize`/`Deserialize` - the
+    ///    `serde_json::Map` type only supports `serde_json::Value` as the value type, not `String`
+    #[serde(default)]
+    pub app_metadata: Option<BTreeMap<String, String>>,
 }
 
 impl StartSyncStream {
@@ -55,6 +69,7 @@ impl Default for StartSyncStream {
             schema: Default::default(),
             include_defaults: Self::include_defaults_by_default(),
             active_streams: Default::default(),
+            app_metadata: Default::default(),
         }
     }
 }
@@ -159,6 +174,8 @@ pub struct StreamingSyncRequest {
     pub client_id: String,
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
     pub streams: Rc<StreamSubscriptionRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_metadata: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
