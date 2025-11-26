@@ -1079,24 +1079,23 @@ END;
   });
 
   group('raw tables', () {
+    const rawUsersTable = {
+      'name': 'users',
+      'put': {
+        'sql': 'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
+        'params': [
+          'Id',
+          {'Column': 'name'}
+        ],
+      },
+      'delete': {
+        'sql': 'DELETE FROM users WHERE id = ?',
+        'params': ['Id'],
+      },
+      'clear': 'DELETE FROM users;',
+    };
     const schema = {
-      'raw_tables': [
-        {
-          'name': 'users',
-          'put': {
-            'sql': 'INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);',
-            'params': [
-              'Id',
-              {'Column': 'name'}
-            ],
-          },
-          'delete': {
-            'sql': 'DELETE FROM users WHERE id = ?',
-            'params': ['Id'],
-          },
-          'clear': 'DELETE FROM users;',
-        }
-      ],
+      'raw_tables': [rawUsersTable],
       'tables': [],
     };
 
@@ -1260,6 +1259,120 @@ END;
       expect(db.select('SELECT * FROM users'), hasLength(1));
       db.execute('SELECT powersync_clear(0)');
       expect(db.select('SELECT * FROM users'), hasLength(0));
+    });
+
+    test('can use foreign key constraints', () {
+      db.execute('pragma foreign_keys = on');
+      setupRawTables();
+      db.execute('''
+CREATE TABLE user_reference(
+  id TEXT NOT NULL PRIMARY KEY,
+  user TEXT NOT NULL REFERENCES users (id)
+    ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED
+);
+
+CREATE TRIGGER users_ref_delete
+   AFTER DELETE ON user_reference
+   FOR EACH ROW
+   BEGIN
+      INSERT INTO powersync_crud (op, id, type) VALUES ('DELETE', OLD.id, 'user_reference');
+   END;
+''');
+
+      invokeControl(
+        'start',
+        json.encode({
+          'schema': {
+            'raw_tables': [
+              rawUsersTable,
+              {
+                'name': 'user_reference',
+                'put': {
+                  'sql':
+                      'INSERT OR REPLACE INTO user_reference (id, user) VALUES (?, ?);',
+                  'params': [
+                    'Id',
+                    {'Column': 'user'}
+                  ],
+                },
+                'delete': {
+                  'sql': 'DELETE FROM user_reference WHERE id = ?',
+                  'params': ['Id'],
+                },
+                'clear': 'DELETE FROM user_reference;',
+              }
+            ],
+            'tables': [],
+          }
+        }),
+      );
+
+      // Insert - send reference before user.
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_ref',
+        'PUT',
+        {'user': 'my_user'},
+        objectType: 'user_reference',
+      );
+      pushSyncData(
+        'a',
+        '2',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('select * from user_reference'), isNotEmpty);
+
+      {
+        // Ensure deleting users creates a ps_crud entry for deleting references.
+        db.execute('BEGIN');
+
+        db.execute('DELETE FROM users');
+        final crud = db.select('SELECT * FROM ps_crud');
+        expect(crud, [
+          {
+            'id': 1,
+            'tx_id': 2,
+            'data': '{"op":"DELETE","id":"my_ref","type":"user_reference"}',
+          },
+          {
+            'id': 2,
+            'tx_id': 2,
+            'data': '{"op":"DELETE","id":"my_user","type":"users"}',
+          }
+        ]);
+
+        // Rollback local changes to test deleting from server.
+        db.execute('ROLLBACK');
+      }
+
+      // Delete - delete user before reference.
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '3',
+        'my_user',
+        'REMOVE',
+        null,
+        objectType: 'users',
+      );
+      pushSyncData(
+        'a',
+        '3',
+        'my_ref',
+        'REMOVE',
+        null,
+        objectType: 'user_reference',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('select * from user_reference'), isEmpty);
     });
   });
 }
