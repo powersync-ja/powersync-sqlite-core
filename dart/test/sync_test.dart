@@ -179,6 +179,28 @@ void _syncTests<T>({
     });
   });
 
+  syncTest('app_metadata is passed to EstablishSyncStream request', (_) {
+    final startInstructions = invokeControlRaw(
+      'start',
+      json.encode({
+        'app_metadata': {'key1': 'value1', 'key2': 'value2'}
+      }),
+    );
+
+    expect(
+      startInstructions,
+      contains(
+        containsPair(
+          'EstablishSyncStream',
+          containsPair(
+            'request',
+            containsPair('app_metadata', {'key1': 'value1', 'key2': 'value2'}),
+          ),
+        ),
+      ),
+    );
+  });
+
   test('handles connection events', () {
     invokeControl('start', null);
     expect(invokeControl('connection', 'established'), [

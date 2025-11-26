@@ -18,6 +18,7 @@ use powersync_sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 use powersync_sqlite_nostd::{self as sqlite, ColumnType};
 use powersync_sqlite_nostd::{Connection, Context};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use sqlite::{ResultCode, Value};
 
 use crate::sync::BucketPriority;
@@ -40,6 +41,8 @@ pub struct StartSyncStream {
     /// We will increase the expiry date for those streams at the time we connect and disconnect.
     #[serde(default)]
     pub active_streams: Rc<Vec<StreamKey>>,
+    #[serde(default)]
+    pub app_metadata: Option<Box<RawValue>>,
 }
 
 impl StartSyncStream {
@@ -55,6 +58,7 @@ impl Default for StartSyncStream {
             schema: Default::default(),
             include_defaults: Self::include_defaults_by_default(),
             active_streams: Default::default(),
+            app_metadata: Default::default(),
         }
     }
 }
@@ -159,6 +163,8 @@ pub struct StreamingSyncRequest {
     pub client_id: String,
     pub parameters: Option<serde_json::Map<String, serde_json::Value>>,
     pub streams: Rc<StreamSubscriptionRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_metadata: Option<Box<RawValue>>,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
