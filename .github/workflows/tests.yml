@@ -121,19 +121,17 @@ jobs:
 
       - uses: dart-lang/setup-dart@v1
 
-      - uses: actions/cache@v4
-        id: sqlite_build
-        with:
-          path: dart/.dart_tool/sqlite3/
-          key: ${{ matrix.os }}-${{ hashFiles('dart/tool/') }}
-
       - name: Setup Dart tests
         working-directory: dart
         run: |
           dart pub get
-          dart run tool/download_old_sqlite3.dart
           dart analyze
-      
+      - uses: actions/cache@v4
+        with:
+          path: dart/.dart_tool/hooks_runner/
+          key: hooks-${{ matrix.os }}-${{ hashFiles('dart/pubspec.lock') }}
+          restore-keys: hooks-${{ matrix.os }}
+
       - name: Download libs
         uses: actions/download-artifact@v5
         with:
@@ -170,17 +168,17 @@ jobs:
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/cache@v4
-        id: sqlite_build
-        with:
-          path: dart/.dart_tool/sqlite3/
-          key: ${{ matrix.os }}-${{ hashFiles('dart/tool/') }}
-
       - name: Setup Dart tests
         working-directory: dart
         run: |
           dart pub get
           dart analyze
+
+      - uses: actions/cache@v4
+        with:
+          path: dart/.dart_tool/hooks_runner/
+          key: hooks-${{ matrix.os }}-${{ hashFiles('dart/pubspec.lock') }}
+          restore-keys: hooks-${{ matrix.os }}
 
       - name: Compile with stable Rust
         run: |
