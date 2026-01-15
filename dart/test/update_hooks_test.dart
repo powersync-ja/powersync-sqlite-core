@@ -16,7 +16,7 @@ void main() {
   });
 
   tearDown(() {
-    db.dispose();
+    db.close();
   });
 
   List<String> collectUpdates() {
@@ -38,7 +38,7 @@ void main() {
     for (var i = 0; i < 1000; i++) {
       stmt.execute([i]);
     }
-    stmt.dispose();
+    stmt.close();
 
     expect(collectUpdates(), ['foo']);
   });

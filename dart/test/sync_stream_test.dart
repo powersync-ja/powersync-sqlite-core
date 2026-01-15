@@ -31,7 +31,7 @@ void main() {
   });
 
   tearDown(() {
-    db.dispose();
+    db.close();
   });
 
   List<Object?> control(String operation, Object? data) {

@@ -23,7 +23,7 @@ void main() {
     });
 
     tearDown(() {
-      db.dispose();
+      db.close();
     });
 
     /// This tests that the extension can load

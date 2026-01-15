@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:fake_async/fake_async.dart';
 import 'package:meta/meta.dart';
 import 'package:sqlite3/common.dart';
-import 'package:sqlite3/open.dart' as sqlite_open;
 import 'package:sqlite3/sqlite3.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -14,29 +13,8 @@ const defaultSqlitePath = 'libsqlite3.so.0';
 const cargoDebugPath = '../target/debug';
 var didLoadExtension = false;
 
-void applyOpenOverride() {
-  if (Platform.environment['CORE_TEST_SQLITE'] case final sqlite?) {
-    sqlite_open.open
-        .overrideForAll(() => DynamicLibrary.open(p.absolute(sqlite)));
-  }
-
-  sqlite_open.open.overrideFor(sqlite_open.OperatingSystem.linux, () {
-    return DynamicLibrary.open('libsqlite3.so.0');
-  });
-  sqlite_open.open.overrideFor(sqlite_open.OperatingSystem.macOS, () {
-    // Prefer using Homebrew's SQLite which allows loading extensions.
-    const fromHomebrew = '/opt/homebrew/opt/sqlite/lib/libsqlite3.dylib';
-    if (File(fromHomebrew).existsSync()) {
-      return DynamicLibrary.open(fromHomebrew);
-    }
-
-    return DynamicLibrary.open('libsqlite3.dylib');
-  });
-}
-
 CommonDatabase openTestDatabase(
     {VirtualFileSystem? vfs, String fileName = ':memory:'}) {
-  applyOpenOverride();
   if (!didLoadExtension) {
     loadExtension();
   }
@@ -45,8 +23,6 @@ CommonDatabase openTestDatabase(
 }
 
 void loadExtension() {
-  applyOpenOverride();
-
   // Using an absolute path is required for macOS, where Dart can't dlopen
   // relative paths due to being a "hardened program".
   var lib =

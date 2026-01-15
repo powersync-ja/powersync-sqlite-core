@@ -131,7 +131,7 @@ jobs:
         working-directory: dart
         run: |
           dart pub get
-          dart run tool/download_sqlite3.dart
+          dart run tool/download_old_sqlite3.dart
           dart analyze
       
       - name: Download libs
@@ -155,21 +155,11 @@ jobs:
         working-directory: dart
         run: |
           ls -al assets/
-      
-      - name: Dart tests on Linux
-        if: runner.os == 'Linux'
-        working-directory: dart
-        run: |
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.so dart test
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.so dart test
 
-      - name: Dart tests on macOS
-        if: runner.os == 'macOS'
+      - name: Dart tests
         working-directory: dart
-        # We skip sync_local_performance_test on macOS because the runners are just so slow...
         run: |
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test -P skip_slow
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test -P skip_slow
+          dart test -P ci
 
   build_stable_rust:
     runs-on: ubuntu-latest
@@ -190,7 +180,6 @@ jobs:
         working-directory: dart
         run: |
           dart pub get
-          dart run tool/download_sqlite3.dart
           dart analyze
 
       - name: Compile with stable Rust
@@ -199,9 +188,7 @@ jobs:
 
       - name: Dart tests with stable Rust
         working-directory: dart
-        run: |
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.so dart test
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.so dart test
+        run: dart test
 
   valgrind:
     name: Testing with Valgrind on ${{ matrix.os }}

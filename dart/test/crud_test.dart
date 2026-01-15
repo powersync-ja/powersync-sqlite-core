@@ -14,7 +14,7 @@ void main() {
     });
 
     tearDown(() {
-      db.dispose();
+      db.close();
     });
 
     test('powersync_diff - single value', () {

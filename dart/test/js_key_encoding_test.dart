@@ -27,7 +27,7 @@ void main() {
   });
 
   tearDown(() {
-    db.dispose();
+    db.close();
   });
 
   test('can fix JS key encoding', () {

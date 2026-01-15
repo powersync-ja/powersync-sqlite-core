@@ -85,7 +85,7 @@ void _syncTests<T>({
 
   tearDown(() {
     matcher.finish();
-    db.dispose();
+    db.close();
   });
 
   List<Object?> syncLine(Object? line) {

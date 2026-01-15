@@ -40,7 +40,7 @@ void testFilesystemOperations(
   });
 
   tearDown(() {
-    db.dispose();
+    db.close();
     sqlite3.unregisterVirtualFileSystem(vfs);
   });
 
