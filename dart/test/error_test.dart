@@ -12,10 +12,6 @@ void main() {
       db = openTestDatabase();
     });
 
-    tearDown(() {
-      db.close();
-    });
-
     test('contain inner SQLite descriptions', () {
       // Create a wrong migrations table for the core extension to trip over.
       db.execute('CREATE TABLE IF NOT EXISTS ps_migration(foo TEXT)');

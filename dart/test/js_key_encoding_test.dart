@@ -26,10 +26,6 @@ void main() {
       ..select('select powersync_replace_schema(?)', [json.encode(_schema)]);
   });
 
-  tearDown(() {
-    db.close();
-  });
-
   test('can fix JS key encoding', () {
     db.execute('insert into powersync_operations (op, data) VALUES (?, ?);', [
       'save',

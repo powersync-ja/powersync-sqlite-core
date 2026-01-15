@@ -19,7 +19,9 @@ CommonDatabase openTestDatabase(
     loadExtension();
   }
 
-  return sqlite3.open(fileName, vfs: vfs?.name);
+  final db = sqlite3.open(fileName, vfs: vfs?.name);
+  addTearDown(db.close);
+  return db;
 }
 
 void loadExtension() {

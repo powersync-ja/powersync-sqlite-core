@@ -12,10 +12,6 @@ void main() {
     db = openTestDatabase();
   });
 
-  tearDown(() {
-    db.close();
-  });
-
   group('Schema Tests', () {
     test('Schema versioning', () {
       // Test that powersync_replace_schema() is a no-op when the schema is not

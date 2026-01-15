@@ -22,10 +22,6 @@ void main() {
       db = openTestDatabase();
     });
 
-    tearDown(() {
-      db.close();
-    });
-
     /// This tests that the extension can load
     test('extension setup', () async {
       final row1 = db.select('select sqlite_version() as version').first;

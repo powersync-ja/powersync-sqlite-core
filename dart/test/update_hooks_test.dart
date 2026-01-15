@@ -15,10 +15,6 @@ void main() {
       ..select("SELECT powersync_update_hooks('install')");
   });
 
-  tearDown(() {
-    db.close();
-  });
-
   List<String> collectUpdates() {
     final [row] = db.select("SELECT powersync_update_hooks('get')");
     return (json.decode(row.values[0] as String) as List).cast();
