@@ -30,10 +30,6 @@ void main() {
         ..select('select powersync_replace_schema(?)', [json.encode(_schema)]);
     });
 
-    tearDown(() {
-      db.dispose();
-    });
-
     void pushSyncData(
       String bucket,
       String opId,

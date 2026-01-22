@@ -30,10 +30,6 @@ void main() {
           ['client_id', 'test-test-test-test']);
   });
 
-  tearDown(() {
-    db.dispose();
-  });
-
   List<Object?> control(String operation, Object? data) {
     db.execute('begin');
     ResultSet result;

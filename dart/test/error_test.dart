@@ -12,10 +12,6 @@ void main() {
       db = openTestDatabase();
     });
 
-    tearDown(() {
-      db.dispose();
-    });
-
     test('contain inner SQLite descriptions', () {
       // Create a wrong migrations table for the core extension to trip over.
       db.execute('CREATE TABLE IF NOT EXISTS ps_migration(foo TEXT)');
@@ -59,6 +55,7 @@ void main() {
             'powersync_control: Sync protocol error: invalid text line. cause: expected value at line 1 column 1',
           )),
         );
+        control.close();
       });
     });
   });

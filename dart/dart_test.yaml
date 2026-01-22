@@ -2,5 +2,10 @@ tags:
   slow:
 
 presets:
-  skip_slow:
-    exclude_tags: slow
+  ci:
+    # The macOS runners on GitHub are quite slow, so we only run slow tests on Linux
+    on_os:
+      mac-os:
+        tags:
+          slow:
+            skip: "Skipping slow tests on GH actions macOS runners"

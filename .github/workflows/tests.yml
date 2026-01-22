@@ -121,19 +121,17 @@ jobs:
 
       - uses: dart-lang/setup-dart@v1
 
-      - uses: actions/cache@v4
-        id: sqlite_build
-        with:
-          path: dart/.dart_tool/sqlite3/
-          key: ${{ matrix.os }}-${{ hashFiles('dart/tool/') }}
-
       - name: Setup Dart tests
         working-directory: dart
         run: |
           dart pub get
-          dart run tool/download_sqlite3.dart
           dart analyze
-      
+      - uses: actions/cache@v4
+        with:
+          path: dart/.dart_tool/hooks_runner/
+          key: hooks-${{ matrix.os }}-${{ hashFiles('dart/pubspec.lock') }}
+          restore-keys: hooks-${{ matrix.os }}
+
       - name: Download libs
         uses: actions/download-artifact@v5
         with:
@@ -155,21 +153,11 @@ jobs:
         working-directory: dart
         run: |
           ls -al assets/
-      
-      - name: Dart tests on Linux
-        if: runner.os == 'Linux'
-        working-directory: dart
-        run: |
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.so dart test
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.so dart test
 
-      - name: Dart tests on macOS
-        if: runner.os == 'macOS'
+      - name: Dart tests
         working-directory: dart
-        # We skip sync_local_performance_test on macOS because the runners are just so slow...
         run: |
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.dylib dart test -P skip_slow
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.dylib dart test -P skip_slow
+          dart test -P ci
 
   build_stable_rust:
     runs-on: ubuntu-latest
@@ -180,18 +168,17 @@ jobs:
       - name: Install Rust Stable
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/cache@v4
-        id: sqlite_build
-        with:
-          path: dart/.dart_tool/sqlite3/
-          key: ${{ matrix.os }}-${{ hashFiles('dart/tool/') }}
-
       - name: Setup Dart tests
         working-directory: dart
         run: |
           dart pub get
-          dart run tool/download_sqlite3.dart
           dart analyze
+
+      - uses: actions/cache@v4
+        with:
+          path: dart/.dart_tool/hooks_runner/
+          key: hooks-${{ matrix.os }}-${{ hashFiles('dart/pubspec.lock') }}
+          restore-keys: hooks-${{ matrix.os }}
 
       - name: Compile with stable Rust
         run: |
@@ -199,9 +186,7 @@ jobs:
 
       - name: Dart tests with stable Rust
         working-directory: dart
-        run: |
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/latest/libsqlite3.so dart test
-          CORE_TEST_SQLITE=.dart_tool/sqlite3/minimum/libsqlite3.so dart test
+        run: dart test
 
   valgrind:
     name: Testing with Valgrind on ${{ matrix.os }}

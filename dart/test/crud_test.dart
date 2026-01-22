@@ -13,10 +13,6 @@ void main() {
       db = openTestDatabase();
     });
 
-    tearDown(() {
-      db.dispose();
-    });
-
     test('powersync_diff - single value', () {
       var r1 =
           db.select('select powersync_diff(?, ?) as diff', ['{}', '{}']).first;
