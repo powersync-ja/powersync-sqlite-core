@@ -33,8 +33,8 @@ void testFilesystemOperations(
 
   setUp(() async {
     // Needs an unique name per test file to avoid concurrency issues
-    vfs = new TrackingFileSystem(
-        parent: new InMemoryFileSystem(), name: 'perf-test-vfs');
+    vfs =
+        TrackingFileSystem(parent: InMemoryFileSystem(), name: 'perf-test-vfs');
     sqlite3.registerVirtualFileSystem(vfs, makeDefault: false);
     db = openTestDatabase(vfs: vfs, fileName: 'test.db');
   });

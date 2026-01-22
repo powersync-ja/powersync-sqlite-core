@@ -55,6 +55,7 @@ void main() {
             'powersync_control: Sync protocol error: invalid text line. cause: expected value at line 1 column 1',
           )),
         );
+        control.close();
       });
     });
   });

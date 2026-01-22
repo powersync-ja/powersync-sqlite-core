@@ -1,27 +1,15 @@
 import 'dart:convert';
 
-import 'package:file/local.dart';
 import 'package:sqlite3/common.dart';
-import 'package:sqlite3/sqlite3.dart';
-import 'package:sqlite3_test/sqlite3_test.dart';
 import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
 
 void main() {
-  // Needs an unique name per test file to avoid concurrency issues
-  final vfs = TestSqliteFileSystem(
-      fs: const LocalFileSystem(), name: 'js-key-encoding-test-vfs');
   late CommonDatabase db;
 
-  setUpAll(() {
-    loadExtension();
-    sqlite3.registerVirtualFileSystem(vfs, makeDefault: false);
-  });
-  tearDownAll(() => sqlite3.unregisterVirtualFileSystem(vfs));
-
   setUp(() async {
-    db = openTestDatabase(vfs: vfs)
+    db = openTestDatabase()
       ..select('select powersync_init();')
       ..select('select powersync_replace_schema(?)', [json.encode(_schema)]);
   });

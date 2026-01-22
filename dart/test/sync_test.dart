@@ -50,10 +50,9 @@ void _syncTests<T>({
 
       // Make sure that powersync_control doesn't leave any busy statements
       // behind.
-      // TODO: Re-enable after we can guarantee sqlite_stmt being available
-      // const statement = 'SELECT * FROM sqlite_stmt WHERE busy AND sql != ?;';
-      // final busy = db.select(statement, [statement]);
-      // expect(busy, isEmpty);
+      const statement = 'SELECT * FROM sqlite_stmt WHERE busy AND sql != ?;';
+      final busy = db.select(statement, [statement]);
+      expect(busy, isEmpty);
     } catch (e) {
       db.execute('rollback');
       rethrow;
