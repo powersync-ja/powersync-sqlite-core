@@ -8,6 +8,7 @@ final class TrackingFileSystem extends BaseVirtualFileSystem {
   int tempWrites = 0;
   int dataReads = 0;
   int dataWrites = 0;
+  int openFiles = 0;
 
   TrackingFileSystem({super.name = 'tracking', required this.parent});
 
@@ -29,6 +30,7 @@ final class TrackingFileSystem extends BaseVirtualFileSystem {
   @override
   XOpenResult xOpen(Sqlite3Filename path, int flags) {
     final result = parent.xOpen(path, flags);
+    openFiles++;
     return (
       outFlags: result.outFlags,
       file: TrackingFile(
@@ -85,6 +87,7 @@ class TrackingFile implements VirtualFileSystemFile {
 
   @override
   void xClose() {
+    vfs.openFiles--;
     return parentFile.xClose();
   }
 

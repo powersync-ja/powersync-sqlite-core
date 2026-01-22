@@ -13,6 +13,7 @@ import 'package:path/path.dart';
 
 import 'utils/native_test_utils.dart';
 import 'utils/test_utils.dart';
+import 'utils/tracking_vfs.dart';
 
 void main() {
   final vfs =
@@ -1374,6 +1375,23 @@ CREATE TRIGGER users_ref_delete
 
       expect(db.select('select * from user_reference'), isEmpty);
     });
+  });
+
+  test('can close database while iteration is active', () {
+    // The sync client caches prepared statements, we need to ensure those are
+    // freed when we close the connection since SQLite would keep files open
+    // otherwise.
+    final vfs = TrackingFileSystem(
+        parent: InMemoryFileSystem(), name: 'sync-test-cleanup');
+    sqlite3.registerVirtualFileSystem(vfs);
+    addTearDown(() => sqlite3.unregisterVirtualFileSystem(vfs));
+
+    db = openTestDatabase(vfs: vfs, fileName: '/test.db')
+      ..select('select powersync_init();');
+    invokeControl('start', null);
+    expect(vfs.openFiles, isPositive);
+    db.dispose();
+    expect(vfs.openFiles, isZero);
   });
 }
 
