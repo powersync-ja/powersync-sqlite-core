@@ -57,9 +57,14 @@ extern "C" fn connect(
 }
 
 extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
-    unsafe {
-        drop(Box::from_raw(vtab as *mut VirtualTable));
-    }
+    // Assume ownership of vtab since xDisconnect is supposed to destroy the connection.
+    let vtab = unsafe { Box::from_raw(vtab as *mut VirtualTable) };
+
+    // This is an eponymous virtual table. It will only be disconnected when the database is closed.
+    // So we can use this as a "pre-close" hook and ensure we clear prepared statements the core
+    // extension might hold.
+    vtab.state.release_resources();
+
     ResultCode::OK as c_int
 }
 
@@ -103,6 +108,11 @@ extern "C" fn update(
         } else if op == "delete_bucket" {
             let result = delete_bucket(db, args[3].text());
             vtab_result(vtab, result)
+        } else if op == "noop" {
+            // We call this to ensure the table is added to an active database, ensuring that
+            // the disconnect callback runs before the database is closed (allowing us to free
+            // resources from the client state).
+            ResultCode::OK as c_int
         } else {
             ResultCode::MISUSE as c_int
         }

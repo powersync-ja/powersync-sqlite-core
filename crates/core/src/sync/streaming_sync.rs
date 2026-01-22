@@ -11,7 +11,7 @@ use alloc::{
     boxed::Box,
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     format,
-    rc::Rc,
+    rc::{Rc, Weak},
     string::{String, ToString},
     vec::Vec,
 };
@@ -51,16 +51,16 @@ use super::{
 /// initialized.
 pub struct SyncClient {
     db: *mut sqlite::sqlite3,
-    db_state: Rc<DatabaseState>,
+    db_state: Weak<DatabaseState>,
     /// The current [ClientState] (essentially an optional [StreamingSyncIteration]).
     state: ClientState,
 }
 
 impl SyncClient {
-    pub fn new(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Self {
+    pub fn new(db: *mut sqlite::sqlite3, state: &Rc<DatabaseState>) -> Self {
         Self {
             db,
-            db_state: state,
+            db_state: Rc::downgrade(state),
             state: ClientState::Idle,
         }
     }
@@ -145,7 +145,7 @@ impl SyncIterationHandle {
     fn new(
         db: *mut sqlite::sqlite3,
         options: StartSyncStream,
-        state: Rc<DatabaseState>,
+        state: Weak<DatabaseState>,
     ) -> Result<Self, PowerSyncError> {
         let runner = StreamingSyncIteration {
             db,
@@ -224,7 +224,7 @@ impl<'a> ActiveEvent<'a> {
 
 struct StreamingSyncIteration {
     db: *mut sqlite::sqlite3,
-    state: Rc<DatabaseState>,
+    state: Weak<DatabaseState>,
     adapter: StorageAdapter,
     options: StartSyncStream,
     status: SyncStatusContainer,
@@ -813,9 +813,14 @@ impl StreamingSyncIteration {
         target: &OwnedCheckpoint,
         priority: Option<BucketPriority>,
     ) -> Result<SyncLocalResult, PowerSyncError> {
-        let result =
-            self.adapter
-                .sync_local(&self.state, target, priority, &self.options.schema)?;
+        let state = match self.state.upgrade() {
+            Some(state) => state,
+            None => return Err(PowerSyncError::unknown_internal()),
+        };
+
+        let result = self
+            .adapter
+            .sync_local(&*state, target, priority, &self.options.schema)?;
 
         if matches!(&result, SyncLocalResult::ChangesApplied) {
             // Update affected stream subscriptions to mark them as synced.
