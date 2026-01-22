@@ -188,14 +188,6 @@ pub struct BucketRequest {
     pub after: String,
 }
 
-/// Wrapper around a [SyncClient].
-///
-/// We allocate one instance of this per database (in [register]) - the [SyncClient] has an initial
-/// empty state that doesn't consume any resources.
-struct SqlController {
-    client: SyncClient,
-}
-
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     extern "C" fn control(
         ctx: *mut sqlite::context,
@@ -203,11 +195,10 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         argv: *mut *mut sqlite::value,
     ) -> () {
         let result = (|| -> Result<(), PowerSyncError> {
-            debug_assert!(!ctx.db_handle().get_autocommit());
+            let db = ctx.db_handle();
+            debug_assert!(!db.get_autocommit());
 
-            let controller = unsafe { ctx.user_data().cast::<SqlController>().as_mut() }
-                .ok_or_else(|| PowerSyncError::unknown_internal())?;
-
+            let state = unsafe { DatabaseState::from_context(&ctx) };
             let args = sqlite::args!(argc, argv);
             let [op, payload] = args else {
                 // This should be unreachable, we register the function with two arguments.
@@ -222,14 +213,24 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
 
             let op = op.text();
             let event = match op {
-                "start" => SyncControlRequest::StartSyncStream({
-                    if payload.value_type() == ColumnType::Text {
-                        serde_json::from_str(payload.text())
-                            .map_err(PowerSyncError::as_argument_error)?
-                    } else {
-                        StartSyncStream::default()
-                    }
-                }),
+                "start" => {
+                    // Ensure the operations vtab exists. It's not actually used by the sync client,
+                    // but we rely on that vtab being destroyed as a pre-close hook for the database
+                    // connection to free statements preserved across multiple powersync_control
+                    // invocations.
+                    db.exec_safe(
+                        "insert into powersync_operations (op, data) VALUES ('noop', null);",
+                    )?;
+
+                    SyncControlRequest::StartSyncStream({
+                        if payload.value_type() == ColumnType::Text {
+                            serde_json::from_str(payload.text())
+                                .map_err(PowerSyncError::as_argument_error)?
+                        } else {
+                            StartSyncStream::default()
+                        }
+                    })
+                }
                 "stop" => SyncControlRequest::StopSyncStream,
                 "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
                     data: if payload.value_type() == ColumnType::Text {
@@ -267,14 +268,25 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                 "subscriptions" => {
                     let request = serde_json::from_str(payload.text())
                         .map_err(PowerSyncError::as_argument_error)?;
-                    return apply_subscriptions(ctx.db_handle(), request);
+                    return apply_subscriptions(db, request);
                 }
                 _ => {
                     return Err(PowerSyncError::argument_error("Unknown operation"));
                 }
             };
 
-            let instructions = controller.client.push_event(event)?;
+            let instructions = {
+                let mut client = state.sync_client.borrow_mut();
+
+                client
+                    .get_or_insert_with(|| {
+                        let state = unsafe { DatabaseState::clone_from(ctx.user_data()) };
+
+                        SyncClient::new(db, &state)
+                    })
+                    .push_event(event)
+            }?;
+
             let formatted =
                 serde_json::to_string(&instructions).map_err(PowerSyncError::internal)?;
             ctx.result_text_transient(&formatted);
@@ -288,23 +300,15 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         }
     }
 
-    unsafe extern "C" fn destroy(ptr: *mut c_void) {
-        drop(unsafe { Box::from_raw(ptr.cast::<SqlController>()) });
-    }
-
-    let controller = Box::new(SqlController {
-        client: SyncClient::new(db, state),
-    });
-
     db.create_function_v2(
         "powersync_control",
         2,
         sqlite::UTF8 | sqlite::DIRECTONLY | SQLITE_RESULT_SUBTYPE,
-        Some(Box::into_raw(controller).cast()),
+        Some(Rc::into_raw(state.clone()) as *mut c_void),
         Some(control),
         None,
         None,
-        Some(destroy),
+        Some(DatabaseState::destroy_rc),
     )?;
 
     db.create_function_v2(

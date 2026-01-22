@@ -11,7 +11,7 @@ use alloc::{
 use powersync_sqlite_nostd::{self as sqlite, Context};
 use sqlite::{Connection, ResultCode};
 
-use crate::schema::Schema;
+use crate::{schema::Schema, sync::SyncClient};
 
 /// State that is shared for a SQLite database connection after the core extension has been
 /// registered on it.
@@ -24,6 +24,7 @@ pub struct DatabaseState {
     schema: RefCell<Option<Schema>>,
     pending_updates: RefCell<BTreeSet<String>>,
     commited_updates: RefCell<BTreeSet<String>>,
+    pub sync_client: RefCell<Option<SyncClient>>,
 }
 
 impl DatabaseState {
@@ -88,6 +89,12 @@ impl DatabaseState {
     pub fn take_updates(&self) -> BTreeSet<String> {
         let mut committed = self.commited_updates.borrow_mut();
         core::mem::replace(&mut *committed, Default::default())
+    }
+
+    /// Releases global resources (like prepared statements for the sync client) referenced from
+    /// this state.
+    pub fn release_resources(&self) {
+        self.sync_client.replace(None);
     }
 
     /// ## Safety
