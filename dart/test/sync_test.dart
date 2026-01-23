@@ -1197,6 +1197,67 @@ CREATE TRIGGER users_delete
       );
     });
 
+    test('rest column', () {
+      db.execute(
+          'CREATE TABLE users (id TEXT NOT NULL, name TEXT, _rest TEXT)');
+      invokeControl(
+        'start',
+        json.encode({
+          'schema': {
+            'tables': [],
+            'raw_tables': [
+              {
+                'name': 'users',
+                'put': {
+                  'sql':
+                      'INSERT OR REPLACE INTO users (id, name, _rest) VALUES (?, ?, ?);',
+                  'params': [
+                    'Id',
+                    {'Column': 'name'},
+                    'Rest'
+                  ],
+                },
+                'delete': {
+                  'sql': 'DELETE FROM users WHERE id = ?',
+                  'params': ['Id'],
+                },
+                'clear': 'DELETE FROM users;',
+              }
+            ]
+          }
+        }),
+      );
+
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'user1',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushSyncData(
+        'a',
+        '2',
+        'user2',
+        'PUT',
+        {'name': 'Second user', 'foo': 'bar', 'another': 3},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      final users = db.select('SELECT * FROM users;');
+      expect(users, [
+        {'id': 'user1', 'name': 'First user', '_rest': null},
+        {
+          'id': 'user2',
+          'name': 'Second user',
+          '_rest': json.encode({'another': 3, 'foo': 'bar'})
+        },
+      ]);
+    });
+
     test('crud vtab', () {
       // This is mostly a test for the triggers, validating the suggestions we
       // give on https://docs.powersync.com/usage/use-case-examples/raw-tables#capture-local-writes-with-triggers

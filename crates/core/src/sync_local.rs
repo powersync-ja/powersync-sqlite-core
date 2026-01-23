@@ -2,7 +2,8 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-use serde::Deserialize;
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::schema::inspection::ExistingTable;
@@ -153,7 +154,14 @@ impl<'a> SyncOperation<'a> {
                             let stmt = raw.put_statement(self.db)?;
                             let parsed: serde_json::Value = serde_json::from_str(data)
                                 .map_err(PowerSyncError::json_local_error)?;
-                            stmt.bind_for_put(id, &parsed)?;
+                            let json_object = parsed.as_object().ok_or_else(|| {
+                                PowerSyncError::argument_error(
+                                    "expected oplog data to be an object",
+                                )
+                            })?;
+
+                            let rest = stmt.render_rest_object(json_object)?;
+                            stmt.bind_for_put(id, &json_object, &rest)?;
                             stmt.exec(self.db, type_name, id, Some(&parsed))?;
                         }
                         Err(_) => {
@@ -510,7 +518,7 @@ impl<'a> ParsedSchemaTable<'a> {
 
 struct PreparedPendingStatement<'a> {
     stmt: ManagedStmt,
-    params: &'a [PendingStatementValue],
+    definition: &'a PendingStatement,
 }
 
 impl<'a> PreparedPendingStatement<'a> {
@@ -532,17 +540,64 @@ impl<'a> PreparedPendingStatement<'a> {
 
         Ok(Self {
             stmt,
-            params: &pending.params,
+            definition: pending,
+        })
+    }
+
+    pub fn render_rest_object(
+        &self,
+        json_data: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Option<String>, PowerSyncError> {
+        use serde_json::Value;
+
+        let Some(ref index) = self.definition.named_parameters_index else {
+            return Ok(None);
+        };
+
+        struct UnmatchedValues<'a>(BTreeMap<&'a String, &'a Value>);
+
+        impl<'a> Serialize for UnmatchedValues<'a> {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                let mut map = serializer.serialize_map(Some(self.0.len()))?;
+
+                for (k, v) in &self.0 {
+                    map.serialize_entry(k, v)?;
+                }
+
+                map.end()
+            }
+        }
+
+        let mut unmatched_values: Option<UnmatchedValues> = None;
+        for (key, value) in json_data {
+            if !index.named_parameters.contains(key) {
+                unmatched_values
+                    .get_or_insert_with(|| UnmatchedValues(BTreeMap::new()))
+                    .0
+                    .insert(key, value);
+            }
+        }
+
+        Ok(match unmatched_values {
+            None => None,
+            Some(unmatched) => {
+                Some(serde_json::to_string(&unmatched).map_err(|e| PowerSyncError::internal(e))?)
+            }
         })
     }
 
     pub fn bind_for_put(
         &self,
         id: &str,
-        json_data: &serde_json::Value,
+        json_data: &serde_json::Map<String, serde_json::Value>,
+        rest: &Option<String>,
     ) -> Result<(), PowerSyncError> {
         use serde_json::Value;
-        for (i, source) in self.params.iter().enumerate() {
+
+        for (i, source) in self.definition.params.iter().enumerate() {
             let i = (i + 1) as i32;
 
             match source {
@@ -550,11 +605,7 @@ impl<'a> PreparedPendingStatement<'a> {
                     self.stmt.bind_text(i, id, Destructor::STATIC)?;
                 }
                 PendingStatementValue::Column(column) => {
-                    let parsed = json_data.as_object().ok_or_else(|| {
-                        PowerSyncError::argument_error("expected oplog data to be an object")
-                    })?;
-
-                    match parsed.get(column) {
+                    match json_data.get(column) {
                         Some(Value::Bool(value)) => {
                             self.stmt.bind_int(i, if *value { 1 } else { 0 })
                         }
@@ -573,6 +624,20 @@ impl<'a> PreparedPendingStatement<'a> {
                         _ => self.stmt.bind_null(i),
                     }?;
                 }
+                PendingStatementValue::Rest => {
+                    // These are bound later.
+                    debug_assert!(self.definition.named_parameters_index.is_some());
+                }
+            }
+        }
+
+        if let Some(index) = &self.definition.named_parameters_index {
+            for target in &index.rest_parameter_positions {
+                let index = (*target + 1) as i32;
+                match rest {
+                    None => self.stmt.bind_null(index),
+                    Some(value) => self.stmt.bind_text(index, &*value, Destructor::STATIC),
+                }?;
             }
         }
 
@@ -580,7 +645,7 @@ impl<'a> PreparedPendingStatement<'a> {
     }
 
     pub fn bind_for_delete(&self, id: &str) -> Result<(), PowerSyncError> {
-        for (i, source) in self.params.iter().enumerate() {
+        for (i, source) in self.definition.params.iter().enumerate() {
             if let PendingStatementValue::Id = source {
                 self.stmt
                     .bind_text((i + 1) as i32, id, Destructor::STATIC)?;
