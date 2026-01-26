@@ -16,9 +16,11 @@ use super::{
     storage_adapter::{BucketInfo, StorageAdapter},
 };
 
+/// If known, `size` should be the size of the buffer from which data has been decoded in bytes.
 pub fn insert_bucket_operations(
     adapter: &StorageAdapter,
     data: &DataLine,
+    size: usize,
 ) -> Result<(), PowerSyncError> {
     let db = adapter.db;
     let BucketInfo {
@@ -194,7 +196,8 @@ WHERE bucket = ?1",
                 SET last_op = ?2,
                     add_checksum = (add_checksum + ?3) & 0xffffffff,
                     op_checksum = (op_checksum + ?4) & 0xffffffff,
-                    count_since_last = count_since_last + ?5
+                    count_since_last = count_since_last + ?5,
+                    download_size = download_size + ?6
             WHERE id = ?1",
         )?;
         statement.bind_int64(1, bucket_id)?;
@@ -202,6 +205,7 @@ WHERE bucket = ?1",
         statement.bind_int(3, add_checksum.bitcast_i32())?;
         statement.bind_int(4, op_checksum.bitcast_i32())?;
         statement.bind_int(5, added_ops)?;
+        statement.bind_int64(6, size as i64)?;
 
         statement.exec()?;
     }

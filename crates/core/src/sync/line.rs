@@ -6,6 +6,9 @@ use serde::Deserialize;
 use serde::de::{Error, IgnoredAny, VariantAccess, Visitor};
 use serde_with::{DisplayFromStr, serde_as};
 
+use crate::bson;
+use crate::error::PowerSyncError;
+
 use super::Checksum;
 use super::bucket_priority::BucketPriority;
 
@@ -14,6 +17,49 @@ use super::bucket_priority::BucketPriority;
 /// escape sequences (otherwise, the string is not a direct view of input data and we need an
 /// internal copy).
 type SyncLineStr<'a> = Cow<'a, str>;
+
+#[derive(Clone, Copy)]
+pub enum SyncLineSource<'a> {
+    /// Sync lines that have been decoded from JSON.
+    Text(&'a str),
+
+    /// Sync lines that have been decoded from BSON.
+    Binary(&'a [u8]),
+}
+
+impl<'a> SyncLineSource<'a> {
+    pub fn len(&self) -> usize {
+        match self {
+            SyncLineSource::Text(text) => text.len(),
+            SyncLineSource::Binary(binary) => binary.len(),
+        }
+    }
+}
+
+pub struct SyncLineWithSource<'a> {
+    pub source: SyncLineSource<'a>,
+    pub line: SyncLine<'a>,
+}
+
+impl<'a> SyncLineWithSource<'a> {
+    pub fn from_text(source: &'a str) -> Result<Self, PowerSyncError> {
+        let line = serde_json::from_str(source)
+            .map_err(|e| PowerSyncError::sync_protocol_error("invalid text line", e))?;
+        Ok(SyncLineWithSource {
+            source: SyncLineSource::Text(source),
+            line,
+        })
+    }
+
+    pub fn from_binary(source: &'a [u8]) -> Result<Self, PowerSyncError> {
+        let line = bson::from_bytes(source)
+            .map_err(|e| PowerSyncError::sync_protocol_error("invalid binary line", e))?;
+        Ok(SyncLineWithSource {
+            source: SyncLineSource::Binary(source),
+            line,
+        })
+    }
+}
 
 #[derive(Debug)]
 

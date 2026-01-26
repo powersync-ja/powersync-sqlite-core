@@ -20,9 +20,13 @@ pub fn insert_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), Powe
     let batch: BucketBatch =
         serde_json::from_str(data).map_err(PowerSyncError::as_argument_error)?;
     let adapter = StorageAdapter::new(db)?;
+    let assumed_bucket_length = data
+        .len()
+        .checked_div(batch.buckets.len())
+        .unwrap_or_default();
 
     for line in &batch.buckets {
-        insert_bucket_operations(&adapter, &line)?;
+        insert_bucket_operations(&adapter, &line, assumed_bucket_length)?;
     }
 
     Ok(())
