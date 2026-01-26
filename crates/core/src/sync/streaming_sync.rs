@@ -24,6 +24,7 @@ use crate::{
     sync::{
         BucketPriority,
         checkpoint::OwnedBucketChecksum,
+        diagnostics::DiagnosticsCollector,
         interface::{CloseSyncStream, StartSyncStream, StreamSubscriptionRequest},
         line::{
             BucketSubscriptionReason, DataLine, StreamDescription, StreamSubscriptionError,
@@ -148,11 +149,12 @@ impl SyncIterationHandle {
     ) -> Result<Self, PowerSyncError> {
         let runner = StreamingSyncIteration {
             db,
+            validated_but_not_applied: None,
+            diagnostics: DiagnosticsCollector::for_options(&options),
             options,
             state,
             adapter: StorageAdapter::new(db)?,
             status: SyncStatusContainer::new(),
-            validated_but_not_applied: None,
         };
         let future = runner.run().boxed_local();
 
@@ -231,6 +233,7 @@ struct StreamingSyncIteration {
     // pending local data. We will retry applying this checkpoint when the client SDK informs us
     // that it has finished uploading changes.
     validated_but_not_applied: Option<OwnedCheckpoint>,
+    diagnostics: Option<DiagnosticsCollector>,
 }
 
 impl StreamingSyncIteration {
@@ -456,10 +459,20 @@ impl StreamingSyncIteration {
                 // something worth doing.
                 self.validated_but_not_applied = None;
                 *target = updated_target;
+
+                if let Some(diagnostics) = &self.diagnostics {
+                    let status = self.status.inner().borrow();
+                    diagnostics.handle_tracking_checkpoint(&*status, &mut event.instructions);
+                }
             }
             SyncStateMachineTransition::DataLineSaved { line } => {
                 self.status
                     .update(|s| s.track_line(&line), &mut event.instructions);
+
+                if let Some(diagnostics) = &mut self.diagnostics {
+                    let status = self.status.inner().borrow();
+                    diagnostics.handle_data_line(line, &*status, &mut event.instructions);
+                }
             }
             SyncStateMachineTransition::CloseIteration(close) => return Some(close),
             SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {

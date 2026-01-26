@@ -267,7 +267,7 @@ pub struct SyncPriorityStatus {
 }
 
 /// Per-bucket download progress information.
-#[derive(Serialize, Hash)]
+#[derive(Serialize, Hash, Clone)]
 pub struct BucketProgress {
     pub priority: BucketPriority,
     pub at_last: i64,
@@ -277,7 +277,7 @@ pub struct BucketProgress {
 
 #[derive(Hash)]
 pub struct SyncDownloadProgress {
-    buckets: BTreeMap<String, BucketProgress>,
+    pub buckets: BTreeMap<String, BucketProgress>,
 }
 
 impl Serialize for SyncDownloadProgress {
