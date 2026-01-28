@@ -415,9 +415,9 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 11')
 
     if current_version < 12 && target_version >= 12 {
         let stmt = "\
-ALTER TABLE ps_buckets ADD COLUMN download_size INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE ps_buckets ADD COLUMN downloaded_size INTEGER NOT NULL DEFAULT 0;
 INSERT INTO ps_migration(id, down_migrations) VALUES(12, json_array(
-json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN download_size'),
+json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN downloaded_size'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 12')
 ));
 ";

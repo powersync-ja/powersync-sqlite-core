@@ -197,7 +197,7 @@ WHERE bucket = ?1",
                     add_checksum = (add_checksum + ?3) & 0xffffffff,
                     op_checksum = (op_checksum + ?4) & 0xffffffff,
                     count_since_last = count_since_last + ?5,
-                    download_size = download_size + ?6
+                    downloaded_size = downloaded_size + ?6
             WHERE id = ?1",
         )?;
         statement.bind_int64(1, bucket_id)?;

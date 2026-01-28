@@ -1397,7 +1397,7 @@ CREATE TRIGGER users_ref_delete
     pushCheckpoint(buckets: [bucketDescription('a', count: 2)]);
 
     void expectDownloadSize(int size) {
-      final [row] = db.select('SELECT download_size FROM ps_buckets');
+      final [row] = db.select('SELECT downloaded_size FROM ps_buckets');
       expect(row[0], size);
     }
 

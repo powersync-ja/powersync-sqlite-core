@@ -425,7 +425,7 @@ const expectedState = <int, String>{
   add_checksum INTEGER NOT NULL DEFAULT 0,
   op_checksum INTEGER NOT NULL DEFAULT 0,
   pending_delete INTEGER NOT NULL DEFAULT 0
-, count_at_last INTEGER NOT NULL DEFAULT 0, count_since_last INTEGER NOT NULL DEFAULT 0, download_size INTEGER NOT NULL DEFAULT 0) STRICT
+, count_at_last INTEGER NOT NULL DEFAULT 0, count_since_last INTEGER NOT NULL DEFAULT 0, downloaded_size INTEGER NOT NULL DEFAULT 0) STRICT
 ;CREATE TABLE ps_crud (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, tx_id INTEGER)
 ;CREATE TABLE ps_kv(key TEXT PRIMARY KEY NOT NULL, value BLOB)
 ;CREATE TABLE ps_migration(id INTEGER PRIMARY KEY, down_migrations TEXT)
@@ -474,7 +474,7 @@ const expectedState = <int, String>{
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(9, '[{"sql":"ALTER TABLE ps_buckets DROP COLUMN count_at_last"},{"sql":"ALTER TABLE ps_buckets DROP COLUMN count_since_last"},{"sql":"DELETE FROM ps_migration WHERE id >= 9"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(10, '[{"sql":"SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated''"},{"sql":"DELETE FROM ps_migration WHERE id >= 10"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(11, '[{"sql":"DROP TABLE ps_stream_subscriptions"},{"sql":"DELETE FROM ps_migration WHERE id >= 11"}]')
-;INSERT INTO ps_migration(id, down_migrations) VALUES(12, '[{"sql":"ALTER TABLE ps_buckets DROP COLUMN download_size"},{"sql":"DELETE FROM ps_migration WHERE id >= 12"}]')
+;INSERT INTO ps_migration(id, down_migrations) VALUES(12, '[{"sql":"ALTER TABLE ps_buckets DROP COLUMN downloaded_size"},{"sql":"DELETE FROM ps_migration WHERE id >= 12"}]')
 ''',
 };
 
@@ -590,7 +590,7 @@ const data1 = <int, String>{
   ('lists', 'l2')
 ''',
   12: r'''
-;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last, download_size) VALUES
+;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last, downloaded_size) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0, 0, 0, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0, 0, 0, 0)
 ;INSERT INTO ps_oplog(bucket, op_id, row_type, row_id, key, data, hash) VALUES
