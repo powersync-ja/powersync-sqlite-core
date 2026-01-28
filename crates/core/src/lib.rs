@@ -28,7 +28,7 @@ mod state;
 mod sync;
 mod sync_local;
 mod update_hooks;
-mod util;
+mod utils;
 mod uuid;
 mod version;
 mod view_admin;

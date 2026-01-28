@@ -5,7 +5,7 @@ use powersync_sqlite_nostd::Connection;
 use powersync_sqlite_nostd::{self as sqlite, ResultCode};
 
 use crate::error::{PSResult, PowerSyncError};
-use crate::util::quote_identifier;
+use crate::utils::SqlBuffer;
 
 /// An existing PowerSync-managed view that was found in the schema.
 #[derive(PartialEq)]
@@ -64,7 +64,7 @@ SELECT
     }
 
     pub fn drop_by_name(db: *mut sqlite::sqlite3, name: &str) -> Result<(), PowerSyncError> {
-        let q = format!("DROP VIEW IF EXISTS {:}", quote_identifier(name));
+        let q = format!("DROP VIEW IF EXISTS {:}", SqlBuffer::quote_identifier(name));
         db.exec_safe(&q)?;
         Ok(())
     }

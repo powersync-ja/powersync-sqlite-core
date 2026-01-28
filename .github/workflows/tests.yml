@@ -81,7 +81,7 @@ jobs:
       - name: Install Rust Nightly
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly-2025-10-31
+          toolchain: nightly-2025-12-05
           components: rust-src,rustfmt,clippy
 
       - name: Check formatting
@@ -201,7 +201,7 @@ jobs:
       - name: Install Rust Nightly
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: nightly-2025-10-31
+          toolchain: nightly-2025-12-05
           components: rust-src
 
       - name: Install valgrind

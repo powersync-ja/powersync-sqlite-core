@@ -24,7 +24,7 @@ use crate::{
         checkpoint::OwnedBucketChecksum, storage_adapter::StorageAdapter,
         subscriptions::LocallyTrackedSubscription,
     },
-    util::JsonString,
+    utils::JsonString,
 };
 
 use super::{

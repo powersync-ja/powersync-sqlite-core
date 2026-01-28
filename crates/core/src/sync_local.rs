@@ -1,6 +1,6 @@
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
@@ -10,11 +10,11 @@ use crate::schema::inspection::ExistingTable;
 use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
+use crate::utils::SqlBuffer;
 use powersync_sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
 use powersync_sqlite_nostd::{ColumnType, Connection, ResultCode};
 
 use crate::ext::SafeManagedStmt;
-use crate::util::quote_internal_name;
 
 pub fn sync_local<V: Value>(
     state: &DatabaseState,
@@ -171,24 +171,25 @@ impl<'a> SyncOperation<'a> {
                         }
                     }
                 } else {
-                    let quoted = quote_internal_name(type_name, false);
-
                     // is_err() is essentially a NULL check here.
                     // NULL data means no PUT operations found, so we delete the row.
                     if data.is_err() {
                         // DELETE
                         let delete_statement = match &last_delete {
-                            Some(stmt) if &*stmt.table == &*quoted => &stmt.statement,
+                            Some(stmt) if stmt.table == type_name => &stmt.statement,
                             _ => {
                                 // Prepare statement when the table changed
-                                let statement = self
-                                    .db
-                                    .prepare_v2(&format!("DELETE FROM {} WHERE id = ?", quoted))
-                                    .into_db_result(self.db)?;
+                                let mut statement = SqlBuffer::new();
+                                statement.push_str("DELETE FROM ");
+                                statement.quote_internal_name(type_name, false);
+                                statement.push_str(" WHERE id = ?");
+
+                                let statement =
+                                    self.db.prepare_v2(&statement.sql).into_db_result(self.db)?;
 
                                 &last_delete
                                     .insert(CachedStatement {
-                                        table: quoted.clone(),
+                                        table: type_name.to_string(),
                                         statement,
                                     })
                                     .statement
@@ -201,20 +202,20 @@ impl<'a> SyncOperation<'a> {
                     } else {
                         // INSERT/UPDATE
                         let insert_statement = match &last_insert {
-                            Some(stmt) if &*stmt.table == &*quoted => &stmt.statement,
+                            Some(stmt) if stmt.table == type_name => &stmt.statement,
                             _ => {
                                 // Prepare statement when the table changed
-                                let statement = self
-                                    .db
-                                    .prepare_v2(&format!(
-                                        "REPLACE INTO {}(id, data) VALUES(?, ?)",
-                                        quoted
-                                    ))
-                                    .into_db_result(self.db)?;
+                                let mut statement = SqlBuffer::new();
+                                statement.push_str("REPLACE INTO ");
+                                statement.quote_internal_name(type_name, false);
+                                statement.push_str("(id, data) VALUES (?, ?)");
+
+                                let statement =
+                                    self.db.prepare_v2(&statement.sql).into_db_result(self.db)?;
 
                                 &last_insert
                                     .insert(CachedStatement {
-                                        table: quoted.clone(),
+                                        table: type_name.to_string(),
                                         statement,
                                     })
                                     .statement

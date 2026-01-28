@@ -14,7 +14,7 @@ use crate::error::PowerSyncError;
 use crate::migrations::{LATEST_VERSION, powersync_migrate};
 use crate::schema::inspection::ExistingView;
 use crate::state::DatabaseState;
-use crate::util::quote_identifier;
+use crate::utils::SqlBuffer;
 use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 // Used in old down migrations, do not remove.
@@ -109,7 +109,7 @@ DELETE FROM ps_stream_subscriptions;
     }
 
     for name in tables {
-        let quoted = quote_identifier(&name);
+        let quoted = SqlBuffer::quote_identifier(&name);
         // The first delete statement deletes a single row, to trigger an update notification for the table.
         // The second delete statement uses the truncate optimization to delete the remainder of the data.
         let delete_sql = format!(

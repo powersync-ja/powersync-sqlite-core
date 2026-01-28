@@ -7,6 +7,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use alloc::{format, vec};
 use core::ffi::c_int;
+use core::fmt::Write;
 
 use powersync_sqlite_nostd as sqlite;
 use powersync_sqlite_nostd::Context;
@@ -15,8 +16,9 @@ use sqlite::{Connection, ResultCode, Value};
 use crate::error::{PSResult, PowerSyncError};
 use crate::ext::ExtendedDatabase;
 use crate::schema::inspection::{ExistingTable, ExistingView};
+use crate::schema::table_info::Index;
 use crate::state::DatabaseState;
-use crate::util::{quote_identifier, quote_json_path};
+use crate::utils::SqlBuffer;
 use crate::views::{
     powersync_trigger_delete_sql, powersync_trigger_insert_sql, powersync_trigger_update_sql,
     powersync_view_sql,
@@ -54,7 +56,7 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
             }
 
             // New table.
-            let quoted_internal_name = quote_identifier(&table.internal_name());
+            let quoted_internal_name = SqlBuffer::quote_identifier(&table.internal_name());
 
             db.exec_safe(&format!(
                 "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
@@ -88,7 +90,7 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
                 db.exec_text(
                     &format!(
                         "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}",
-                        quote_identifier(&remaining.internal_name)
+                        SqlBuffer::quote_identifier(&remaining.internal_name)
                     ),
                     &remaining.name,
                 )
@@ -100,11 +102,37 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
     // We cannot have any open queries on sqlite_master at the point that we drop tables, otherwise
     // we get "table is locked" errors.
     for remaining in existing_tables.values() {
-        let q = format!("DROP TABLE {:}", quote_identifier(&remaining.internal_name));
+        let q = format!(
+            "DROP TABLE {:}",
+            SqlBuffer::quote_identifier(&remaining.internal_name)
+        );
         db.exec_safe(&q).into_db_result(db)?;
     }
 
     Ok(())
+}
+
+fn create_index_stmt(table_name: &str, index_name: &str, index: &Index) -> String {
+    let mut sql = SqlBuffer::new();
+    sql.push_str("CREATE INDEX ");
+    let _ = sql.identifier().write_str(&index_name);
+    sql.push_str(" ON ");
+    let _ = sql.identifier().write_str(&table_name);
+    sql.push_char('(');
+    {
+        let mut sql = sql.comma_separated();
+        for indexed_column in &index.columns {
+            let sql = sql.element();
+            sql.json_extract_and_cast("data", &indexed_column.name, &indexed_column.type_name);
+
+            if !indexed_column.ascending {
+                sql.push_str(" DESC");
+            }
+        }
+    }
+    sql.push_char(')');
+
+    sql.sql
 }
 
 fn update_indexes(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerSyncError> {
@@ -136,32 +164,14 @@ fn update_indexes(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), Power
                     result
                 };
 
-                let mut column_values: Vec<String> = alloc::vec![];
-                for indexed_column in &index.columns {
-                    let mut value = format!(
-                        "CAST(json_extract(data, {:}) as {:})",
-                        quote_json_path(&indexed_column.name),
-                        &indexed_column.type_name
-                    );
-
-                    if !indexed_column.ascending {
-                        value += " DESC";
-                    }
-
-                    column_values.push(value);
-                }
-
-                let sql = format!(
-                    "CREATE INDEX {} ON {}({})",
-                    quote_identifier(&index_name),
-                    quote_identifier(&table_name),
-                    column_values.join(", ")
-                );
-
+                let sql = create_index_stmt(&table_name, &index_name, index);
                 if existing_sql.is_none() {
                     statements.push(sql);
                 } else if existing_sql != Some(&sql) {
-                    statements.push(format!("DROP INDEX {}", quote_identifier(&index_name)));
+                    statements.push(format!(
+                        "DROP INDEX {}",
+                        SqlBuffer::quote_identifier(&index_name)
+                    ));
                     statements.push(sql);
                 }
 
@@ -190,7 +200,7 @@ SELECT
         while statement.step()? == ResultCode::ROW {
             let name = statement.column_text(0)?;
 
-            statements.push(format!("DROP INDEX {}", quote_identifier(name)));
+            statements.push(format!("DROP INDEX {}", SqlBuffer::quote_identifier(name)));
         }
     }
 
@@ -293,4 +303,41 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use alloc::{string::ToString, vec};
+
+    use crate::schema::table_info::{Index, IndexedColumn};
+
+    use super::create_index_stmt;
+
+    #[test]
+    fn test_create_index() {
+        let stmt = create_index_stmt(
+            "table",
+            "index",
+            &Index {
+                name: "unused".to_string(),
+                columns: vec![
+                    IndexedColumn {
+                        name: "a".to_string(),
+                        ascending: true,
+                        type_name: "text".to_string(),
+                    },
+                    IndexedColumn {
+                        name: "b".to_string(),
+                        ascending: false,
+                        type_name: "integer".to_string(),
+                    },
+                ],
+            },
+        );
+
+        assert_eq!(
+            stmt,
+            r#"CREATE INDEX "index" ON "table"(CAST(json_extract(data, '$.a') as text), CAST(json_extract(data, '$.b') as integer) DESC)"#
+        )
+    }
 }
