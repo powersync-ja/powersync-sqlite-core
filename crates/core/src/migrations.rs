@@ -13,7 +13,7 @@ use crate::fix_data::apply_v035_fix;
 use crate::schema::inspection::ExistingView;
 use crate::sync::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 11;
+pub const LATEST_VERSION: i32 = 12;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -408,6 +408,17 @@ CREATE TABLE ps_stream_subscriptions (
 INSERT INTO ps_migration(id, down_migrations) VALUES(11, json_array(
 json_object('sql', 'DROP TABLE ps_stream_subscriptions'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 11')
+));
+";
+        local_db.exec_safe(stmt).into_db_result(local_db)?;
+    }
+
+    if current_version < 12 && target_version >= 12 {
+        let stmt = "\
+ALTER TABLE ps_buckets ADD COLUMN downloaded_size INTEGER NOT NULL DEFAULT 0;
+INSERT INTO ps_migration(id, down_migrations) VALUES(12, json_array(
+json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN downloaded_size'),
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 12')
 ));
 ";
         local_db.exec_safe(stmt).into_db_result(local_db)?;

@@ -22,7 +22,7 @@ pub fn insert_operation(db: *mut sqlite::sqlite3, data: &str) -> Result<(), Powe
     let adapter = StorageAdapter::new(db)?;
 
     for line in &batch.buckets {
-        insert_bucket_operations(&adapter, &line)?;
+        insert_bucket_operations(&adapter, &line, 0)?;
     }
 
     Ok(())

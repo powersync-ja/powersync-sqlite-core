@@ -1391,6 +1391,22 @@ CREATE TRIGGER users_ref_delete
     db.dispose();
     expect(vfs.openFiles, isZero);
   });
+
+  test('tracks download size', () {
+    invokeControl('start', null);
+    pushCheckpoint(buckets: [bucketDescription('a', count: 2)]);
+
+    void expectDownloadSize(int size) {
+      final [row] = db.select('SELECT downloaded_size FROM ps_buckets');
+      expect(row[0], size);
+    }
+
+    pushSyncData('a', '1', 'row-0', 'PUT', {'col': 'hi'});
+    expectDownloadSize(isBson ? 185 : 186);
+
+    pushSyncData('a', '1', 'row-1', 'PUT', {'col': 'hi again'});
+    expectDownloadSize(isBson ? 376 : 378);
+  });
 }
 
 final priorityBuckets = [

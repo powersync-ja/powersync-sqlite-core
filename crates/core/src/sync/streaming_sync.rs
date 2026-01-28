@@ -18,7 +18,6 @@ use alloc::{
 use futures_lite::FutureExt;
 
 use crate::{
-    bson,
     error::{PowerSyncError, PowerSyncErrorCause},
     kv::client_id,
     state::DatabaseState,
@@ -28,7 +27,7 @@ use crate::{
         interface::{CloseSyncStream, StartSyncStream, StreamSubscriptionRequest},
         line::{
             BucketSubscriptionReason, DataLine, StreamDescription, StreamSubscriptionError,
-            StreamSubscriptionErrorCause,
+            StreamSubscriptionErrorCause, SyncLineWithSource,
         },
         subscriptions::LocallyTrackedSubscription,
         sync_status::{ActiveStreamSubscription, Timestamp},
@@ -268,8 +267,10 @@ impl StreamingSyncIteration {
         &self,
         target: &SyncTarget,
         event: &mut ActiveEvent,
-        line: &'a SyncLine<'a>,
+        line: &'a SyncLineWithSource<'a>,
     ) -> Result<SyncStateMachineTransition<'a>, PowerSyncError> {
+        let SyncLineWithSource { source, line } = line;
+
         Ok(match line {
             SyncLine::Checkpoint(checkpoint) => {
                 let (to_delete, updated_target) = target.track_checkpoint(&checkpoint);
@@ -386,7 +387,7 @@ impl StreamingSyncIteration {
                 }
             }
             SyncLine::Data(data_line) => {
-                insert_bucket_operations(&self.adapter, &data_line)?;
+                insert_bucket_operations(&self.adapter, &data_line, source.len())?;
                 SyncStateMachineTransition::DataLineSaved { line: data_line }
             }
             SyncLine::KeepAlive(token) => {
@@ -492,7 +493,7 @@ impl StreamingSyncIteration {
         &mut self,
         target: &mut SyncTarget,
         event: &mut ActiveEvent,
-        line: &SyncLine,
+        line: &SyncLineWithSource,
     ) -> Result<Option<CloseSyncStream>, PowerSyncError> {
         let transition = self.prepare_handling_sync_line(target, event, line)?;
         Ok(self.apply_transition(target, event, transition))
@@ -506,7 +507,7 @@ impl StreamingSyncIteration {
         let hide_disconnect = loop {
             let event = Self::receive_event().await;
 
-            let line: SyncLine = match event.event {
+            let line: SyncLineWithSource = match event.event {
                 SyncEvent::Initialize { .. } => {
                     panic!("Initialize should only be emited once")
                 }
@@ -515,10 +516,8 @@ impl StreamingSyncIteration {
                         .update(|s| s.disconnect(), &mut event.instructions);
                     break false;
                 }
-                SyncEvent::TextLine { data } => serde_json::from_str(data)
-                    .map_err(|e| PowerSyncError::sync_protocol_error("invalid text line", e))?,
-                SyncEvent::BinaryLine { data } => bson::from_bytes(data)
-                    .map_err(|e| PowerSyncError::sync_protocol_error("invalid binary line", e))?,
+                SyncEvent::TextLine { data } => SyncLineWithSource::from_text(data)?,
+                SyncEvent::BinaryLine { data } => SyncLineWithSource::from_binary(data)?,
                 SyncEvent::UploadFinished => {
                     self.try_applying_write_after_completed_upload(event)?;
 
