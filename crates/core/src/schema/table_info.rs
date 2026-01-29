@@ -1,4 +1,6 @@
-use alloc::{format, string::String, vec, vec::Vec};
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::{collections::btree_set::BTreeSet, format, string::String, vec::Vec};
 use serde::{Deserialize, de::Visitor};
 
 #[derive(Deserialize)]
@@ -252,16 +254,77 @@ impl<'de> Deserialize<'de> for TableInfoFlags {
     }
 }
 
-#[derive(Deserialize)]
 pub struct PendingStatement {
     pub sql: String,
     /// This vec should contain an entry for each parameter in [sql].
     pub params: Vec<PendingStatementValue>,
+
+    /// Present if this statement has a [PendingStatementValue::Rest] parameter.
+    pub named_parameters_index: Option<RestColumnIndex>,
+}
+
+pub struct RestColumnIndex {
+    /// All column names referenced by this statement.
+    pub named_parameters: BTreeSet<String>,
+    /// Parameter indices that should be bound to a JSON object containing those values from the
+    /// source row that haven't been referenced by [PendingStatementValue::Column].
+    pub rest_parameter_positions: Vec<usize>,
+}
+
+impl<'de> Deserialize<'de> for PendingStatement {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct PendingStatementSource {
+            pub sql: String,
+            /// This vec should contain an entry for each parameter in [sql].
+            pub params: Vec<PendingStatementValue>,
+        }
+
+        let source = PendingStatementSource::deserialize(deserializer)?;
+        let mut named_parameters_index = None;
+        if source
+            .params
+            .iter()
+            .any(|s| matches!(s, PendingStatementValue::Rest))
+        {
+            let mut set = BTreeSet::new();
+            let mut rest_parameter_positions = vec![];
+            for (i, column) in source.params.iter().enumerate() {
+                set.insert(match column {
+                    PendingStatementValue::Id => "id".to_string(),
+                    PendingStatementValue::Column(name) => name.clone(),
+                    PendingStatementValue::Rest => {
+                        rest_parameter_positions.push(i);
+                        continue;
+                    }
+                });
+            }
+
+            named_parameters_index = Some(RestColumnIndex {
+                named_parameters: set,
+                rest_parameter_positions,
+            });
+        }
+
+        return Ok(Self {
+            sql: source.sql,
+            params: source.params,
+            named_parameters_index,
+        });
+    }
 }
 
 #[derive(Deserialize)]
 pub enum PendingStatementValue {
+    /// Bind to the PowerSync row id of the affected row.
     Id,
+    /// Bind to the value of column in the synced row.
     Column(String),
+    /// Bind to a JSON object containing all columns from the synced row that haven't been matched
+    /// by other statement values.
+    Rest,
     // TODO: Stuff like a raw object of put data?
 }
