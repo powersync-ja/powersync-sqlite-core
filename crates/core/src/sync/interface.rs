@@ -23,7 +23,7 @@ use serde_json::value::RawValue;
 use sqlite::{ResultCode, Value};
 
 use crate::sync::BucketPriority;
-use crate::util::JsonString;
+use crate::utils::JsonString;
 
 /// Payload provided by SDKs when requesting a sync iteration.
 #[derive(Deserialize)]

@@ -6,11 +6,11 @@ use alloc::string::String;
 use crate::create_sqlite_optional_text_fn;
 use crate::error::{PSResult, PowerSyncError};
 use crate::schema::inspection::ExistingTable;
+use crate::utils::SqlBuffer;
 use powersync_sqlite_nostd::{self as sqlite, ColumnType, Value};
 use powersync_sqlite_nostd::{Connection, Context, ResultCode};
 
 use crate::ext::SafeManagedStmt;
-use crate::util::quote_identifier;
 
 // Apply a data migration to fix any existing data affected by the issue
 // fixed in v0.3.5.
@@ -33,7 +33,7 @@ pub fn apply_v035_fix(db: *mut sqlite::sqlite3) -> Result<i64, PowerSyncError> {
             continue;
         };
 
-        let quoted = quote_identifier(full_name);
+        let quoted = SqlBuffer::quote_identifier(full_name);
 
         // language=SQLite
         let statement = db.prepare_v2(&format!(

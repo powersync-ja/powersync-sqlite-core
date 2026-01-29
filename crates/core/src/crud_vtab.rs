@@ -15,7 +15,7 @@ use crate::error::PowerSyncError;
 use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
 use crate::state::DatabaseState;
-use crate::util::MAX_OP_ID;
+use crate::utils::MAX_OP_ID;
 use crate::vtab_util::*;
 
 const MANUAL_NAME: &CStr = c"powersync_crud_";

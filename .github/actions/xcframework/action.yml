@@ -7,8 +7,8 @@ runs:
     - name: Setup
       shell: bash
       run: |
-        rustup toolchain install nightly-2025-10-31-aarch64-apple-darwin
-        rustup component add rust-src --toolchain nightly-2025-10-31-aarch64-apple-darwin
+        rustup toolchain install nightly-2025-12-05-aarch64-apple-darwin
+        rustup component add rust-src --toolchain nightly-2025-12-05-aarch64-apple-darwin
         rustup target add \
           x86_64-apple-darwin \
           aarch64-apple-darwin \

@@ -710,5 +710,69 @@ void main() {
         containsPair('data', {'col': 'not an integer'}),
       ]);
     });
+
+    group('insert only', () {
+      test('smoke test', () {
+        db
+          ..execute('select powersync_replace_schema(?)', [
+            json.encode({
+              'tables': [
+                {
+                  'name': 'items',
+                  'insert_only': true,
+                  'columns': [
+                    {'name': 'col', 'type': 'int'}
+                  ],
+                }
+              ]
+            })
+          ])
+          ..execute(
+            'INSERT INTO items (id, col) VALUES (uuid(), 1)',
+          );
+
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+        // Insert-only tables don't update the $local bucket
+        expect(db.select('SELECT * FROM ps_buckets'), isEmpty);
+
+        // Can't update or delete insert-only tables.
+        expect(() => db.execute('UPDATE items SET col = col + 1'),
+            throwsA(anything));
+        expect(() => db.execute('DELETE FROM items WHERE col = 1'),
+            throwsA(anything));
+      });
+
+      test('has no effect on local-only tables', () {
+        db
+          ..execute('select powersync_replace_schema(?)', [
+            json.encode({
+              'tables': [
+                {
+                  'name': 'items',
+                  'insert_only': true,
+                  'local_only': true,
+                  'columns': [
+                    {'name': 'col', 'type': 'int'}
+                  ],
+                }
+              ]
+            })
+          ]);
+
+        db.execute(
+          'INSERT INTO items (id, col) VALUES (uuid(), 1)',
+        );
+        expect(db.select('SELECT * FROM items'), hasLength(1));
+
+        db
+          ..execute('UPDATE items SET col = col + 1')
+          ..execute('DELETE FROM items WHERE col = 2');
+        expect(db.select('SELECT * FROM items'), isEmpty);
+
+        // because this is a local-only table, no crud items should have been
+        // created.
+        expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+      });
+    });
   });
 }

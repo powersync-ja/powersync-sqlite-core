@@ -162,6 +162,12 @@ impl TableInfoFlags {
     }
 
     pub const fn insert_only(self) -> bool {
+        // Note: insert_only is incompatible with local_only. For backwards compatibility, we want
+        // to silently ignore insert_only if local_only is set.
+        if self.local_only() {
+            return false;
+        }
+
         self.0 & Self::INSERT_ONLY != 0
     }
 

@@ -9,7 +9,7 @@ use crate::{
     error::{PSResult, PowerSyncError},
     ext::SafeManagedStmt,
     sync::BucketPriority,
-    util::JsonString,
+    utils::JsonString,
 };
 
 /// A row in the `ps_stream_subscriptions` table.

@@ -18,7 +18,7 @@ use crate::{
         sync_status::{ActiveStreamSubscription, DownloadSyncStatus, SyncPriorityStatus},
     },
     sync_local::{PartialSyncOperation, SyncOperation},
-    util::{JsonString, column_nullable},
+    utils::{JsonString, column_nullable},
 };
 
 use super::{

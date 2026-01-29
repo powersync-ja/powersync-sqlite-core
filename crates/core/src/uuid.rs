@@ -10,7 +10,7 @@ use sqlite::ResultCode;
 
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
-use crate::util::*;
+use crate::utils::gen_uuid;
 
 fn uuid_v4_impl(
     _ctx: *mut sqlite::context,
