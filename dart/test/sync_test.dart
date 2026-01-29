@@ -1449,7 +1449,7 @@ CREATE TRIGGER users_ref_delete
       ..select('select powersync_init();');
     invokeControl('start', null);
     expect(vfs.openFiles, isPositive);
-    db.dispose();
+    db.close();
     expect(vfs.openFiles, isZero);
   });
 
@@ -1467,6 +1467,108 @@ CREATE TRIGGER users_ref_delete
 
     pushSyncData('a', '1', 'row-1', 'PUT', {'col': 'hi again'});
     expectDownloadSize(isBson ? 376 : 378);
+  });
+
+  group('diagnostics', () {
+    test('infers schema', () {
+      invokeControl('start', json.encode({'diagnostics': {}}));
+      pushCheckpoint(buckets: priorityBuckets);
+      var instructions = pushSyncData('prio1', '1', 'row-0', 'PUT', {
+        'text': 'text',
+        'int': 3,
+        'double': 3.14,
+        'null': null,
+      });
+      expect(
+        instructions,
+        containsAll(
+          [
+            schemaChange('items', 'text', 'String'),
+            schemaChange('items', 'int', 'Integer'),
+            schemaChange('items', 'double', 'Real'),
+          ],
+        ),
+      );
+
+      instructions = pushSyncData('prio1', '2', 'row-1', 'PUT', {
+        'text': null,
+        'int': 3.123,
+        'double': 1.23,
+      });
+
+      // Should only report the changed type
+      expect(
+        instructions.skip(2),
+        [
+          schemaChange('items', 'int', 'Real'),
+        ],
+      );
+    });
+
+    test('reports per-bucket progress', () {
+      invokeControl('start', json.encode({'diagnostics': {}}));
+
+      var instructions = pushCheckpoint(
+        buckets: [
+          bucketDescription('a', count: 1),
+          bucketDescription('b', count: 1),
+        ],
+        lastOpId: 10,
+      );
+      expect(
+        instructions[1],
+        {
+          'HandleDiagnostics': {
+            'BucketStateChange': {
+              'incremental': false,
+              'changes': [
+                {
+                  'name': 'a',
+                  'progress': {
+                    'priority': 3,
+                    'at_last': 0,
+                    'since_last': 0,
+                    'target_count': 1
+                  },
+                },
+                {
+                  'name': 'b',
+                  'progress': {
+                    'priority': 3,
+                    'at_last': 0,
+                    'since_last': 0,
+                    'target_count': 1
+                  },
+                }
+              ]
+            }
+          }
+        },
+      );
+
+      instructions = pushSyncData('a', '1', 'a', 'PUT', {'foo': 'bar'});
+      expect(
+        instructions[1],
+        {
+          'HandleDiagnostics': {
+            'BucketStateChange': {
+              'incremental': true,
+              'changes': [
+                {
+                  'name': 'a',
+                  'progress': {
+                    'priority': 3,
+                    'at_last': 0,
+                    'since_last': 1,
+                    'target_count': 1
+                  },
+                }
+              ]
+            }
+          }
+        },
+      );
+    });
   });
 }
 

@@ -8,6 +8,7 @@ use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
+use crate::sync::diagnostics::{DiagnosticOptions, DiagnosticsEvent};
 use crate::sync::storage_adapter::StorageAdapter;
 use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
 use alloc::borrow::Cow;
@@ -43,6 +44,10 @@ pub struct StartSyncStream {
     pub active_streams: Rc<Vec<StreamKey>>,
     #[serde(default)]
     pub app_metadata: Option<Box<RawValue>>,
+
+    /// Whether sync diagnostics with detailed download stats and inferred schema should be reported
+    /// by the sync client.
+    pub diagnostics: Option<DiagnosticOptions>,
 }
 
 impl StartSyncStream {
@@ -59,6 +64,7 @@ impl Default for StartSyncStream {
             include_defaults: Self::include_defaults_by_default(),
             active_streams: Default::default(),
             app_metadata: Default::default(),
+            diagnostics: Default::default(),
         }
     }
 }
@@ -138,6 +144,11 @@ pub enum Instruction {
     FlushFileSystem {},
     /// Notify that a sync has been completed, prompting client SDKs to clear earlier errors.
     DidCompleteSync {},
+
+    /// Handle a diagnostic event.
+    ///
+    /// This instruction is only emitted if diagnostics have been enabled on [StartSyncStream].
+    HandleDiagnostics(DiagnosticsEvent),
 }
 
 #[derive(Serialize, Default)]

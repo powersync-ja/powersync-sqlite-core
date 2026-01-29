@@ -4,6 +4,7 @@ use powersync_sqlite_nostd::{self as sqlite, ResultCode};
 mod bucket_priority;
 pub mod checkpoint;
 mod checksum;
+mod diagnostics;
 mod interface;
 pub mod line;
 pub mod operations;

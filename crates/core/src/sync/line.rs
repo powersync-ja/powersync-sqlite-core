@@ -16,7 +16,7 @@ use super::bucket_priority::BucketPriority;
 /// With the JSON decoder, borrowing from input data is only possible when the string contains no
 /// escape sequences (otherwise, the string is not a direct view of input data and we need an
 /// internal copy).
-type SyncLineStr<'a> = Cow<'a, str>;
+pub type SyncLineStr<'a> = Cow<'a, str>;
 
 #[derive(Clone, Copy)]
 pub enum SyncLineSource<'a> {

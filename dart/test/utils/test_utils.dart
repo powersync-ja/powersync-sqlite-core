@@ -48,6 +48,18 @@ Object bucketDescription(
   };
 }
 
+Object schemaChange(String table, String column, String valueType) {
+  return {
+    'HandleDiagnostics': {
+      'SchemaChange': {
+        'table': table,
+        'column': column,
+        'value_type': valueType
+      }
+    }
+  };
+}
+
 Matcher isSqliteException(int code, dynamic message) {
   return isA<SqliteException>()
       .having((e) => e.extendedResultCode, 'extendedResultCode', code)
