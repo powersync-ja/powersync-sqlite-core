@@ -426,7 +426,7 @@ mod test {
 
         assert_eq!(
             stmt,
-            r#"CREATE VIEW "table"("id", "a", "b") AS SELECT "id", CAST(json_extract(data, '$.a') as text), CAST(json_extract(data, '$.b') as integer) FROM "ps_data__table" -- powersync-auto-generated"#
+            r#"CREATE VIEW "table"("id", "a", "b") AS SELECT id, CAST(json_extract(data, '$.a') as text), CAST(json_extract(data, '$.b') as integer) FROM "ps_data__table" -- powersync-auto-generated"#
         );
     }
 
@@ -436,7 +436,10 @@ mod test {
 
         assert_eq!(
             stmt,
-            r#"CREATE TRIGGER "ps_view_delete_table" INSTEAD OF DELETE ON "table" FOR EACH ROW BEGIN DELETE FROM "ps_data__table" WHERE id = OLD.id; INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'table');END"#
+            r#"CREATE TRIGGER "ps_view_delete_table" INSTEAD OF DELETE ON "table" FOR EACH ROW BEGIN
+DELETE FROM "ps_data__table" WHERE id = OLD.id;
+INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'table');
+END"#
         );
     }
 
