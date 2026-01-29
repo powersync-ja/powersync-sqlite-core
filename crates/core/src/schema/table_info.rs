@@ -22,8 +22,31 @@ pub struct Table {
 }
 
 #[derive(Deserialize)]
+pub struct RawTableSchema {
+    /// The actual name of the raw table in the local schema.
+    ///
+    /// Currently, this is only used to generate `CREATE TRIGGER` statements for the raw table.
+    #[serde(default)]
+    table_name: Option<String>,
+    #[serde(
+        default,
+        rename = "include_old",
+        deserialize_with = "deserialize_include_old"
+    )]
+    pub diff_include_old: Option<DiffIncludeOld>,
+    #[serde(flatten)]
+    pub flags: TableInfoFlags,
+}
+
+#[derive(Deserialize)]
 pub struct RawTable {
+    /// The [crate::sync::line::OplogEntry::object_type] for which rows should be forwarded to this
+    /// raw table.
+    ///
+    /// This is not necessarily the same as the local name of the raw table.
     pub name: String,
+    #[serde(flatten, default)]
+    pub schema: Option<RawTableSchema>,
     pub put: PendingStatement,
     pub delete: PendingStatement,
     #[serde(default)]

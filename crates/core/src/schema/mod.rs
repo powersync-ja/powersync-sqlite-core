@@ -1,5 +1,6 @@
 pub mod inspection;
 mod management;
+mod raw_table;
 mod table_info;
 
 use alloc::{rc::Rc, vec::Vec};
