@@ -208,8 +208,10 @@ jobs:
         run: sudo apt update && sudo apt install -y valgrind
 
       - name: Install Cargo Valgrind
-        run: |
-          cargo install cargo-valgrind
+        # TODO: Use released version. Currently we rely on the git version while we wait for this
+        # to be released: https://github.com/jfrimmel/cargo-valgrind/commit/408c0b4fb56e84eddc2bb09c88a11ba3adc0c188
+        run: cargo install --git https://github.com/jfrimmel/cargo-valgrind
+        #run: cargo install cargo-valgrind
 
       - name: Test Core
         run: |
