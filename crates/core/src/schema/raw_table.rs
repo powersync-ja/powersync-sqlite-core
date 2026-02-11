@@ -108,16 +108,13 @@ pub fn generate_raw_table_trigger(
         buffer.insert_into_powersync_crud(InsertIntoCrud {
             op: write,
             table: &as_schema_table,
-            id_expr: from_fn(|f| {
-                if write == WriteType::Delete {
-                    f.write_str("OLD.")
-                } else {
-                    f.write_str("NEW.")
-                }?;
-                f.write_str(".id")
-            }),
+            id_expr: if write == WriteType::Delete {
+                "OLD.id"
+            } else {
+                "NEW.id"
+            },
             type_name: &table.name,
-            data: Some(from_fn(|f| {
+            data: Some(&from_fn(|f| {
                 match write {
                     WriteType::Insert => {}
                     WriteType::Update => todo!(),

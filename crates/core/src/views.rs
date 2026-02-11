@@ -85,7 +85,7 @@ pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String, PowerS
             table: &as_schema_table,
             id_expr: "OLD.id",
             type_name: name,
-            data: None::<&'static str>,
+            data: None,
             metadata: None::<&'static str>,
         })?;
 
@@ -106,7 +106,7 @@ pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String, PowerS
                 table: &as_schema_table,
                 id_expr: "OLD.id",
                 type_name: name,
-                data: None::<&'static str>,
+                data: None,
                 metadata: Some("NEW._metadata"),
             })?;
         }
@@ -151,7 +151,7 @@ pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String, PowerS
                 id_expr: "NEW.id",
                 table: &as_schema_table,
                 type_name: name,
-                data: Some(from_fn(|f| {
+                data: Some(&from_fn(|f| {
                     write!(f, "json(powersync_diff('{{}}', {:}))", json_fragment)
                 })),
                 metadata: if table_info.options.flags.include_metadata() {
@@ -208,7 +208,7 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String, PowerS
             id_expr: "NEW.id",
             table: &as_schema_table,
             type_name: name,
-            data: Some(from_fn(|f| {
+            data: Some(&from_fn(|f| {
                 write!(
                     f,
                     "json(powersync_diff({json_fragment_old}, {json_fragment_new}))"
