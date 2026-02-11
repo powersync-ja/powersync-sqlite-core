@@ -1,6 +1,7 @@
 use core::slice;
 
 use alloc::{string::String, vec::Vec};
+use serde::Deserialize;
 
 use crate::schema::{
     Column, CommonTableOptions, RawTable, Table, raw_table::InferredTableStructure,
@@ -61,6 +62,7 @@ impl<'a> Iterator for SchemaTableColumnIterator<'a> {
     }
 }
 
+#[derive(Default)]
 pub struct ColumnFilter {
     sorted_names: Vec<String>,
 }
@@ -80,5 +82,20 @@ impl ColumnFilter {
         self.sorted_names
             .binary_search_by(|item| item.as_str().cmp(column))
             .is_ok()
+    }
+}
+
+impl AsRef<Vec<String>> for ColumnFilter {
+    fn as_ref(&self) -> &Vec<String> {
+        &self.sorted_names
+    }
+}
+
+impl<'de> Deserialize<'de> for ColumnFilter {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self::from(Vec::<String>::deserialize(deserializer)?))
     }
 }

@@ -1,4 +1,4 @@
-use core::fmt::{self, Formatter, from_fn};
+use core::fmt::{self, Formatter, Write, from_fn};
 
 use alloc::{
     format,
@@ -10,7 +10,7 @@ use powersync_sqlite_nostd::{Connection, Destructor, ResultCode};
 
 use crate::{
     error::PowerSyncError,
-    schema::{RawTable, SchemaTable},
+    schema::{ColumnFilter, RawTable, SchemaTable},
     utils::{InsertIntoCrud, SqlBuffer, WriteType},
     views::table_columns_to_json_object,
 };
@@ -23,6 +23,7 @@ impl InferredTableStructure {
     pub fn read_from_database(
         table_name: &str,
         db: impl Connection,
+        ignored_local_columns: &ColumnFilter,
     ) -> Result<Option<Self>, PowerSyncError> {
         let stmt = db.prepare_v2("select name from pragma_table_info(?)")?;
         stmt.bind_text(1, table_name, Destructor::STATIC)?;
@@ -34,7 +35,7 @@ impl InferredTableStructure {
             let name = stmt.column_text(0)?;
             if name == "id" {
                 has_id_column = true;
-            } else {
+            } else if !ignored_local_columns.matches(name) {
                 columns.push(name.to_string());
             }
         }
@@ -63,7 +64,9 @@ pub fn generate_raw_table_trigger(
         return Err(PowerSyncError::argument_error("Table has no local name"));
     };
 
-    let Some(resolved_table) = InferredTableStructure::read_from_database(local_table_name, db)?
+    let local_only_columns = &table.schema.local_only_columns;
+    let Some(resolved_table) =
+        InferredTableStructure::read_from_database(local_table_name, db, local_only_columns)?
     else {
         return Err(PowerSyncError::argument_error(format!(
             "Could not find {} in local schema",
@@ -80,7 +83,27 @@ pub fn generate_raw_table_trigger(
     buffer.create_trigger("", trigger_name);
     buffer.trigger_after(write, local_table_name);
     // Skip the trigger for writes during sync_local, these aren't crud writes.
-    buffer.push_str("WHEN NOT powersync_in_sync_operation() BEGIN\n");
+    buffer.push_str("WHEN NOT powersync_in_sync_operation()");
+
+    if write == WriteType::Update && !local_only_columns.as_ref().is_empty() {
+        buffer.push_str(" AND\n(");
+        // If we have local-only columns, we want to add additional WHEN clauses to ensure the
+        // trigger runs for updates on synced columns.
+        for (i, name) in as_schema_table.column_names().enumerate() {
+            if i != 0 {
+                buffer.push_str(" OR ");
+            }
+
+            // Generate OLD."column" IS NOT NEW."column"
+            buffer.push_str("OLD.");
+            let _ = buffer.identifier().write_str(name);
+            buffer.push_str(" IS NOT NEW.");
+            let _ = buffer.identifier().write_str(name);
+        }
+        buffer.push_str(")");
+    }
+
+    buffer.push_str(" BEGIN\n");
 
     if table.schema.options.flags.insert_only() {
         if write != WriteType::Insert {
