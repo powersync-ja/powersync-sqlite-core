@@ -1,20 +1,19 @@
 extern crate alloc;
 
-use alloc::borrow::Cow;
 use alloc::string::String;
-use alloc::{format, vec};
+use alloc::vec;
 use core::fmt::{Write, from_fn};
 use core::mem;
 
 use crate::error::PowerSyncError;
-use crate::schema::{Column, DiffIncludeOld, Table};
-use crate::utils::{InsertIntoCrud, SqlBuffer};
+use crate::schema::{ColumnFilter, SchemaTable, Table};
+use crate::utils::{InsertIntoCrud, SqlBuffer, WriteType};
 
 pub fn powersync_view_sql(table_info: &Table) -> String {
     let name = &table_info.name;
     let view_name = &table_info.view_name();
-    let local_only = table_info.flags.local_only();
-    let include_metadata = table_info.flags.include_metadata();
+    let local_only = table_info.options.flags.local_only();
+    let include_metadata = table_info.options.flags.include_metadata();
 
     let mut sql = SqlBuffer::new();
     sql.push_str("CREATE VIEW ");
@@ -60,74 +59,56 @@ pub fn powersync_view_sql(table_info: &Table) -> String {
 }
 
 pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String, PowerSyncError> {
-    if table_info.flags.insert_only() {
+    if table_info.options.flags.insert_only() {
         // Insert-only tables have no DELETE triggers
         return Ok(String::new());
     }
 
     let name = &table_info.name;
     let view_name = table_info.view_name();
-    let local_only = table_info.flags.local_only();
+    let local_only = table_info.options.flags.local_only();
+    let as_schema_table = SchemaTable::from(table_info);
 
     let mut sql = SqlBuffer::new();
     sql.create_trigger("ps_view_delete_", view_name);
-    sql.trigger_instead_of("DELETE", view_name);
+    sql.trigger_instead_of(WriteType::Delete, view_name);
     sql.push_str("BEGIN\n");
     // First, forward to internal data table.
     sql.push_str("DELETE FROM ");
     sql.quote_internal_name(name, local_only);
     sql.push_str(" WHERE id = OLD.id;\n");
 
-    let old_data_value = match &table_info.diff_include_old {
-        Some(include_old) => {
-            let json = match include_old {
-                DiffIncludeOld::OnlyForColumns { columns } => json_object_fragment(
-                    "OLD",
-                    &mut table_info.filtered_columns(columns.iter().map(|c| c.as_str())),
-                ),
-                DiffIncludeOld::ForAllColumns => {
-                    json_object_fragment("OLD", &mut table_info.columns.iter())
-                }
-            }?;
-
-            Some(json)
-        }
-        None => None,
-    };
-
     if !local_only {
         // We also need to record the write in powersync_crud.
         sql.insert_into_powersync_crud(InsertIntoCrud {
-            op: "DELETE",
+            op: WriteType::Delete,
+            table: &as_schema_table,
             id_expr: "OLD.id",
             type_name: name,
             data: None::<&'static str>,
-            old_values: old_data_value.as_ref(),
             metadata: None::<&'static str>,
-            options: None,
-        });
+        })?;
 
-        if table_info.flags.include_metadata() {
+        if table_info.options.flags.include_metadata() {
             // The DELETE statement can't include metadata for the delete operation, so we create
             // another trigger to delete with a fake UPDATE syntax.
             sql.trigger_end();
             sql.push_str(";\n");
 
             sql.create_trigger("ps_view_delete2_", view_name);
-            sql.trigger_instead_of("UPDATE", view_name);
+            sql.trigger_instead_of(WriteType::Update, view_name);
             sql.push_str("WHEN NEW._deleted IS TRUE BEGIN DELETE FROM ");
             sql.quote_internal_name(name, local_only);
             sql.push_str(" WHERE id = OLD.id; ");
 
             sql.insert_into_powersync_crud(InsertIntoCrud {
-                op: "DELETE",
+                op: WriteType::Delete,
+                table: &as_schema_table,
                 id_expr: "OLD.id",
                 type_name: name,
                 data: None::<&'static str>,
-                old_values: old_data_value.as_ref(),
                 metadata: Some("NEW._metadata"),
-                options: None,
-            });
+            })?;
         }
     }
 
@@ -138,31 +119,25 @@ pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String, PowerS
 pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String, PowerSyncError> {
     let name = &table_info.name;
     let view_name = table_info.view_name();
-    let local_only = table_info.flags.local_only();
-    let insert_only = table_info.flags.insert_only();
+    let local_only = table_info.options.flags.local_only();
+    let insert_only = table_info.options.flags.insert_only();
+    let as_schema_table = SchemaTable::from(table_info);
 
     let mut sql = SqlBuffer::new();
     sql.create_trigger("ps_view_insert_", view_name);
-    sql.trigger_instead_of("INSERT", view_name);
+    sql.trigger_instead_of(WriteType::Insert, view_name);
     sql.push_str("BEGIN\n");
 
     if !local_only {
         sql.check_id_valid();
     }
 
-    let json_fragment = json_object_fragment("NEW", &mut table_info.columns.iter())?;
+    let json_fragment = table_columns_to_json_object("NEW", &as_schema_table)?;
 
     if insert_only {
         // This is using the manual powersync_crud_ instead of powersync_crud because insert-only
         // writes shouldn't prevent us from receiving new data.
-        sql.push_str("INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', ");
-        let _ = sql.string_literal().write_str(name);
-
-        let _ = write!(
-            &mut sql,
-            ", 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:}))));",
-            json_fragment,
-        );
+        sql.powersync_crud_manual_put(name, &json_fragment);
     } else {
         // Insert into the underlying data table.
         sql.push_str("INSERT INTO ");
@@ -172,20 +147,19 @@ pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String, PowerS
         if !local_only {
             // Record write into powersync_crud
             sql.insert_into_powersync_crud(InsertIntoCrud {
-                op: "PUT",
+                op: WriteType::Insert,
                 id_expr: "NEW.id",
+                table: &as_schema_table,
                 type_name: name,
                 data: Some(from_fn(|f| {
                     write!(f, "json(powersync_diff('{{}}', {:}))", json_fragment)
                 })),
-                old_values: None::<&'static str>,
-                metadata: if table_info.flags.include_metadata() {
+                metadata: if table_info.options.flags.include_metadata() {
                     Some("NEW._metadata")
                 } else {
                     None
                 },
-                options: None,
-            });
+            })?;
         }
     }
 
@@ -194,29 +168,30 @@ pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String, PowerS
 }
 
 pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String, PowerSyncError> {
-    if table_info.flags.insert_only() {
+    if table_info.options.flags.insert_only() {
         // Insert-only tables have no UPDATE triggers
         return Ok(String::new());
     }
 
     let name = &table_info.name;
     let view_name = table_info.view_name();
-    let local_only = table_info.flags.local_only();
+    let local_only = table_info.options.flags.local_only();
+    let as_schema_table = SchemaTable::from(table_info);
 
     let mut sql = SqlBuffer::new();
     sql.create_trigger("ps_view_update_", view_name);
-    sql.trigger_instead_of("UPDATE", view_name);
+    sql.trigger_instead_of(WriteType::Update, view_name);
 
     // If we're supposed to include metadata, we support UPDATE ... SET _deleted = TRUE with
     // another trigger (because there's no way to attach data to DELETE statements otherwise).
-    if table_info.flags.include_metadata() {
+    if table_info.options.flags.include_metadata() {
         sql.push_str(" WHEN NEW._deleted IS NOT TRUE ");
     }
     sql.push_str("BEGIN\n");
     sql.check_id_not_changed();
 
-    let json_fragment_new = json_object_fragment("NEW", &mut table_info.columns.iter())?;
-    let json_fragment_old = json_object_fragment("OLD", &mut table_info.columns.iter())?;
+    let json_fragment_new = table_columns_to_json_object("NEW", &as_schema_table)?;
+    let json_fragment_old = table_columns_to_json_object("OLD", &as_schema_table)?;
 
     // UPDATE {internal_name} SET data = {json_fragment_new} WHERE id = NEW.id;
     sql.push_str("UPDATE ");
@@ -227,43 +202,11 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String, PowerS
     );
 
     if !local_only {
-        let mut old_values_fragment = match &table_info.diff_include_old {
-            None => None,
-            Some(DiffIncludeOld::ForAllColumns) => Some(json_fragment_old.clone()),
-            Some(DiffIncludeOld::OnlyForColumns { columns }) => Some(json_object_fragment(
-                "OLD",
-                &mut table_info.filtered_columns(columns.iter().map(|c| c.as_str())),
-            )?),
-        };
-
-        if table_info.flags.include_old_only_when_changed() {
-            old_values_fragment = match old_values_fragment {
-                None => None,
-                Some(f) => {
-                    let filtered_new_fragment = match &table_info.diff_include_old {
-                        // When include_old_only_when_changed is combined with a column filter, make sure we
-                        // only include the powersync_diff of columns matched by the filter.
-                        Some(DiffIncludeOld::OnlyForColumns { columns }) => {
-                            Cow::Owned(json_object_fragment(
-                                "NEW",
-                                &mut table_info
-                                    .filtered_columns(columns.iter().map(|c| c.as_str())),
-                            )?)
-                        }
-                        _ => Cow::Borrowed(json_fragment_new.as_str()),
-                    };
-
-                    Some(format!(
-                        "json(powersync_diff({filtered_new_fragment}, {f}))"
-                    ))
-                }
-            }
-        }
-
         // Also forward write to powersync_crud vtab.
         sql.insert_into_powersync_crud(InsertIntoCrud {
-            op: "PATCH",
+            op: WriteType::Update,
             id_expr: "NEW.id",
+            table: &as_schema_table,
             type_name: name,
             data: Some(from_fn(|f| {
                 write!(
@@ -271,14 +214,12 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String, PowerS
                     "json(powersync_diff({json_fragment_old}, {json_fragment_new}))"
                 )
             })),
-            old_values: old_values_fragment.as_ref(),
-            metadata: if table_info.flags.include_metadata() {
+            metadata: if table_info.options.flags.include_metadata() {
                 Some("NEW._metadata")
             } else {
                 None
             },
-            options: Some(table_info.flags.0),
-        });
+        })?;
     }
 
     sql.trigger_end();
@@ -288,9 +229,17 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String, PowerS
 /// Given a query returning column names, return a JSON object fragment for a trigger.
 ///
 /// Example output with prefix "NEW": "json_object('id', NEW.id, 'name', NEW.name, 'age', NEW.age)".
-fn json_object_fragment<'a>(
+pub fn table_columns_to_json_object<'a>(
     prefix: &str,
-    columns: &mut dyn Iterator<Item = &'a Column>,
+    table: &'a SchemaTable<'a>,
+) -> Result<String, PowerSyncError> {
+    table_columns_to_json_object_with_filter(prefix, table, None)
+}
+
+pub fn table_columns_to_json_object_with_filter<'a>(
+    prefix: &str,
+    table: &'a SchemaTable<'a>,
+    filter: Option<&'a ColumnFilter>,
 ) -> Result<String, PowerSyncError> {
     // floor(SQLITE_MAX_FUNCTION_ARG / 2).
     // To keep databases portable, we use the default limit of 100 args for this,
@@ -313,7 +262,14 @@ fn json_object_fragment<'a>(
         buffer.sql
     }
 
-    while let Some(column) = columns.next() {
+    let mut columns = table.column_names();
+    while let Some(name) = columns.next() {
+        if let Some(filter) = filter
+            && !filter.matches(name)
+        {
+            continue;
+        }
+
         total_columns += 1;
         // SQLITE_MAX_COLUMN - 1 (because of the id column)
         if total_columns > 1999 {
@@ -321,8 +277,6 @@ fn json_object_fragment<'a>(
                 "too many parameters to json_object_fragment",
             ));
         }
-
-        let name = &*column.name;
 
         let pending_object = pending_json_object.get_or_insert_with(new_pending_object);
         if pending_object.0 == MAX_ARG_COUNT {
@@ -382,10 +336,10 @@ mod test {
     use alloc::{string::ToString, vec};
 
     use crate::{
-        schema::{Column, Table, TableInfoFlags},
+        schema::{Column, Table},
         views::{
-            json_object_fragment, powersync_trigger_delete_sql, powersync_trigger_insert_sql,
-            powersync_trigger_update_sql, powersync_view_sql,
+            powersync_trigger_delete_sql, powersync_trigger_insert_sql,
+            powersync_trigger_update_sql, powersync_view_sql, table_columns_to_json_object,
         },
     };
 
@@ -404,15 +358,14 @@ mod test {
                 },
             ],
             indexes: vec![],
-            diff_include_old: None,
-            flags: TableInfoFlags::default(),
+            options: Default::default(),
         };
     }
 
     #[test]
     fn test_json_object_fragment() {
         let fragment =
-            json_object_fragment("NEW", &mut test_table().columns.iter()).expect("should generate");
+            table_columns_to_json_object("NEW", &(&test_table()).into()).expect("should generate");
 
         assert_eq!(
             fragment,
@@ -446,7 +399,7 @@ END"#
     #[test]
     fn local_only_does_not_write_into_ps_crud() {
         let mut table = test_table();
-        table.flags.0 = 1; // local-only bit
+        table.options.flags.0 = 1; // local-only bit
 
         assert!(
             !powersync_trigger_insert_sql(&table)

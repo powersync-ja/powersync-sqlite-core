@@ -6,7 +6,7 @@ use alloc::{boxed::Box, string::String};
 use powersync_sqlite_nostd::{ColumnType, ManagedStmt};
 use serde::Serialize;
 use serde_json::value::RawValue;
-pub use sql_buffer::{InsertIntoCrud, SqlBuffer};
+pub use sql_buffer::{InsertIntoCrud, SqlBuffer, WriteType};
 
 use crate::error::PowerSyncError;
 use uuid::Uuid;

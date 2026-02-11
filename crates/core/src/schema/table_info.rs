@@ -3,6 +3,8 @@ use alloc::vec;
 use alloc::{collections::btree_set::BTreeSet, format, string::String, vec::Vec};
 use serde::{Deserialize, de::Visitor};
 
+use crate::schema::ColumnFilter;
+
 #[derive(Deserialize)]
 pub struct Table {
     pub name: String,
@@ -11,6 +13,13 @@ pub struct Table {
     pub columns: Vec<Column>,
     #[serde(default)]
     pub indexes: Vec<Index>,
+    #[serde(flatten)]
+    pub options: CommonTableOptions,
+}
+
+/// Options shared between regular and raw tables.
+#[derive(Deserialize, Default)]
+pub struct CommonTableOptions {
     #[serde(
         default,
         rename = "include_old",
@@ -21,21 +30,15 @@ pub struct Table {
     pub flags: TableInfoFlags,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct RawTableSchema {
     /// The actual name of the raw table in the local schema.
     ///
     /// Currently, this is only used to generate `CREATE TRIGGER` statements for the raw table.
     #[serde(default)]
-    table_name: Option<String>,
-    #[serde(
-        default,
-        rename = "include_old",
-        deserialize_with = "deserialize_include_old"
-    )]
-    pub diff_include_old: Option<DiffIncludeOld>,
+    pub table_name: Option<String>,
     #[serde(flatten)]
-    pub flags: TableInfoFlags,
+    pub options: CommonTableOptions,
 }
 
 #[derive(Deserialize)]
@@ -46,7 +49,7 @@ pub struct RawTable {
     /// This is not necessarily the same as the local name of the raw table.
     pub name: String,
     #[serde(flatten, default)]
-    pub schema: Option<RawTableSchema>,
+    pub schema: RawTableSchema,
     pub put: PendingStatement,
     pub delete: PendingStatement,
     #[serde(default)]
@@ -61,7 +64,7 @@ impl Table {
     }
 
     pub fn local_only(&self) -> bool {
-        self.flags.local_only()
+        self.options.flags.local_only()
     }
 
     pub fn internal_name(&self) -> String {
@@ -70,23 +73,6 @@ impl Table {
         } else {
             format!("ps_data__{:}", self.name)
         }
-    }
-
-    pub fn filtered_columns<'a>(
-        &'a self,
-        names: impl Iterator<Item = &'a str>,
-    ) -> impl Iterator<Item = &'a Column> {
-        // First, sort all columns by name for faster lookups by name.
-        let mut sorted_by_name: Vec<&Column> = self.columns.iter().collect();
-        sorted_by_name.sort_by_key(|c| &*c.name);
-
-        names.filter_map(move |name| {
-            let index = sorted_by_name
-                .binary_search_by_key(&name, |c| c.name.as_str())
-                .ok()?;
-
-            Some(sorted_by_name[index])
-        })
     }
 }
 
@@ -112,8 +98,17 @@ pub struct IndexedColumn {
 }
 
 pub enum DiffIncludeOld {
-    OnlyForColumns { columns: Vec<String> },
+    OnlyForColumns(ColumnFilter),
     ForAllColumns,
+}
+
+impl DiffIncludeOld {
+    pub fn column_filter(&self) -> Option<&ColumnFilter> {
+        match self {
+            Self::ForAllColumns => None,
+            Self::OnlyForColumns(filter) => Some(filter),
+        }
+    }
 }
 
 fn deserialize_include_old<'de, D: serde::Deserializer<'de>>(
@@ -162,7 +157,7 @@ fn deserialize_include_old<'de, D: serde::Deserializer<'de>>(
                 elements.push(next);
             }
 
-            Ok(Some(DiffIncludeOld::OnlyForColumns { columns: elements }))
+            Ok(Some(DiffIncludeOld::OnlyForColumns(elements.into())))
         }
     }
 

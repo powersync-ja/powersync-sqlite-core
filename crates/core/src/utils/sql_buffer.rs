@@ -1,6 +1,13 @@
-use core::fmt::{Display, Write};
+use core::{
+    fmt::{Display, Write},
+    str::FromStr,
+};
 
-use alloc::string::String;
+use alloc::{format, string::String};
+
+use crate::{
+    error::PowerSyncError, schema::SchemaTable, views::table_columns_to_json_object_with_filter,
+};
 
 const DOUBLE_QUOTE: char = '"';
 const SINGLE_QUOTE: char = '\'';
@@ -69,10 +76,15 @@ impl SqlBuffer {
     }
 
     /// Writes an `INSTEAD OF $write_type ON $on FOR EACH ROW` segment.
-    pub fn trigger_instead_of(&mut self, write_type: &str, on: &str) {
-        self.push_str("INSTEAD OF ");
-        self.push_str(write_type);
-        self.push_str(" ON ");
+    pub fn trigger_instead_of(&mut self, write_type: WriteType, on: &str) {
+        let _ = write!(self, "INSTEAD OF {write_type} ON ");
+        let _ = self.identifier().write_str(on);
+        self.push_str(" FOR EACH ROW ");
+    }
+
+    /// Writes an `INSTEAD OF $write_type ON $on FOR EACH ROW` segment.
+    pub fn trigger_after(&mut self, write_type: WriteType, on: &str) {
+        let _ = write!(self, "AFTER {write_type} ON ");
         let _ = self.identifier().write_str(on);
         self.push_str(" FOR EACH ROW ");
     }
@@ -96,31 +108,71 @@ impl SqlBuffer {
     }
 
     /// Writes an `INSERT INTO powersync_crud` statement.
-    pub fn insert_into_powersync_crud<Id, Data, Old, Metadata>(
+    pub fn insert_into_powersync_crud<Id, Data, Metadata>(
         &mut self,
-        insert: InsertIntoCrud<Id, Data, Old, Metadata>,
-    ) where
+        insert: InsertIntoCrud<Id, Data, Metadata>,
+    ) -> Result<(), PowerSyncError>
+    where
         Id: Display,
         Data: Display,
-        Old: Display,
         Metadata: Display,
     {
+        let old_values = if insert.op == WriteType::Insert {
+            // Inserts don't have previous values we'd have to track.
+            None
+        } else {
+            let options = insert.table.common_options();
+
+            match &options.diff_include_old {
+                None => None,
+                Some(include_old) => {
+                    let old_values = table_columns_to_json_object_with_filter(
+                        "OLD",
+                        insert.table,
+                        include_old.column_filter(),
+                    )?;
+
+                    if options.flags.include_old_only_when_changed() {
+                        // When include_old_only_when_changed is combined with a column filter, make sure we
+                        // only include the powersync_diff of columns matched by the filter.
+                        let filtered_new_fragment = table_columns_to_json_object_with_filter(
+                            "NEW",
+                            insert.table,
+                            include_old.column_filter(),
+                        )?;
+
+                        Some(format!(
+                            "json(powersync_diff({filtered_new_fragment}, {old_values}))"
+                        ))
+                    } else {
+                        Some(old_values)
+                    }
+                }
+            }
+        };
+
+        // Options to ps_crud are only used to conditionally skip empty updates if IGNORE_EMPTY_UPDATE is set.
+        let options = match insert.op {
+            WriteType::Update => Some(insert.table.common_options().flags.0),
+            _ => None,
+        };
+
         self.push_str("INSERT INTO powersync_crud(op,id,type");
         if insert.data.is_some() {
             self.push_str(",data");
         }
-        if insert.old_values.is_some() {
+        if old_values.is_some() {
             self.push_str(",old_values");
         }
         if insert.metadata.is_some() {
             self.push_str(",metadata");
         }
-        if insert.options.is_some() {
+        if options.is_some() {
             self.push_str(",options");
         }
         self.push_str(") VALUES (");
 
-        let _ = self.string_literal().write_str(insert.op);
+        let _ = self.string_literal().write_str(insert.op.ps_crud_op_type());
         self.comma();
 
         let _ = write!(self, "{}", insert.id_expr);
@@ -133,7 +185,7 @@ impl SqlBuffer {
             let _ = write!(self, "{}", data);
         }
 
-        if let Some(old) = insert.old_values {
+        if let Some(old) = old_values {
             self.comma();
             let _ = write!(self, "{}", old);
         }
@@ -143,12 +195,24 @@ impl SqlBuffer {
             let _ = write!(self, "{}", meta);
         }
 
-        if let Some(options) = insert.options {
+        if let Some(options) = options {
             self.comma();
             let _ = write!(self, "{}", options);
         }
 
         self.push_str(");\n");
+        Ok(())
+    }
+
+    pub fn powersync_crud_manual_put(&mut self, name: &str, json_fragment: &str) {
+        self.push_str("INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', ");
+        let _ = self.string_literal().write_str(name);
+
+        let _ = write!(
+            self,
+            ", 'id', NEW.id, 'data', json(powersync_diff('{{}}', {:}))));",
+            json_fragment,
+        );
     }
 
     /// Generates a `CAST(json_extract(<source>, "$.<name>") as <cast_to>)`
@@ -242,20 +306,63 @@ impl<'a> CommaSeparated<'a> {
     }
 }
 
-pub struct InsertIntoCrud<'a, Id, Data, Old, Metadata>
+pub struct InsertIntoCrud<'a, Id, Data, Metadata>
 where
     Id: Display,
     Data: Display,
-    Old: Display,
     Metadata: Display,
 {
-    pub op: &'a str,
+    pub op: WriteType,
     pub id_expr: Id,
     pub type_name: &'a str,
     pub data: Option<Data>,
-    pub old_values: Option<Old>,
+    pub table: &'a SchemaTable<'a>,
     pub metadata: Option<Metadata>,
-    pub options: Option<u32>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum WriteType {
+    Insert,
+    Update,
+    Delete,
+}
+
+impl WriteType {
+    pub fn ps_crud_op_type(&self) -> &'static str {
+        match self {
+            WriteType::Insert => "PUT",
+            WriteType::Update => "PATCH",
+            WriteType::Delete => "DELETE",
+        }
+    }
+}
+
+impl Display for WriteType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            WriteType::Insert => "INSERT",
+            WriteType::Update => "UPDATE",
+            WriteType::Delete => "DELETE",
+        })
+    }
+}
+
+impl FromStr for WriteType {
+    type Err = PowerSyncError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "INSERT" => Self::Insert,
+            "UPDATE" => Self::Update,
+            "DELETE" => Self::Delete,
+            _ => {
+                return Err(PowerSyncError::argument_error(format!(
+                    "unexpected write type {}",
+                    s
+                )));
+            }
+        })
+    }
 }
 
 #[cfg(test)]
