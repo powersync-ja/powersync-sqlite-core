@@ -218,7 +218,128 @@ void main() {
         isEmpty,
       );
     });
+
+    group('triggers for raw tables', () {
+      const createUsers =
+          'CREATE TABLE users (id TEXT, email TEXT, email_verified INTEGER);';
+
+      const testCases = <_RawTableTestCase>[
+        // Default options
+        _RawTableTestCase(
+          createTable: createUsers,
+          tableOptions: {'table_name': 'users'},
+          insert: '''
+CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'sync_type', json(powersync_diff('{}', json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))));
+END''',
+          update: '''
+CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
+INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))), 0);
+END''',
+          delete: '''
+CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'sync_type');
+END''',
+        ),
+        // Insert-only
+        _RawTableTestCase(
+          createTable: createUsers,
+          tableOptions: {
+            'table_name': 'users',
+            'insert_only': true,
+          },
+          insert: '''
+CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', 'sync_type', 'id', NEW.id, 'data', json(powersync_diff('{}', json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified"))))));END''',
+          update: '''
+CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+SELECT RAISE(FAIL, 'Unexpected update on insert-only table');
+END''',
+          delete: '''
+CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+SELECT RAISE(FAIL, 'Unexpected update on insert-only table');
+END''',
+        ),
+        // Tracking old values
+        _RawTableTestCase(
+          createTable: createUsers,
+          tableOptions: {
+            'table_name': 'users',
+            'include_old': true,
+          },
+          insert: '''
+CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'sync_type', json(powersync_diff('{}', json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))));
+END''',
+          update: '''
+CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
+INSERT INTO powersync_crud(op,id,type,data,old_values,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))), json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), 0);
+END''',
+          delete: '''
+CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type,old_values) VALUES ('DELETE', OLD.id, 'sync_type', json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")));
+END''',
+        ),
+      ];
+
+      for (final (i, testCase) in testCases.indexed) {
+        test('#$i', () => testCase.testWith(db));
+      }
+    });
   });
+}
+
+final class _RawTableTestCase {
+  final String createTable;
+  final Map<String, Object?> tableOptions;
+  final String insert, update, delete;
+
+  const _RawTableTestCase({
+    required this.createTable,
+    required this.tableOptions,
+    required this.insert,
+    required this.update,
+    required this.delete,
+  });
+
+  void testWith(CommonDatabase db) {
+    db.execute(createTable);
+    db.execute('''
+SELECT
+  powersync_create_raw_table_crud_trigger(?1, 'test_insert', 'INSERT'),
+  powersync_create_raw_table_crud_trigger(?1, 'test_update', 'UPDATE'),
+  powersync_create_raw_table_crud_trigger(?1, 'test_delete', 'DELETE')
+''', [
+      json.encode({
+        'name': 'sync_type',
+        'put': {
+          'sql': 'unused',
+          'params': [],
+        },
+        'delete': {
+          'sql': 'unused',
+          'params': [],
+        },
+        ...tableOptions,
+      })
+    ]);
+
+    final foundTriggers =
+        db.select("SELECT name, sql FROM sqlite_schema WHERE type = 'trigger'");
+
+    // Uncomment to help update expectations
+    // for (final row in foundTriggers) {
+    //  print(row['sql']);
+    // }
+
+    expect(foundTriggers, [
+      {'name': 'test_insert', 'sql': insert},
+      {'name': 'test_update', 'sql': update},
+      {'name': 'test_delete', 'sql': delete},
+    ]);
+  }
 }
 
 final schema = {
