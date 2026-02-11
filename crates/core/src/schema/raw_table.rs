@@ -1,4 +1,4 @@
-use core::fmt::from_fn;
+use core::fmt::{self, Formatter, from_fn};
 
 use alloc::{
     format,
@@ -105,6 +105,20 @@ pub fn generate_raw_table_trigger(
             None
         };
 
+        let write_data = from_fn(|f: &mut Formatter| -> fmt::Result {
+            write!(f, "json(powersync_diff(")?;
+
+            if let Some(ref old) = json_fragment_old {
+                f.write_str(old)?;
+            } else {
+                // We don't have OLD values for inserts, we diff from an empty JSON object
+                // instead.
+                f.write_str("'{}'")?;
+            };
+
+            write!(f, ", {json_fragment_new}))")
+        });
+
         buffer.insert_into_powersync_crud(InsertIntoCrud {
             op: write,
             table: &as_schema_table,
@@ -114,32 +128,11 @@ pub fn generate_raw_table_trigger(
                 "NEW.id"
             },
             type_name: &table.name,
-            data: Some(&from_fn(|f| {
-                match write {
-                    WriteType::Insert => {}
-                    WriteType::Update => todo!(),
-                    WriteType::Delete => {
-                        // There is no data for deleted rows, don't emit anything.
-                    }
-                }
-
-                if write == WriteType::Delete {
-                    // There is no data for deleted rows.
-                    return Ok(());
-                }
-
-                write!(f, "json(powersync_diff(")?;
-
-                if let Some(ref old) = json_fragment_old {
-                    f.write_str(old)?;
-                } else {
-                    // We don't have OLD values for inserts, we diff from an empty JSON object
-                    // instead.
-                    f.write_str("'{}'")?;
-                };
-
-                write!(f, ", {json_fragment_new}))")
-            })),
+            data: match write {
+                // There is no data for deleted rows.
+                WriteType::Delete => None,
+                _ => Some(&write_data),
+            },
             metadata: None::<&'static str>,
         })?;
     }

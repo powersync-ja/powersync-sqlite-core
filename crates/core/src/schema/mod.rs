@@ -15,7 +15,9 @@ pub use table_info::{
 };
 
 use crate::{
-    error::PowerSyncError, schema::raw_table::generate_raw_table_trigger, state::DatabaseState,
+    error::{PSResult, PowerSyncError},
+    schema::raw_table::generate_raw_table_trigger,
+    state::DatabaseState,
     utils::WriteType,
 };
 
@@ -43,7 +45,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
             let db = context.db_handle();
             let create_trigger_stmt =
                 generate_raw_table_trigger(db, &table, trigger_name, write_type)?;
-            db.exec_safe(&create_trigger_stmt)?;
+            db.exec_safe(&create_trigger_stmt).into_db_result(db)?;
             Ok(())
         }
 

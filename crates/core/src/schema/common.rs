@@ -6,6 +6,8 @@ use crate::schema::{
     Column, CommonTableOptions, RawTable, Table, raw_table::InferredTableStructure,
 };
 
+/// Utility to wrap both PowerSync-managed JSON tables and raw tables (with their schema snapshot
+/// inferred from reading `pragma_table_info`) into a common implementation.
 pub enum SchemaTable<'a> {
     Json(&'a Table),
     Raw {
@@ -25,6 +27,7 @@ impl<'a> SchemaTable<'a> {
         }
     }
 
+    /// Iterates over defined column names in this table (not including the `id` column).
     pub fn column_names(&self) -> impl Iterator<Item = &'a str> {
         match self {
             Self::Json(table) => SchemaTableColumnIterator::Json(table.columns.iter()),

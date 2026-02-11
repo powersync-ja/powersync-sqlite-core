@@ -127,7 +127,9 @@ impl SqlBuffer {
                         include_old.column_filter(),
                     )?;
 
-                    if options.flags.include_old_only_when_changed() {
+                    if insert.op == WriteType::Update
+                        && options.flags.include_old_only_when_changed()
+                    {
                         // When include_old_only_when_changed is combined with a column filter, make sure we
                         // only include the powersync_diff of columns matched by the filter.
                         let filtered_new_fragment = table_columns_to_json_object_with_filter(
