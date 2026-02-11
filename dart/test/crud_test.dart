@@ -4,6 +4,7 @@ import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
+import 'utils/test_utils.dart';
 
 void main() {
   group('crud tests', () {
@@ -772,6 +773,177 @@ void main() {
         // because this is a local-only table, no crud items should have been
         // created.
         expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+      });
+    });
+
+    group('raw tables', () {
+      void createRawTableTriggers(Object table,
+          {bool insert = true, bool update = true, bool delete = true}) {
+        db.execute('SELECT powersync_init()');
+
+        if (insert) {
+          db.execute('SELECT powersync_create_raw_table_crud_trigger(?, ?, ?)',
+              [json.encode(table), 'test_trigger_insert', 'INSERT']);
+        }
+        if (update) {
+          db.execute('SELECT powersync_create_raw_table_crud_trigger(?, ?, ?)',
+              [json.encode(table), 'test_trigger_update', 'UPDATE']);
+        }
+        if (delete) {
+          db.execute('SELECT powersync_create_raw_table_crud_trigger(?, ?, ?)',
+              [json.encode(table), 'test_trigger_delete', 'DELETE']);
+        }
+      }
+
+      Object rawTableDescription(Map<String, Object?> options) {
+        return {
+          'name': 'row_type',
+          'put': {'sql': '', 'params': []},
+          'delete': {'sql': '', 'params': []},
+          ...options,
+        };
+      }
+
+      test('missing id column', () {
+        db.execute('CREATE TABLE users (name TEXT);');
+        expect(
+          () => createRawTableTriggers(
+              rawTableDescription({'table_name': 'users'})),
+          throwsA(isSqliteException(
+              3091, contains('Table users has no id column'))),
+        );
+      });
+
+      test('missing local table name', () {
+        db.execute('CREATE TABLE users (name TEXT);');
+        expect(
+          () => createRawTableTriggers(rawTableDescription({})),
+          throwsA(isSqliteException(3091, contains('Table has no local name'))),
+        );
+      });
+
+      test('missing local table', () {
+        expect(
+          () => createRawTableTriggers(
+              rawTableDescription({'table_name': 'users'})),
+          throwsA(isSqliteException(
+              3091, contains('Could not find users in local schema'))),
+        );
+      });
+
+      test('default options', () {
+        db.execute('CREATE TABLE users (id TEXT, name TEXT) STRICT;');
+        createRawTableTriggers(rawTableDescription({'table_name': 'users'}));
+
+        db
+          ..execute(
+              'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name'])
+          ..execute('UPDATE users SET name = ?', ['new name'])
+          ..execute('DELETE FROM users WHERE id = ?', ['id']);
+
+        final psCrud = db.select('SELECT * FROM ps_crud');
+        expect(psCrud, [
+          {
+            'id': 1,
+            'tx_id': 1,
+            'data': json.encode({
+              'op': 'PUT',
+              'id': 'id',
+              'type': 'row_type',
+              'data': {'name': 'name'}
+            }),
+          },
+          {
+            'id': 2,
+            'tx_id': 2,
+            'data': json.encode({
+              'op': 'PATCH',
+              'id': 'id',
+              'type': 'row_type',
+              'data': {'name': 'new name'}
+            }),
+          },
+          {
+            'id': 3,
+            'tx_id': 3,
+            'data':
+                json.encode({'op': 'DELETE', 'id': 'id', 'type': 'row_type'}),
+          },
+        ]);
+      });
+
+      test('insert only', () {
+        db.execute('CREATE TABLE users (id TEXT, name TEXT) STRICT;');
+        createRawTableTriggers(
+            rawTableDescription({'table_name': 'users', 'insert_only': true}));
+
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+
+        // Should not update the $local bucket
+        expect(db.select('SELECT * FROM ps_buckets'), hasLength(0));
+
+        // The trigger should prevent other writes.
+        expect(
+            () => db.execute('UPDATE users SET name = ?', ['new name']),
+            throwsA(isSqliteException(
+                1811, contains('Unexpected update on insert-only table'))));
+        expect(
+            () => db.execute('DELETE FROM users WHERE id = ?', ['id']),
+            throwsA(isSqliteException(
+                1811, contains('Unexpected update on insert-only table'))));
+      });
+
+      test('tracking old values', () {
+        db.execute(
+            'CREATE TABLE users (id TEXT, name TEXT, email TEXT) STRICT;');
+        createRawTableTriggers(rawTableDescription({
+          'table_name': 'users',
+          'include_old': ['name'],
+          'include_old_only_when_changed': true,
+        }));
+
+        db
+          ..execute('INSERT INTO users (id, name, email) VALUES (?, ?, ?)',
+              ['id', 'name', 'test@example.org'])
+          ..execute('UPDATE users SET name = ?, email = ?',
+              ['new name', 'newmail@example.org'])
+          ..execute('DELETE FROM users WHERE id = ?', ['id']);
+
+        final psCrud = db.select(
+            r"SELECT id, data->>'$.op' AS op, data->>'$.old' as old FROM ps_crud");
+        expect(psCrud, [
+          {
+            'id': 1,
+            'op': 'PUT',
+            'old': null,
+          },
+          {
+            'id': 2,
+            'op': 'PATCH',
+            'old': json.encode({'name': 'name'}),
+          },
+          {
+            'id': 3,
+            'op': 'DELETE',
+            'old': json.encode({'name': 'new name'}),
+          },
+        ]);
+      });
+
+      test('skipping empty updates', () {
+        db.execute('CREATE TABLE users (id TEXT, name TEXT) STRICT;');
+        createRawTableTriggers(rawTableDescription(
+            {'table_name': 'users', 'ignore_empty_update': true}));
+
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+
+        // Empty update should not be recorded
+        db.execute('UPDATE users SET name = ?', ['name']);
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
       });
     });
   });
