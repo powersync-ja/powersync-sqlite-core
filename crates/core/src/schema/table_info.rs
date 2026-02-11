@@ -37,6 +37,8 @@ pub struct RawTableSchema {
     /// Currently, this is only used to generate `CREATE TRIGGER` statements for the raw table.
     #[serde(default)]
     pub table_name: Option<String>,
+    #[serde(default)]
+    pub local_only_columns: ColumnFilter,
     #[serde(flatten)]
     pub options: CommonTableOptions,
 }

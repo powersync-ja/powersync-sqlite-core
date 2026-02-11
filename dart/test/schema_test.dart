@@ -282,6 +282,29 @@ CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT power
 INSERT INTO powersync_crud(op,id,type,old_values) VALUES ('DELETE', OLD.id, 'sync_type', json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")));
 END''',
         ),
+        // Local-only columns, should not be included in ps_crud.
+        _RawTableTestCase(
+          createTable:
+              'CREATE TABLE users (id TEXT, synced_a TEXT, synced_b TEXT, local_a TEXT, local_b TEXT);',
+          tableOptions: {
+            'table_name': 'users',
+            'local_only_columns': ['local_a', 'local_b'],
+          },
+          insert: '''
+CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'sync_type', json(powersync_diff('{}', json_object('synced_a', powersync_strip_subtype(NEW."synced_a"), 'synced_b', powersync_strip_subtype(NEW."synced_b")))));
+END''',
+          update: '''
+CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() AND
+(OLD."synced_a" IS NOT NEW."synced_a" OR OLD."synced_b" IS NOT NEW."synced_b") BEGIN
+SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
+INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('synced_a', powersync_strip_subtype(OLD."synced_a"), 'synced_b', powersync_strip_subtype(OLD."synced_b")), json_object('synced_a', powersync_strip_subtype(NEW."synced_a"), 'synced_b', powersync_strip_subtype(NEW."synced_b")))), 0);
+END''',
+          delete: '''
+CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'sync_type');
+END''',
+        ),
       ];
 
       for (final (i, testCase) in testCases.indexed) {
@@ -330,9 +353,9 @@ SELECT
         db.select("SELECT name, sql FROM sqlite_schema WHERE type = 'trigger'");
 
     // Uncomment to help update expectations
-    // for (final row in foundTriggers) {
+    //for (final row in foundTriggers) {
     //  print(row['sql']);
-    // }
+    //}
 
     expect(foundTriggers, [
       {'name': 'test_insert', 'sql': insert},
