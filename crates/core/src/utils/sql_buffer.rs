@@ -108,15 +108,10 @@ impl SqlBuffer {
     }
 
     /// Writes an `INSERT INTO powersync_crud` statement.
-    pub fn insert_into_powersync_crud<Id, Data, Metadata>(
+    pub fn insert_into_powersync_crud(
         &mut self,
-        insert: InsertIntoCrud<Id, Data, Metadata>,
-    ) -> Result<(), PowerSyncError>
-    where
-        Id: Display,
-        Data: Display,
-        Metadata: Display,
-    {
+        insert: InsertIntoCrud,
+    ) -> Result<(), PowerSyncError> {
         let old_values = if insert.op == WriteType::Insert {
             // Inserts don't have previous values we'd have to track.
             None
@@ -306,18 +301,13 @@ impl<'a> CommaSeparated<'a> {
     }
 }
 
-pub struct InsertIntoCrud<'a, Id, Data, Metadata>
-where
-    Id: Display,
-    Data: Display,
-    Metadata: Display,
-{
+pub struct InsertIntoCrud<'a> {
     pub op: WriteType,
-    pub id_expr: Id,
+    pub id_expr: &'a str,
     pub type_name: &'a str,
-    pub data: Option<Data>,
+    pub data: Option<&'a dyn Display>,
     pub table: &'a SchemaTable<'a>,
-    pub metadata: Option<Metadata>,
+    pub metadata: Option<&'a str>,
 }
 
 #[derive(Clone, Copy, PartialEq)]

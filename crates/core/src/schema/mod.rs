@@ -66,7 +66,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
             Some(create_raw_trigger_sqlite),
             None,
             None,
-            Some(DatabaseState::destroy_rc),
+            None,
         )?;
     }
     Ok(())
