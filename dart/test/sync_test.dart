@@ -1170,6 +1170,76 @@ CREATE TRIGGER users_delete
       expect(db.select('SELECT * FROM users'), isEmpty);
     });
 
+    syncTest('default trigger smoke test', (_) {
+      db.execute(
+          'CREATE TABLE local_users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
+      final table = {
+        'name': 'users',
+        'table_name': 'local_users',
+        // This also tests that the trigger preventing updates and deletes on
+        // insert-only tables is inert during sync_local.
+        'insert_only': true,
+        'put': {
+          'sql': 'INSERT OR REPLACE INTO local_users (id, name) VALUES (?, ?);',
+          'params': [
+            'Id',
+            {'Column': 'name'}
+          ],
+        },
+        'delete': {
+          'sql': 'DELETE FROM local_users WHERE id = ?',
+          'params': ['Id'],
+        },
+        'clear': 'DELETE FROM local_users;',
+      };
+      db.execute('''
+SELECT
+  powersync_create_raw_table_crud_trigger(?1, 'test_insert', 'INSERT'),
+  powersync_create_raw_table_crud_trigger(?1, 'test_update', 'UPDATE'),
+  powersync_create_raw_table_crud_trigger(?1, 'test_delete', 'DELETE')
+''', [json.encode(table)]);
+
+      invokeControl(
+          'start',
+          json.encode({
+            'schema': {
+              'raw_tables': [table],
+              'tables': [],
+            }
+          }));
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      final users = db.select('SELECT * FROM local_users;');
+      expect(users, [
+        {'id': 'my_user', 'name': 'First user'}
+      ]);
+
+      // Delete
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'REMOVE',
+        null,
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('SELECT * FROM local_users'), isEmpty);
+    });
+
     test('reports errors from underlying statements', () {
       setupRawTables();
       invokeControl('start', json.encode({'schema': schema}));
