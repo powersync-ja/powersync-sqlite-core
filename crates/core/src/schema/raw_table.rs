@@ -129,22 +129,7 @@ impl InferredSchemaCache {
         schema_version: usize,
         tbl: &RawTable,
     ) -> Result<Rc<PendingStatement>, PowerSyncError> {
-        let mut entries = self.entries.borrow_mut();
-        let mut entry = entries.entry(tbl.name.clone());
-        let entry = match entry {
-            Entry::Vacant(entry) => entry.insert(SchemaCacheEntry::infer(db, schema_version, tbl)?),
-            Entry::Occupied(ref mut entry) => {
-                let value = entry.get_mut();
-                if value.schema_version != schema_version {
-                    // Values are outdated, refresh.
-                    *value = SchemaCacheEntry::infer(db, schema_version, tbl)?;
-                }
-
-                value
-            }
-        };
-
-        Ok(entry.put())
+        self.with_entry(db, schema_version, tbl, SchemaCacheEntry::put)
     }
 
     pub fn infer_delete_statement(
@@ -152,6 +137,16 @@ impl InferredSchemaCache {
         db: *mut sqlite::sqlite3,
         schema_version: usize,
         tbl: &RawTable,
+    ) -> Result<Rc<PendingStatement>, PowerSyncError> {
+        self.with_entry(db, schema_version, tbl, SchemaCacheEntry::delete)
+    }
+
+    fn with_entry(
+        &self,
+        db: *mut sqlite::sqlite3,
+        schema_version: usize,
+        tbl: &RawTable,
+        f: fn(&mut SchemaCacheEntry) -> Rc<PendingStatement>,
     ) -> Result<Rc<PendingStatement>, PowerSyncError> {
         let mut entries = self.entries.borrow_mut();
         let mut entry = entries.entry(tbl.name.clone());
@@ -168,7 +163,7 @@ impl InferredSchemaCache {
             }
         };
 
-        Ok(entry.delete())
+        Ok(f(entry))
     }
 }
 
