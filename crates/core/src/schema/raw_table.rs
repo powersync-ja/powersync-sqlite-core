@@ -110,6 +110,10 @@ impl InferredTableStructure {
     }
 }
 
+/// A cache of inferred raw table schema and associated put and delete statements for `sync_local`.
+///
+/// This cache avoids having to re-generate statements on every (partial) checkpoint in the sync
+/// client.
 #[derive(Default)]
 pub struct InferredSchemaCache {
     entries: RefCell<BTreeMap<String, SchemaCacheEntry>>,
