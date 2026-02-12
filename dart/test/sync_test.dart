@@ -1170,7 +1170,7 @@ CREATE TRIGGER users_delete
       expect(db.select('SELECT * FROM users'), isEmpty);
     });
 
-    syncTest('default trigger smoke test', (_) {
+    syncTest('inferred schema smoke test', (_) {
       db.execute(
           'CREATE TABLE local_users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
       final table = {
@@ -1179,18 +1179,6 @@ CREATE TRIGGER users_delete
         // This also tests that the trigger preventing updates and deletes on
         // insert-only tables is inert during sync_local.
         'insert_only': true,
-        'put': {
-          'sql': 'INSERT OR REPLACE INTO local_users (id, name) VALUES (?, ?);',
-          'params': [
-            'Id',
-            {'Column': 'name'}
-          ],
-        },
-        'delete': {
-          'sql': 'DELETE FROM local_users WHERE id = ?',
-          'params': ['Id'],
-        },
-        'clear': 'DELETE FROM local_users;',
       };
       db.execute('''
 SELECT

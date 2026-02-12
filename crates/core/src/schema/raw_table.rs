@@ -1,21 +1,27 @@
-use core::fmt::{self, Formatter, Write, from_fn};
+use core::{
+    cell::RefCell,
+    fmt::{self, Formatter, Write, from_fn},
+};
 
 use alloc::{
+    collections::btree_map::{BTreeMap, Entry},
     format,
+    rc::Rc,
     string::{String, ToString},
     vec,
     vec::Vec,
 };
-use powersync_sqlite_nostd::{Connection, Destructor, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite, Connection, Destructor, ResultCode};
 
 use crate::{
     error::PowerSyncError,
-    schema::{ColumnFilter, RawTable, SchemaTable},
+    schema::{ColumnFilter, PendingStatement, PendingStatementValue, RawTable, SchemaTable},
     utils::{InsertIntoCrud, SqlBuffer, WriteType},
     views::table_columns_to_json_object,
 };
 
 pub struct InferredTableStructure {
+    pub name: String,
     pub columns: Vec<String>,
 }
 
@@ -24,7 +30,7 @@ impl InferredTableStructure {
         table_name: &str,
         db: impl Connection,
         synced_columns: &Option<ColumnFilter>,
-    ) -> Result<Option<Self>, PowerSyncError> {
+    ) -> Result<Self, PowerSyncError> {
         let stmt = db.prepare_v2("select name from pragma_table_info(?)")?;
         stmt.bind_text(1, table_name, Destructor::STATIC)?;
 
@@ -45,14 +51,165 @@ impl InferredTableStructure {
         }
 
         if !has_id_column && columns.is_empty() {
-            Ok(None)
+            Err(PowerSyncError::argument_error(format!(
+                "Could not find {table_name} in local schema."
+            )))
         } else if !has_id_column {
             Err(PowerSyncError::argument_error(format!(
                 "Table {table_name} has no id column."
             )))
         } else {
-            Ok(Some(Self { columns }))
+            Ok(Self {
+                name: table_name.to_string(),
+                columns,
+            })
         }
+    }
+
+    /// Generates a statement of the form `INSERT OR REPLACE INTO $tbl ($cols) VALUES (?, ...)` for
+    /// the sync client.
+    pub fn infer_put_stmt(&self) -> PendingStatement {
+        let mut buffer = SqlBuffer::new();
+        let mut params = vec![];
+
+        buffer.push_str("INSERT OR REPLACE INTO ");
+        let _ = buffer.identifier().write_str(&self.name);
+        buffer.push_str(" (id");
+        for column in &self.columns {
+            buffer.comma();
+            buffer.push_str(column);
+        }
+        buffer.push_str(") VALUES (?");
+        params.push(PendingStatementValue::Id);
+        for column in &self.columns {
+            buffer.comma();
+            buffer.push_str("?");
+            params.push(PendingStatementValue::Column(column.clone()));
+        }
+        buffer.push_str(")");
+
+        PendingStatement {
+            sql: buffer.sql,
+            params,
+            named_parameters_index: None,
+        }
+    }
+
+    /// Generates a statement of the form `DELETE FROM $tbl WHERE id = ?` for the sync client.
+    pub fn infer_delete_stmt(&self) -> PendingStatement {
+        let mut buffer = SqlBuffer::new();
+        buffer.push_str("DELETE FROM ");
+        let _ = buffer.identifier().write_str(&self.name);
+        buffer.push_str(" WHERE id = ?");
+
+        PendingStatement {
+            sql: buffer.sql,
+            params: vec![PendingStatementValue::Id],
+            named_parameters_index: None,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct InferredSchemaCache {
+    entries: RefCell<BTreeMap<String, SchemaCacheEntry>>,
+}
+
+impl InferredSchemaCache {
+    pub fn current_schema_version(db: *mut sqlite::sqlite3) -> Result<usize, PowerSyncError> {
+        let version = db.prepare_v2("PRAGMA schema_version")?;
+        version.step()?;
+        let version = version.column_int64(0) as usize;
+        Ok(version)
+    }
+
+    pub fn infer_put_statement(
+        &self,
+        db: *mut sqlite::sqlite3,
+        schema_version: usize,
+        tbl: &RawTable,
+    ) -> Result<Rc<PendingStatement>, PowerSyncError> {
+        let mut entries = self.entries.borrow_mut();
+        let mut entry = entries.entry(tbl.name.clone());
+        let entry = match entry {
+            Entry::Vacant(entry) => entry.insert(SchemaCacheEntry::infer(db, schema_version, tbl)?),
+            Entry::Occupied(ref mut entry) => {
+                let value = entry.get_mut();
+                if value.schema_version != schema_version {
+                    // Values are outdated, refresh.
+                    *value = SchemaCacheEntry::infer(db, schema_version, tbl)?;
+                }
+
+                value
+            }
+        };
+
+        Ok(entry.put())
+    }
+
+    pub fn infer_delete_statement(
+        &self,
+        db: *mut sqlite::sqlite3,
+        schema_version: usize,
+        tbl: &RawTable,
+    ) -> Result<Rc<PendingStatement>, PowerSyncError> {
+        let mut entries = self.entries.borrow_mut();
+        let mut entry = entries.entry(tbl.name.clone());
+        let entry = match entry {
+            Entry::Vacant(entry) => entry.insert(SchemaCacheEntry::infer(db, schema_version, tbl)?),
+            Entry::Occupied(ref mut entry) => {
+                let value = entry.get_mut();
+                if value.schema_version != schema_version {
+                    // Values are outdated, refresh.
+                    *value = SchemaCacheEntry::infer(db, schema_version, tbl)?;
+                }
+
+                value
+            }
+        };
+
+        Ok(entry.delete())
+    }
+}
+
+pub struct SchemaCacheEntry {
+    schema_version: usize,
+    structure: InferredTableStructure,
+    put_stmt: Option<Rc<PendingStatement>>,
+    delete_stmt: Option<Rc<PendingStatement>>,
+}
+
+impl SchemaCacheEntry {
+    fn infer(
+        db: *mut sqlite::sqlite3,
+        schema_version: usize,
+        table: &RawTable,
+    ) -> Result<Self, PowerSyncError> {
+        let local_table_name = table.require_table_name()?;
+        let structure = InferredTableStructure::read_from_database(
+            local_table_name,
+            db,
+            &table.schema.synced_columns,
+        )?;
+
+        Ok(Self {
+            schema_version,
+            structure,
+            put_stmt: None,
+            delete_stmt: None,
+        })
+    }
+
+    fn put(&mut self) -> Rc<PendingStatement> {
+        self.put_stmt
+            .get_or_insert_with(|| Rc::new(self.structure.infer_put_stmt()))
+            .clone()
+    }
+
+    fn delete(&mut self) -> Rc<PendingStatement> {
+        self.delete_stmt
+            .get_or_insert_with(|| Rc::new(self.structure.infer_delete_stmt()))
+            .clone()
     }
 }
 
@@ -64,19 +221,10 @@ pub fn generate_raw_table_trigger(
     trigger_name: &str,
     write: WriteType,
 ) -> Result<String, PowerSyncError> {
-    let Some(local_table_name) = table.schema.table_name.as_ref() else {
-        return Err(PowerSyncError::argument_error("Table has no local name"));
-    };
-
+    let local_table_name = table.require_table_name()?;
     let synced_columns = &table.schema.synced_columns;
-    let Some(resolved_table) =
-        InferredTableStructure::read_from_database(local_table_name, db, synced_columns)?
-    else {
-        return Err(PowerSyncError::argument_error(format!(
-            "Could not find {} in local schema",
-            local_table_name
-        )));
-    };
+    let resolved_table =
+        InferredTableStructure::read_from_database(local_table_name, db, synced_columns)?;
 
     let as_schema_table = SchemaTable::Raw {
         definition: table,

@@ -1,8 +1,10 @@
+use alloc::rc::Rc;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::{collections::btree_set::BTreeSet, format, string::String, vec::Vec};
 use serde::{Deserialize, de::Visitor};
 
+use crate::error::PowerSyncError;
 use crate::schema::ColumnFilter;
 
 #[derive(Deserialize)]
@@ -52,8 +54,8 @@ pub struct RawTable {
     pub name: String,
     #[serde(flatten, default)]
     pub schema: RawTableSchema,
-    pub put: PendingStatement,
-    pub delete: PendingStatement,
+    pub put: Option<Rc<PendingStatement>>,
+    pub delete: Option<Rc<PendingStatement>>,
     #[serde(default)]
     pub clear: Option<String>,
 }
@@ -75,6 +77,18 @@ impl Table {
         } else {
             format!("ps_data__{:}", self.name)
         }
+    }
+}
+
+impl RawTable {
+    pub fn require_table_name(&self) -> Result<&str, PowerSyncError> {
+        let Some(local_table_name) = self.schema.table_name.as_ref() else {
+            return Err(PowerSyncError::argument_error(format!(
+                "Raw table {} has no local name",
+                self.name,
+            )));
+        };
+        Ok(local_table_name)
     }
 }
 
