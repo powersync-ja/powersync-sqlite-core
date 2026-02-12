@@ -132,6 +132,7 @@ impl<'a> SyncOperation<'a> {
 
         self.collect_tables()?;
         let statement = self.collect_full_operations()?;
+        // We're in a transaction, so the schem can't change while we're applying changes.
         let schema_version = InferredSchemaCache::current_schema_version(self.db)?;
         let schema_cache = &self.state.inferred_schema_cache;
 

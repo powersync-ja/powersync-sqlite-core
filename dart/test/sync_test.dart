@@ -1176,7 +1176,7 @@ CREATE TRIGGER users_delete
       final table = {
         'name': 'users',
         'table_name': 'local_users',
-        'local_only_columns': ['local'],
+        'synced_columns': ['name', 'email'],
         // This also tests that the trigger preventing updates and deletes on
         // insert-only tables is inert during sync_local.
         'insert_only': true,

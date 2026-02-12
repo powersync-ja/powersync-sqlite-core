@@ -4,7 +4,7 @@ use core::{
 };
 
 use alloc::{
-    collections::btree_map::{BTreeMap, Entry},
+    collections::btree_map::BTreeMap,
     format,
     rc::Rc,
     string::{String, ToString},
@@ -77,7 +77,7 @@ impl InferredTableStructure {
         buffer.push_str(" (id");
         for column in &self.columns {
             buffer.comma();
-            buffer.push_str(column);
+            let _ = buffer.identifier().write_str(column);
         }
         buffer.push_str(") VALUES (?");
         params.push(PendingStatementValue::Id);
@@ -150,24 +150,22 @@ impl InferredSchemaCache {
         db: *mut sqlite::sqlite3,
         schema_version: usize,
         tbl: &RawTable,
-        f: fn(&mut SchemaCacheEntry) -> Rc<PendingStatement>,
+        f: impl FnOnce(&mut SchemaCacheEntry) -> Rc<PendingStatement>,
     ) -> Result<Rc<PendingStatement>, PowerSyncError> {
         let mut entries = self.entries.borrow_mut();
-        let mut entry = entries.entry(tbl.name.clone());
-        let entry = match entry {
-            Entry::Vacant(entry) => entry.insert(SchemaCacheEntry::infer(db, schema_version, tbl)?),
-            Entry::Occupied(ref mut entry) => {
-                let value = entry.get_mut();
-                if value.schema_version != schema_version {
-                    // Values are outdated, refresh.
-                    *value = SchemaCacheEntry::infer(db, schema_version, tbl)?;
-                }
-
-                value
+        if let Some(value) = entries.get_mut(&tbl.name) {
+            if value.schema_version != schema_version {
+                // Values are outdated, refresh.
+                *value = SchemaCacheEntry::infer(db, schema_version, tbl)?;
             }
-        };
 
-        Ok(f(entry))
+            Ok(f(value))
+        } else {
+            let mut entry = SchemaCacheEntry::infer(db, schema_version, tbl)?;
+            let stmt = f(&mut entry);
+            entries.insert(tbl.name.clone(), entry);
+            Ok(stmt)
+        }
     }
 }
 
