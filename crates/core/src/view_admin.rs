@@ -10,7 +10,7 @@ use powersync_sqlite_nostd as sqlite;
 use powersync_sqlite_nostd::{Connection, Context};
 use sqlite::{ResultCode, Value};
 
-use crate::error::PowerSyncError;
+use crate::error::{PSResult, PowerSyncError};
 use crate::migrations::{LATEST_VERSION, powersync_migrate};
 use crate::schema::inspection::ExistingView;
 use crate::state::DatabaseState;
@@ -75,7 +75,7 @@ fn powersync_clear_impl(
         // speed up the next sync.
         local_db.exec_safe("DELETE FROM ps_oplog; DELETE FROM ps_buckets")?;
     } else {
-        local_db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0")?;
+        trigger_resync(local_db, state)?;
         local_db.exec_safe("DELETE FROM ps_buckets WHERE name = '$local'")?;
     }
 
@@ -86,10 +86,10 @@ DELETE FROM ps_crud;
 DELETE FROM ps_untyped;
 DELETE FROM ps_updated_rows;
 DELETE FROM ps_kv WHERE key != 'client_id';
-DELETE FROM ps_sync_state;
 DELETE FROM ps_stream_subscriptions;
 ",
     )?;
+    clear_has_synced(local_db)?;
 
     let table_glob = if flags.clear_local() {
         "ps_data_*"
@@ -137,6 +137,52 @@ DELETE FROM {table};",
 
     Ok(String::from(""))
 }
+
+fn trigger_resync(db: *mut sqlite::sqlite3, state: &DatabaseState) -> Result<(), PowerSyncError> {
+    {
+        let client = state.sync_client.borrow();
+        if let Some(client) = client.as_ref()
+            && client.has_sync_iteration()
+        {
+            return Err(PowerSyncError::argument_error(
+                "Cannot clear or trigger resync while a sync iteration is active.",
+            ));
+        }
+    }
+
+    db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0 WHERE name != '$local'")
+        .into_db_result(db)?;
+    Ok(Default::default())
+}
+
+fn clear_has_synced(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
+    db.exec_safe("DELETE FROM ps_sync_state;")?;
+    db.exec_safe("UPDATE ps_stream_subscriptions SET last_synced_at = NULL")?;
+    Ok(())
+}
+
+fn powersync_trigger_resync_impl(
+    ctx: *mut sqlite::context,
+    args: &[*mut sqlite::value],
+) -> Result<String, PowerSyncError> {
+    let local_db = ctx.db_handle();
+    let state = unsafe { DatabaseState::from_context(&ctx) };
+    trigger_resync(local_db, state)?;
+
+    let clear_progress = args[0].int() != 0;
+    if clear_progress {
+        clear_has_synced(local_db)?;
+    }
+
+    Ok(Default::default())
+}
+
+create_auto_tx_function!(powersync_trigger_resync_tx, powersync_trigger_resync_impl);
+create_sqlite_text_fn!(
+    powersync_trigger_resync,
+    powersync_trigger_resync_tx,
+    "powersync_trigger_resync"
+);
 
 #[derive(Clone, Copy)]
 struct PowerSyncClearFlags(i32);
@@ -199,8 +245,19 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         "powersync_clear",
         1,
         sqlite::UTF8,
-        Some(Rc::into_raw(state) as *mut c_void),
+        Some(Rc::into_raw(state.clone()) as *mut c_void),
         Some(powersync_clear),
+        None,
+        None,
+        Some(DatabaseState::destroy_rc),
+    )?;
+
+    db.create_function_v2(
+        "powersync_trigger_resync",
+        1,
+        sqlite::UTF8,
+        Some(Rc::into_raw(state) as *mut c_void),
+        Some(powersync_trigger_resync),
         None,
         None,
         Some(DatabaseState::destroy_rc),

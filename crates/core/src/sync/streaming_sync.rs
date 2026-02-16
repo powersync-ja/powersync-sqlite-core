@@ -107,6 +107,11 @@ impl SyncClient {
             SyncControlRequest::StopSyncStream => self.state.tear_down(),
         }
     }
+
+    /// Whether a sync iteration is currently active on the connection.
+    pub fn has_sync_iteration(&self) -> bool {
+        matches!(self.state, ClientState::IterationActive(_))
+    }
 }
 
 enum ClientState {
