@@ -38,7 +38,7 @@ pub struct RawTableSchema {
     #[serde(default)]
     pub table_name: Option<String>,
     #[serde(default)]
-    pub local_only_columns: ColumnFilter,
+    pub synced_columns: Option<ColumnFilter>,
     #[serde(flatten)]
     pub options: CommonTableOptions,
 }

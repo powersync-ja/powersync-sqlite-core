@@ -288,7 +288,7 @@ END''',
               'CREATE TABLE users (id TEXT, synced_a TEXT, synced_b TEXT, local_a TEXT, local_b TEXT);',
           tableOptions: {
             'table_name': 'users',
-            'local_only_columns': ['local_a', 'local_b'],
+            'synced_columns': ['synced_a', 'synced_b'],
           },
           insert: '''
 CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
