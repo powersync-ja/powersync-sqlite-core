@@ -11,7 +11,10 @@ use alloc::{
 use powersync_sqlite_nostd::{self as sqlite, Context};
 use sqlite::{Connection, ResultCode};
 
-use crate::{schema::Schema, sync::SyncClient};
+use crate::{
+    schema::{InferredSchemaCache, Schema},
+    sync::SyncClient,
+};
 
 /// State that is shared for a SQLite database connection after the core extension has been
 /// registered on it.
@@ -25,6 +28,9 @@ pub struct DatabaseState {
     pending_updates: RefCell<BTreeSet<String>>,
     commited_updates: RefCell<BTreeSet<String>>,
     pub sync_client: RefCell<Option<SyncClient>>,
+    /// Cached put and delete statements for raw tables, used by the `sync_local` step of the sync
+    /// client.
+    pub inferred_schema_cache: InferredSchemaCache,
 }
 
 impl DatabaseState {

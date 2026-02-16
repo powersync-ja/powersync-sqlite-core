@@ -7,6 +7,7 @@ mod table_info;
 use alloc::{rc::Rc, vec::Vec};
 pub use common::{ColumnFilter, SchemaTable};
 use powersync_sqlite_nostd::{self as sqlite, Connection, Context, Value, args};
+pub use raw_table::InferredSchemaCache;
 use serde::Deserialize;
 use sqlite::ResultCode;
 pub use table_info::{

@@ -1,5 +1,6 @@
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
+use alloc::rc::Rc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::ser::SerializeMap;
@@ -7,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::schema::inspection::ExistingTable;
-use crate::schema::{PendingStatement, PendingStatementValue, RawTable, Schema};
+use crate::schema::{
+    InferredSchemaCache, PendingStatement, PendingStatementValue, RawTable, Schema,
+};
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
 use crate::utils::SqlBuffer;
@@ -129,6 +132,9 @@ impl<'a> SyncOperation<'a> {
 
         self.collect_tables()?;
         let statement = self.collect_full_operations()?;
+        // We're in a transaction, so the schem can't change while we're applying changes.
+        let schema_version = InferredSchemaCache::current_schema_version(self.db)?;
+        let schema_cache = &self.state.inferred_schema_cache;
 
         // We cache the last insert and delete statements for each row
         struct CachedStatement {
@@ -151,7 +157,7 @@ impl<'a> SyncOperation<'a> {
                 if let Some(raw) = &mut known.raw {
                     match data {
                         Ok(data) => {
-                            let stmt = raw.put_statement(self.db)?;
+                            let stmt = raw.put_statement(self.db, schema_version, schema_cache)?;
                             let parsed: serde_json::Value = serde_json::from_str(data)
                                 .map_err(PowerSyncError::json_local_error)?;
                             let json_object = parsed.as_object().ok_or_else(|| {
@@ -165,7 +171,8 @@ impl<'a> SyncOperation<'a> {
                             stmt.exec(self.db, type_name, id, Some(&parsed))?;
                         }
                         Err(_) => {
-                            let stmt = raw.delete_statement(self.db)?;
+                            let stmt =
+                                raw.delete_statement(self.db, schema_version, schema_cache)?;
                             stmt.bind_for_delete(id)?;
                             stmt.exec(self.db, type_name, id, None)?;
                         }
@@ -464,19 +471,16 @@ struct ParsedSchemaTable<'a> {
 
 struct RawTableWithCachedStatements<'a> {
     definition: &'a RawTable,
-    cached_put: Option<PreparedPendingStatement<'a>>,
-    cached_delete: Option<PreparedPendingStatement<'a>>,
+    cached_put: Option<PreparedPendingStatement>,
+    cached_delete: Option<PreparedPendingStatement>,
 }
 
 impl<'a> RawTableWithCachedStatements<'a> {
-    fn prepare_lazily<'b>(
+    fn prepare_lazily(
         db: *mut sqlite::sqlite3,
-        slot: &'b mut Option<PreparedPendingStatement<'a>>,
-        def: &'a PendingStatement,
-    ) -> Result<&'b PreparedPendingStatement<'a>, PowerSyncError>
-    where
-        'a: 'b,
-    {
+        slot: &mut Option<PreparedPendingStatement>,
+        def: Rc<PendingStatement>,
+    ) -> Result<&PreparedPendingStatement, PowerSyncError> {
         Ok(match slot {
             Some(stmt) => stmt,
             None => {
@@ -489,15 +493,33 @@ impl<'a> RawTableWithCachedStatements<'a> {
     fn put_statement(
         &'_ mut self,
         db: *mut sqlite::sqlite3,
-    ) -> Result<&'_ PreparedPendingStatement<'_>, PowerSyncError> {
-        Self::prepare_lazily(db, &mut self.cached_put, &self.definition.put)
+        schema_version: usize,
+        cache: &InferredSchemaCache,
+    ) -> Result<&'_ PreparedPendingStatement, PowerSyncError> {
+        Self::prepare_lazily(
+            db,
+            &mut self.cached_put,
+            match self.definition.put {
+                Some(ref stmt) => stmt.clone(),
+                None => cache.infer_put_statement(db, schema_version, &self.definition)?,
+            },
+        )
     }
 
     fn delete_statement(
         &'_ mut self,
         db: *mut sqlite::sqlite3,
-    ) -> Result<&'_ PreparedPendingStatement<'_>, PowerSyncError> {
-        Self::prepare_lazily(db, &mut self.cached_delete, &self.definition.delete)
+        schema_version: usize,
+        cache: &InferredSchemaCache,
+    ) -> Result<&'_ PreparedPendingStatement, PowerSyncError> {
+        Self::prepare_lazily(
+            db,
+            &mut self.cached_delete,
+            match self.definition.delete {
+                Some(ref stmt) => stmt.clone(),
+                None => cache.infer_delete_statement(db, schema_version, &self.definition)?,
+            },
+        )
     }
 }
 
@@ -517,15 +539,15 @@ impl<'a> ParsedSchemaTable<'a> {
     }
 }
 
-struct PreparedPendingStatement<'a> {
+struct PreparedPendingStatement {
     stmt: ManagedStmt,
-    definition: &'a PendingStatement,
+    definition: Rc<PendingStatement>,
 }
 
-impl<'a> PreparedPendingStatement<'a> {
+impl PreparedPendingStatement {
     pub fn prepare(
         db: *mut sqlite::sqlite3,
-        pending: &'a PendingStatement,
+        pending: Rc<PendingStatement>,
     ) -> Result<Self, PowerSyncError> {
         let stmt = db.prepare_v2(&pending.sql).into_db_result(db)?;
         if stmt.bind_parameter_count() as usize != pending.params.len() {

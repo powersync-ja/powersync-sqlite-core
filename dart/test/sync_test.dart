@@ -1170,7 +1170,80 @@ CREATE TRIGGER users_delete
       expect(db.select('SELECT * FROM users'), isEmpty);
     });
 
-    syncTest('default trigger smoke test', (_) {
+    syncTest('inferred schema smoke test', (_) {
+      db.execute(
+          'CREATE TABLE local_users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, local TEXT) STRICT;');
+      final table = {
+        'name': 'users',
+        'table_name': 'local_users',
+        'synced_columns': ['name', 'email'],
+        // This also tests that the trigger preventing updates and deletes on
+        // insert-only tables is inert during sync_local.
+        'insert_only': true,
+      };
+
+      invokeControl(
+          'start',
+          json.encode({
+            'schema': {
+              'raw_tables': [table],
+              'tables': [],
+            }
+          }));
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {
+          'name': 'First user',
+          'local': 'ignored because the column is local-only'
+        },
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      var users = db.select('SELECT * FROM local_users;');
+      expect(users, [
+        {
+          'id': 'my_user',
+          'name': 'First user',
+          'local': null,
+        }
+      ]);
+
+      // Now, alter the underlying table to add a new column
+      db.execute('ALTER TABLE local_users ADD COLUMN email TEXT');
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '2',
+        'my_user',
+        'PUT',
+        {
+          'name': 'First user',
+          'email': 'email@example.org',
+          'local': 'still ignored'
+        },
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      users = db.select('SELECT * FROM local_users;');
+      expect(users, [
+        {
+          'id': 'my_user',
+          'name': 'First user',
+          'email': 'email@example.org',
+          'local': null,
+        }
+      ]);
+    });
+
+    test('inferred schema with changes', () {
       db.execute(
           'CREATE TABLE local_users (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL) STRICT;');
       final table = {
@@ -1179,18 +1252,6 @@ CREATE TRIGGER users_delete
         // This also tests that the trigger preventing updates and deletes on
         // insert-only tables is inert during sync_local.
         'insert_only': true,
-        'put': {
-          'sql': 'INSERT OR REPLACE INTO local_users (id, name) VALUES (?, ?);',
-          'params': [
-            'Id',
-            {'Column': 'name'}
-          ],
-        },
-        'delete': {
-          'sql': 'DELETE FROM local_users WHERE id = ?',
-          'params': ['Id'],
-        },
-        'clear': 'DELETE FROM local_users;',
       };
       db.execute('''
 SELECT

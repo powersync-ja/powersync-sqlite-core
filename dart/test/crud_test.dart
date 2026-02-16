@@ -818,7 +818,8 @@ void main() {
         db.execute('CREATE TABLE users (name TEXT);');
         expect(
           () => createRawTableTriggers(rawTableDescription({})),
-          throwsA(isSqliteException(3091, contains('Table has no local name'))),
+          throwsA(isSqliteException(
+              3091, contains('Raw table row_type has no local name'))),
         );
       });
 
