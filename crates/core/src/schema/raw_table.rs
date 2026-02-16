@@ -66,27 +66,35 @@ impl InferredTableStructure {
         }
     }
 
-    /// Generates a statement of the form `INSERT OR REPLACE INTO $tbl ($cols) VALUES (?, ...)` for
-    /// the sync client.
+    /// Generates a statement of the form `INSERT INTO $tbl ($cols) VALUES (?, ...) ON CONFLICT (id)
+    /// DO UPDATE SET ...` for the sync client.
     pub fn infer_put_stmt(&self) -> PendingStatement {
         let mut buffer = SqlBuffer::new();
         let mut params = vec![];
 
-        buffer.push_str("INSERT OR REPLACE INTO ");
+        buffer.push_str("INSERT INTO ");
         let _ = buffer.identifier().write_str(&self.name);
         buffer.push_str(" (id");
         for column in &self.columns {
             buffer.comma();
             let _ = buffer.identifier().write_str(column);
         }
-        buffer.push_str(") VALUES (?");
+        buffer.push_str(") VALUES (?1");
         params.push(PendingStatementValue::Id);
-        for column in &self.columns {
+        for (i, column) in self.columns.iter().enumerate() {
             buffer.comma();
-            buffer.push_str("?");
+            let _ = write!(&mut buffer, "?{}", i + 2);
             params.push(PendingStatementValue::Column(column.clone()));
         }
-        buffer.push_str(")");
+        buffer.push_str(") ON CONFLICT (id) DO UPDATE SET ");
+        let mut do_update = buffer.comma_separated();
+        // Generated an "x" = ? for all synced columns to update them without affecting local-only
+        // columns.
+        for (i, column) in self.columns.iter().enumerate() {
+            let entry = do_update.element();
+            let _ = entry.identifier().write_str(column);
+            let _ = write!(entry, " = ?{}", i + 2);
+        }
 
         PendingStatement {
             sql: buffer.sql,
@@ -311,4 +319,40 @@ pub fn generate_raw_table_trigger(
 
     buffer.trigger_end();
     Ok(buffer.sql)
+}
+
+#[cfg(test)]
+mod test {
+    use alloc::{string::ToString, vec};
+
+    use crate::schema::{PendingStatementValue, raw_table::InferredTableStructure};
+
+    #[test]
+    fn infer_sync_statements() {
+        let structure = InferredTableStructure {
+            name: "tbl".to_string(),
+            columns: vec!["foo".to_string(), "bar".to_string()],
+        };
+
+        let put = structure.infer_put_stmt();
+        assert_eq!(
+            put.sql,
+            r#"INSERT INTO "tbl" (id, "foo", "bar") VALUES (?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET "foo" = ?2, "bar" = ?3"#
+        );
+        assert_eq!(put.params.len(), 3);
+        assert!(matches!(put.params[0], PendingStatementValue::Id));
+        assert!(matches!(
+            put.params[1],
+            PendingStatementValue::Column(ref name) if name == "foo"
+        ));
+        assert!(matches!(
+            put.params[2],
+            PendingStatementValue::Column(ref name) if name == "bar"
+        ));
+
+        let delete = structure.infer_delete_stmt();
+        assert_eq!(delete.sql, r#"DELETE FROM "tbl" WHERE id = ?"#);
+        assert_eq!(delete.params.len(), 1);
+        assert!(matches!(delete.params[0], PendingStatementValue::Id));
+    }
 }
