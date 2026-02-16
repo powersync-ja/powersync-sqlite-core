@@ -400,6 +400,7 @@ void _syncTests<T>({
     db.execute(
         'insert into items (id, col) values (uuid(), ?)', ['local item']);
     expect(db.select('SELECT * FROM items'), hasLength(2));
+    invokeControl('stop', null);
 
     // Soft clear
     db.execute('SELECT powersync_clear(2)');
@@ -425,6 +426,57 @@ void _syncTests<T>({
     pushCheckpoint(buckets: [bucketDescription('a', count: 1)]);
     pushCheckpointComplete();
     expect(db.select('SELECT * FROM items'), hasLength(1));
+  });
+
+  group('trigger resync', () {
+    test('forbidden during sync', () {
+      invokeControl('start', null);
+
+      expect(
+        () => db.select('SELECT powersync_trigger_resync()'),
+        throwsA(
+          isSqliteException(
+            3091,
+            contains(
+                'Cannot clear or trigger resync while a sync iteration is active.'),
+          ),
+        ),
+      );
+    });
+
+    test('re-applies data', () {
+      invokeControl('start', null);
+      pushCheckpoint(buckets: [bucketDescription('a', count: 1)]);
+      pushSyncData('a', '1', 'row-0', 'PUT', {'col': 'hi'});
+      pushCheckpointComplete();
+      invokeControl('stop', null);
+
+      db.execute('delete from ps_data__items');
+      db.execute('select powersync_trigger_resync()');
+
+      final instructions = invokeControl('start', null);
+      expect(
+        instructions,
+        contains(
+          containsPair(
+            'EstablishSyncStream',
+            containsPair(
+              'request',
+              containsPair('buckets', [
+                {'name': 'a', 'after': '1'}
+              ]),
+            ),
+          ),
+        ),
+      );
+
+      pushCheckpoint(buckets: [bucketDescription('a', count: 1)]);
+      pushCheckpointComplete();
+
+      expect(db.select('select * from items'), [
+        {'id': 'row-0', 'col': 'hi'}
+      ]);
+    });
   });
 
   test('persists download progress', () {
