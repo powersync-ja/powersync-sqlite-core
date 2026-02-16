@@ -23,7 +23,7 @@ impl InferredTableStructure {
     pub fn read_from_database(
         table_name: &str,
         db: impl Connection,
-        ignored_local_columns: &ColumnFilter,
+        synced_columns: &Option<ColumnFilter>,
     ) -> Result<Option<Self>, PowerSyncError> {
         let stmt = db.prepare_v2("select name from pragma_table_info(?)")?;
         stmt.bind_text(1, table_name, Destructor::STATIC)?;
@@ -35,7 +35,11 @@ impl InferredTableStructure {
             let name = stmt.column_text(0)?;
             if name == "id" {
                 has_id_column = true;
-            } else if !ignored_local_columns.matches(name) {
+            } else if let Some(filter) = synced_columns
+                && !filter.matches(name)
+            {
+                // This column isn't part of the synced columns, skip.
+            } else {
                 columns.push(name.to_string());
             }
         }
@@ -64,9 +68,9 @@ pub fn generate_raw_table_trigger(
         return Err(PowerSyncError::argument_error("Table has no local name"));
     };
 
-    let local_only_columns = &table.schema.local_only_columns;
+    let synced_columns = &table.schema.synced_columns;
     let Some(resolved_table) =
-        InferredTableStructure::read_from_database(local_table_name, db, local_only_columns)?
+        InferredTableStructure::read_from_database(local_table_name, db, synced_columns)?
     else {
         return Err(PowerSyncError::argument_error(format!(
             "Could not find {} in local schema",
@@ -85,10 +89,10 @@ pub fn generate_raw_table_trigger(
     // Skip the trigger for writes during sync_local, these aren't crud writes.
     buffer.push_str("WHEN NOT powersync_in_sync_operation()");
 
-    if write == WriteType::Update && !local_only_columns.as_ref().is_empty() {
+    if write == WriteType::Update && synced_columns.is_some() {
         buffer.push_str(" AND\n(");
-        // If we have local-only columns, we want to add additional WHEN clauses to ensure the
-        // trigger runs for updates on synced columns.
+        // If we have a filter for synced columns (instead of syncing all of them), we want to add
+        // additional WHEN clauses to enesure the trigger runs for updates on those columns only.
         for (i, name) in as_schema_table.column_names().enumerate() {
             if i != 0 {
                 buffer.push_str(" OR ");
