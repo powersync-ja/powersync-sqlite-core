@@ -86,10 +86,10 @@ DELETE FROM ps_crud;
 DELETE FROM ps_untyped;
 DELETE FROM ps_updated_rows;
 DELETE FROM ps_kv WHERE key != 'client_id';
-DELETE FROM ps_sync_state;
 DELETE FROM ps_stream_subscriptions;
 ",
     )?;
+    clear_has_synced(local_db)?;
 
     let table_glob = if flags.clear_local() {
         "ps_data_*"
@@ -155,13 +155,24 @@ fn trigger_resync(db: *mut sqlite::sqlite3, state: &DatabaseState) -> Result<(),
     Ok(Default::default())
 }
 
+fn clear_has_synced(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
+    db.exec_safe("DELETE FROM ps_sync_state;")?;
+    db.exec_safe("UPDATE ps_stream_subscriptions SET last_synced_at = NULL")?;
+    Ok(())
+}
+
 fn powersync_trigger_resync_impl(
     ctx: *mut sqlite::context,
-    _args: &[*mut sqlite::value],
+    args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
     let state = unsafe { DatabaseState::from_context(&ctx) };
     trigger_resync(local_db, state)?;
+
+    let clear_progress = args[0].int() != 0;
+    if clear_progress {
+        clear_has_synced(local_db)?;
+    }
 
     Ok(Default::default())
 }
@@ -243,7 +254,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
 
     db.create_function_v2(
         "powersync_trigger_resync",
-        0,
+        1,
         sqlite::UTF8,
         Some(Rc::into_raw(state) as *mut c_void),
         Some(powersync_trigger_resync),

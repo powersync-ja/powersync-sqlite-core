@@ -433,7 +433,7 @@ void _syncTests<T>({
       invokeControl('start', null);
 
       expect(
-        () => db.select('SELECT powersync_trigger_resync()'),
+        () => db.select('SELECT powersync_trigger_resync(1)'),
         throwsA(
           isSqliteException(
             3091,
@@ -452,7 +452,7 @@ void _syncTests<T>({
       invokeControl('stop', null);
 
       db.execute('delete from ps_data__items');
-      db.execute('select powersync_trigger_resync()');
+      db.execute('select powersync_trigger_resync(0)');
 
       final instructions = invokeControl('start', null);
       expect(
@@ -476,6 +476,19 @@ void _syncTests<T>({
       expect(db.select('select * from items'), [
         {'id': 'row-0', 'col': 'hi'}
       ]);
+    });
+
+    test('can clear has synced', () {
+      invokeControl('start', null);
+      pushCheckpoint(buckets: [bucketDescription('a', count: 1)]);
+      pushSyncData('a', '1', 'row-0', 'PUT', {'col': 'hi'});
+      pushCheckpointComplete();
+      invokeControl('stop', null);
+
+      db.execute('select powersync_trigger_resync(1)');
+      final [row] = db.select('select powersync_offline_sync_status()');
+      expect(json.decode(row.columnAt(0)),
+          containsPair('priority_status', isEmpty));
     });
   });
 
