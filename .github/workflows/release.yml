@@ -280,9 +280,9 @@ jobs:
             This is a checklist to track the release of ${{ needs.draft_release.outputs.tag }}.
             
             Core build (this repo):
-            * [x] GitHub Release
+            * [ ] GitHub Release (add release notes and make public)
             * [x] New version released on crates.io
-            * [ ] Android aar released on Maven Central
+            * [ ] Verify Android aar released on Maven Central
             * [ ] Cocoapod released
 
             SQLite + powersync bundles:
@@ -291,8 +291,9 @@ jobs:
             * [ ] sql.js dev adapter: 
 
             User-facing SDK updates:
-            * [ ] powersync.dart:
-            * [ ] powersync-js:
-            * [ ] kotlin:
-            * [ ] swift:
-            * [ ] native:
+            * [ ] powersync.dart (see instructions in [this file](https://github.com/powersync-ja/powersync.dart/blob/main/packages/powersync_core/lib/src/database/core_version.dart)):
+            * [ ] powersync-js (directly update node, op-sqlite and capacitor packages; upgrade dependencies on rnqs, wa-sqlite and sql-js in packages and demos):
+            * [ ] kotlin (update in `libs.versions.toml`):
+            * [ ] swift (update in `Package.swift`):
+            * [ ] native (update in `Cargo.toml``):
+            * [ ] dotnet (update `Tools/Setup/Setup.cs`)
