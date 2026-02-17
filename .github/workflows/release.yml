@@ -296,3 +296,4 @@ jobs:
             * [ ] kotlin (update in `libs.versions.toml`):
             * [ ] swift (update in `Package.swift`):
             * [ ] native (update in `Cargo.toml``):
+            * [ ] dotnet (update `Tools/Setup/Setup.cs`)
