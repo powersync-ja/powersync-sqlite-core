@@ -946,6 +946,26 @@ void main() {
         db.execute('UPDATE users SET name = ?', ['name']);
         expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
       });
+
+      test('clearing raw tables does not create crud entries', () {
+        db.execute('CREATE TABLE users (id TEXT, name TEXT) STRICT;');
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['test user']);
+
+        createRawTableTriggers(rawTableDescription(
+            {'table_name': 'users', 'ignore_empty_update': true}));
+        db.execute('select powersync_replace_schema(?)', [
+          json.encode({
+            'tables': [],
+            'raw_tables': [
+              rawTableDescription({'clear': 'DELETE FROM users'})
+            ]
+          })
+        ]);
+
+        db.execute('SELECT powersync_clear(2)');
+        expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+      });
     });
   });
 }
