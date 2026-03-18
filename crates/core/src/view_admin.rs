@@ -122,6 +122,11 @@ DELETE FROM {table};",
     }
 
     if let Some(schema) = state.view_schema() {
+        // Pretend to be in a sync_local step when clearing raw tables. Similar to the case above
+        // where we delete from the underlying table to sidestep the CRUD trigger, we don't want
+        // triggers on raw tables to record this delete in ps_crud.
+        let _skip_crud = state.sync_local_guard();
+
         for raw_table in &schema.raw_tables {
             if let Some(stmt) = &raw_table.clear {
                 local_db.exec_safe(&stmt).map_err(|e| {
