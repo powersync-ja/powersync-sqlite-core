@@ -7,7 +7,6 @@ function compile() {
   local os=$3
 
   cargo build -p powersync_loadable -Z build-std=panic_abort,core,alloc --features nightly --release --target $triple
-  cargo build -p powersync_static -Z build-std=panic_abort,core,alloc --features nightly --release --target $triple
 
   mv "target/$triple/release/libpowersync.dylib" "libpowersync_$suffix.$os.dylib"
   mv "target/$triple/release/libpowersync.a" "libpowersync_$suffix.$os.a"

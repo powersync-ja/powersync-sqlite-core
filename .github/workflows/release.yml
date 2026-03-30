@@ -185,6 +185,9 @@ jobs:
         with:
           name: android-static
 
+      - name: Create archive of static libs for Kotlin
+        run: zip static_libs.zip *.lib *.a
+
       - name: List libraries
         run: ls -al
 
@@ -194,10 +197,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           gh release upload "${{ needs.draft_release.outputs.tag }}" *.dll
-          gh release upload "${{ needs.draft_release.outputs.tag }}" *.lib
           gh release upload "${{ needs.draft_release.outputs.tag }}" *.dylib
           gh release upload "${{ needs.draft_release.outputs.tag }}" *.so
-          gh release upload "${{ needs.draft_release.outputs.tag }}" *.a
+          gh release upload "${{ needs.draft_release.outputs.tag }}" static_libs.zip
 
   publish_wasm:
     name: Publish WASM builds
