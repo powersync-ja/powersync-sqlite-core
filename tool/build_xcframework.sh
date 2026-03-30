@@ -187,7 +187,7 @@ for TARGET in ${TARGETS[@]}; do
     cargo build \
       -p powersync_static \
       --profile release_apple \
-      --features nightly \
+      --features static,nightly \
       --target $TARGET \
       -Zbuild-std
   else

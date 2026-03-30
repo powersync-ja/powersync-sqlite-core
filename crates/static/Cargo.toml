@@ -22,4 +22,5 @@ features = []
 
 [features]
 nightly = []
-default = ["powersync_core/static"]
+# Whether to expect SQLite to be linked statically as well.
+static = ["powersync_core/static"]

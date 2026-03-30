@@ -95,10 +95,6 @@ val buildRust = tasks.register<Exec>("buildRust") {
     rustCompilation("powersync_loadable", "./android/build/intermediates/jniLibs")
 }
 
-val buildRustStatic = tasks.register<Exec>("buildRustStatic") {
-    rustCompilation("powersync_static")
-}
-
 val prefabAar = tasks.register<Zip>("prefabAar") {
     dependsOn(buildRust)
 
@@ -218,5 +214,5 @@ val zipPublication by tasks.registering(Zip::class) {
 }
 
 tasks.named("build") {
-    dependsOn(prefabAar, buildRustStatic)
+    dependsOn(prefabAar)
 }
