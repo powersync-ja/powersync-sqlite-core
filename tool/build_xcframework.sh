@@ -14,6 +14,10 @@ TARGETS=(
   aarch64-apple-darwin
   x86_64-apple-darwin
 
+  # macOS catalyst
+  aarch64-apple-ios-macabi
+  x86_64-apple-ios-macabi
+
   # watchOS and simulator
   aarch64-apple-watchos
   aarch64-apple-watchos-sim
@@ -124,6 +128,17 @@ function createXcframework() {
   # Generate dSYM for macOS
   dsymutil "${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core" -o "${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework.dSYM"
 
+  echo "===================== create macos catalyst framework ====================="
+  mkdir -p "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework/Versions/A/Resources"
+  echo "${macos_plist}" > "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework/Versions/A/Resources/Info.plist"
+  lipo ./target/aarch64-apple-ios-macabi/release_apple/libpowersync.dylib ./target/x86_64-apple-ios-macabi/release_apple/libpowersync.dylib -create -output "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
+  install_name_tool -id "@rpath/powersync-sqlite-core.framework/powersync-sqlite-core" "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core"
+  ln -sf A "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework/Versions/Current"
+  ln -sf Versions/Current/powersync-sqlite-core "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework/powersync-sqlite-core"
+  ln -sf Versions/Current/Resources "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework/Resources"
+  # Generate dSYM for macOS
+  dsymutil "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework/Versions/A/powersync-sqlite-core" -o "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework.dSYM"
+
   echo "===================== create watchos device framework ====================="
   mkdir -p "${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework/"
   echo "${watchos_plist}" > "${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework/Info.plist"
@@ -162,6 +177,8 @@ function createXcframework() {
     -debug-symbols "$(pwd -P)/${BUILD_DIR}/ios-arm64_x86_64-simulator/powersync-sqlite-core.framework.dSYM" \
     -framework "${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework" \
     -debug-symbols "$(pwd -P)/${BUILD_DIR}/macos-arm64_x86_64/powersync-sqlite-core.framework.dSYM" \
+    -framework "${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework" \
+    -debug-symbols "$(pwd -P)/${BUILD_DIR}/ios-arm64_x86_64-maccatalyst/powersync-sqlite-core.framework.dSYM" \
     -framework "${BUILD_DIR}/watchos-arm64_arm64_32_armv7k/powersync-sqlite-core.framework" \
     -framework "${BUILD_DIR}/watchos-arm64_x86_64-simulator/powersync-sqlite-core.framework" \
     -framework "${BUILD_DIR}/tvos-arm64/powersync-sqlite-core.framework" \
