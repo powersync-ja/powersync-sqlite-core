@@ -208,6 +208,11 @@ void _syncTests<T>({
     ]);
     expect(invokeControl('connection', 'end'), [
       {
+        'UpdateSyncStatus': {
+          'status': containsPair('connected', false),
+        }
+      },
+      {
         'CloseSyncStream': {'hide_disconnect': false}
       }
     ]);

@@ -563,6 +563,8 @@ impl StreamingSyncIteration {
                     continue;
                 }
                 SyncEvent::StreamEnded => {
+                    self.status
+                        .update(|s| s.disconnect(), &mut event.instructions);
                     break false;
                 }
                 SyncEvent::DidRefreshToken => {
