@@ -36,7 +36,7 @@ case "$1" in
     compile aarch64-apple-tvos aarch64 tvos
     compile aarch64-apple-tvos-sim aarch64 tvos-sim
     compile_static aarch64-apple-watchos aarch64 watchos
-    compile_static aarch64-apple-watchos aarch64 watchos-sim
+    compile_static aarch64-apple-watchos-sim aarch64 watchos-sim
     compile_static arm64_32-apple-watchos arm64_32 watchos
     ;;
   *)
