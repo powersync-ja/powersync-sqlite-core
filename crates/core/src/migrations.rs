@@ -431,7 +431,7 @@ CREATE TABLE ps_updated_rows(
   row_type TEXT,
   row_id TEXT,
   bucket INTEGER NOT NULL,
-  PRIMARY KEY(row_type, row_id, bucket)) STRICT, WITHOUT ROWID;
+  PRIMARY KEY(bucket, row_type, row_id)) STRICT, WITHOUT ROWID;
 INSERT INTO ps_updated_rows(row_type, row_id, bucket)
   SELECT row_type, row_id, 0 FROM ps_updated_rows_old;
 INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id, bucket)

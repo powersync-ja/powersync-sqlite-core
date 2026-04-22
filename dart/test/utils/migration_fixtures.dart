@@ -520,7 +520,7 @@ const expectedState = <int, String>{
   row_type TEXT,
   row_id TEXT,
   bucket INTEGER NOT NULL,
-  PRIMARY KEY(row_type, row_id, bucket)) STRICT, WITHOUT ROWID
+  PRIMARY KEY(bucket, row_type, row_id)) STRICT, WITHOUT ROWID
 ;CREATE UNIQUE INDEX ps_buckets_name ON ps_buckets (name)
 ;CREATE INDEX ps_oplog_key ON ps_oplog (bucket, key)
 ;CREATE INDEX ps_oplog_opid ON ps_oplog (bucket, op_id)
