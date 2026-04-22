@@ -239,7 +239,7 @@ impl SimpleCrudTransactionMode {
         prepare_lazy(&mut self.set_updated_rows, || {
             // language=SQLite
             db.prepare_v3(
-                "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?, ?)",
+                "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id, bucket) VALUES(?, ?, 0)",
                 0,
             )
         })

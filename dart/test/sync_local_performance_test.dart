@@ -82,6 +82,11 @@ SELECT
     
 FROM generate_bucket_rows;
 
+INSERT OR IGNORE INTO ps_updated_rows (bucket, row_type, row_id)
+SELECT b.bucket, b.row_type, b.row_id FROM ps_buckets AS buckets
+        CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
+        AND (b.op_id > buckets.last_applied_op);
+
 COMMIT;
 ''');
     // Enable this to see stats for initial data generation
@@ -119,6 +124,71 @@ COMMIT;
 
   // The tests below are for comparing different queries, not run as part of the
   // standard test suite.
+
+  test('sync_local new new query', () {
+    var timer = Stopwatch()..start();
+    final q = '''
+-- 1. Filter by the ops added but not applied yet
+WITH updated_rows AS (
+    SELECT row_type, row_id FROM ps_updated_rows
+)
+
+-- 2. Find *all* current ops over different buckets for those objects (oplog r).
+SELECT
+    b.row_type,
+    b.row_id,
+    (
+        -- 3. For each unique row, select the data from the latest oplog entry.
+        -- The max(r.op_id) clause is used to select the latest oplog entry.
+        -- The iif is to avoid the max(r.op_id) column ending up in the results.
+        SELECT iif(max(r.op_id), r.data, null)
+                 FROM ps_oplog r
+                WHERE r.row_type = b.row_type
+                  AND r.row_id = b.row_id
+
+    ) as data
+    FROM updated_rows b
+    -- Group for (2)
+    GROUP BY b.row_type, b.row_id;
+''';
+    db.select(q);
+    print('${timer.elapsed.inMilliseconds}ms ${vfs.stats()}');
+  }, skip: skip);
+
+  test('sync_local new old query', () {
+    // Same as "new query", but ignoring the data in ps_updated_rows since it's unfair to that test.
+    var timer = Stopwatch()..start();
+    final q = '''
+-- 1. Filter oplog by the ops added but not applied yet (oplog b).
+--    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
+--    We filter out duplicates using the GROUP BY below.
+WITH updated_rows AS (
+    SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
+        CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
+        AND (b.op_id > buckets.last_applied_op)
+)
+
+-- 2. Find *all* current ops over different buckets for those objects (oplog r).
+SELECT
+    b.row_type,
+    b.row_id,
+    (
+        -- 3. For each unique row, select the data from the latest oplog entry.
+        -- The max(r.op_id) clause is used to select the latest oplog entry.
+        -- The iif is to avoid the max(r.op_id) column ending up in the results.
+        SELECT iif(max(r.op_id), r.data, null)
+                 FROM ps_oplog r
+                WHERE r.row_type = b.row_type
+                  AND r.row_id = b.row_id
+
+    ) as data
+    FROM updated_rows b
+    -- Group for (2)
+    GROUP BY b.row_type, b.row_id;
+''';
+    db.select(q);
+    print('${timer.elapsed.inMilliseconds}ms ${vfs.stats()}');
+  }, skip: skip);
 
   test('sync_local new query', () {
     // This is the query we're using now.

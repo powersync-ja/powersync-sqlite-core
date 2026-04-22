@@ -13,7 +13,7 @@ use crate::fix_data::apply_v035_fix;
 use crate::schema::inspection::ExistingView;
 use crate::sync::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 12;
+pub const LATEST_VERSION: i32 = 13;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -419,6 +419,30 @@ ALTER TABLE ps_buckets ADD COLUMN downloaded_size INTEGER NOT NULL DEFAULT 0;
 INSERT INTO ps_migration(id, down_migrations) VALUES(12, json_array(
 json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN downloaded_size'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 12')
+));
+";
+        local_db.exec_safe(stmt).into_db_result(local_db)?;
+    }
+
+    if current_version < 13 && target_version >= 13 {
+        let stmt = "\
+ALTER TABLE ps_updated_rows RENAME TO ps_updated_rows_old;
+CREATE TABLE ps_updated_rows(
+  row_type TEXT,
+  row_id TEXT,
+  bucket INTEGER NOT NULL,
+  PRIMARY KEY(row_type, row_id, bucket)) STRICT, WITHOUT ROWID;
+INSERT INTO ps_updated_rows(row_type, row_id, bucket)
+  SELECT row_type, row_id, 0 FROM ps_updated_rows_old;
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id, bucket)
+  SELECT row_type, row_id, bucket FROM ps_oplog;
+DROP TABLE ps_updated_rows_old;
+INSERT INTO ps_migration(id, down_migrations) VALUES(13, json_array(
+json_object('sql', 'ALTER TABLE ps_updated_rows RENAME TO ps_updated_rows_13'),
+json_object('sql', 'CREATE TABLE ps_updated_rows(\n  row_type TEXT,\n  row_id TEXT,\n  PRIMARY KEY(row_type, row_id)) STRICT, WITHOUT ROWID'),
+json_object('sql', 'INSERT INTO ps_updated_rows(row_type, row_id)\n  SELECT row_type, row_id FROM ps_updated_rows_13\n  GROUP BY row_type, row_id'),
+json_object('sql', 'DROP TABLE ps_updated_rows_13'),
+json_object('sql', 'DELETE FROM ps_migration WHERE id >= 13')
 ));
 ";
         local_db.exec_safe(stmt).into_db_result(local_db)?;

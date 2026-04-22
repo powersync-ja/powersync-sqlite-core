@@ -299,10 +299,7 @@ impl<'a> SyncOperation<'a> {
                     .prepare_v2(
                         "\
 WITH updated_rows AS (
-    SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
-        CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
-        AND (b.op_id > buckets.last_applied_op)
-    UNION ALL SELECT row_type, row_id FROM ps_updated_rows
+    SELECT row_type, row_id FROM ps_updated_rows
 )
 
 SELECT
@@ -325,7 +322,7 @@ SELECT
                     .db
                     .prepare_v2(
                         "\
--- 1. Filter oplog by the ops added but not applied yet (oplog b).
+-- 1. Filter updated rows by the buckets included in this partial checkpoint.
 --    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
 --    We filter out duplicates using the GROUP BY below.
 WITH 
@@ -334,10 +331,8 @@ WITH
       OR name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))
   ),
   updated_rows AS (
-    SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
-        CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
-        AND (b.op_id > buckets.last_applied_op)
-        WHERE buckets.id IN (SELECT id FROM involved_buckets)
+    SELECT row_type, row_id FROM ps_updated_rows
+      WHERE bucket IN (SELECT id FROM involved_buckets)
   )
 
 -- 2. Find *all* current ops over different buckets for those objects (oplog r).
@@ -406,7 +401,22 @@ SELECT
                     .into_db_result(self.db)?;
                 BucketPriority::SENTINEL
             }
-            Some(partial) => partial.priority,
+            Some(partial) => {
+                let stmt = self
+                    .db
+                    .prepare_v2(
+                        "DELETE FROM ps_updated_rows
+                         WHERE bucket IN (
+                           SELECT id FROM ps_buckets
+                           WHERE ?1 IS NULL
+                             OR name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))
+                         )",
+                    )
+                    .into_db_result(self.db)?;
+                stmt.bind_text(1, partial.args, Destructor::STATIC)?;
+                stmt.exec()?;
+                partial.priority
+            }
         }
         .into();
 

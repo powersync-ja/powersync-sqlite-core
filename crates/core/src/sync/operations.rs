@@ -52,8 +52,9 @@ INSERT INTO ps_oplog(bucket, op_id, key, row_type, row_id, data, hash) VALUES (?
 
     let updated_row_statement = db.prepare_v2(
         "\
-INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id, bucket) VALUES(?1, ?2, ?3)",
     )?;
+    updated_row_statement.bind_int64(3, bucket_id)?;
 
     let mut last_op: Option<i64> = None;
     let mut add_checksum = Checksum::zero();
@@ -150,6 +151,12 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
             insert_statement.bind_int(7, checksum.bitcast_i32())?;
             insert_statement.exec()?;
 
+            if let (Some(object_type), Some(object_id)) = (object_type, object_id) {
+                updated_row_statement.bind_text(1, object_type, sqlite::Destructor::STATIC)?;
+                updated_row_statement.bind_text(2, object_id, sqlite::Destructor::STATIC)?;
+                updated_row_statement.exec()?;
+            }
+
             op_checksum += checksum;
         } else if op == OpType::MOVE {
             add_checksum += checksum;
@@ -158,8 +165,8 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
             // language=SQLite
             let clear_statement1 = db
                 .prepare_v2(
-                    "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
-SELECT row_type, row_id
+                    "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id, bucket)
+SELECT row_type, row_id, ?1
 FROM ps_oplog
 WHERE bucket = ?1",
                 )

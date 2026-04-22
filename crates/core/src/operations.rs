@@ -51,8 +51,8 @@ pub fn delete_bucket(db: *mut sqlite::sqlite3, name: &str) -> Result<(), ResultC
         // language=SQLite
         let updated_statement = db.prepare_v2(
             "\
-INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
-SELECT row_type, row_id
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id, bucket)
+SELECT row_type, row_id, 0
 FROM ps_oplog
 WHERE bucket = ?1",
         )?;
