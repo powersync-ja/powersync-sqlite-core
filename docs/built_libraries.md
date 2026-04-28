@@ -13,7 +13,7 @@ This document describes how builds of the PowerSync SQLite core extension are co
   - For Kotlin/Native:
     - Older versions only support Apple targets and expect a framework path to be present. Users are responsible for bundling the extension,
       we suggest a SwiftPM dependency through the intermediate repository.
-    - We are migrating towards a setup where we can also support Linux and Windows by linking the core extension staticaly through cinterops.
+    - We are migrating towards a setup where we can also support Linux and Windows by linking the core extension statically through cinterops.
 - [dotnet SDK](https://github.com/powersync-ja/powersync-dotnet):
   - On maui/Android, we download the Maven Central asset and extract individual libraries.
   - On maui/iOS and maui/macCatalyst: We use the XCFramework downloaded directly from GitHub releases.
