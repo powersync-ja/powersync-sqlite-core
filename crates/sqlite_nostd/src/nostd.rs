@@ -285,11 +285,7 @@ pub trait Connection {
     fn errmsg(&self) -> Result<String, IntoStringError>;
     fn error_offset(&self) -> Option<usize>;
 
-    /// sql should be a null terminated string! However you find is most efficient to craft those,
-    /// hence why we have no opinion on &str vs String vs CString vs whatever
-    /// todo: we should make some sort of opaque type to force null termination
-    /// this is inehritly unsafe
-    unsafe fn exec(&self, sql: *const c_char) -> Result<ResultCode, ResultCode>;
+    fn exec(&self, sql: &CStr) -> Result<ResultCode, ResultCode>;
 
     fn exec_safe(&self, sql: &str) -> Result<ResultCode, ResultCode>;
 
@@ -373,8 +369,8 @@ impl Connection for ManagedConnection {
     }
 
     #[inline]
-    unsafe fn exec(&self, sql: *const c_char) -> Result<ResultCode, ResultCode> {
-        unsafe { self.db.exec(sql) }
+    fn exec(&self, sql: &CStr) -> Result<ResultCode, ResultCode> {
+        self.db.exec(sql)
     }
 
     #[inline]
@@ -526,8 +522,8 @@ impl Connection for *mut sqlite3 {
     }
 
     #[inline]
-    unsafe fn exec(&self, sql: *const c_char) -> Result<ResultCode, ResultCode> {
-        convert_rc(exec(*self, sql))
+    fn exec(&self, sql: &CStr) -> Result<ResultCode, ResultCode> {
+        convert_rc(exec(*self, sql.as_ptr()))
     }
 
     #[inline]

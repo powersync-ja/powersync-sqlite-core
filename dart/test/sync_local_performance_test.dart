@@ -8,6 +8,7 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
+import 'utils/test_utils.dart';
 import 'utils/tracking_vfs.dart';
 import './schema_test.dart' show schema;
 
@@ -90,11 +91,47 @@ COMMIT;
     vfs.clearStats();
   });
 
-  test('sync_local (full)', () {
+  Stopwatch runSyncLocal(int? priority) {
+    db.execute('begin');
+    void control(String op, [Object? payload]) {
+      db.execute('SELECT powersync_control(?, ?)', [op, payload]);
+    }
+
+    // Start a fake sync client to apply the changes we've already written to
+    // ps_oplog
+    control('start');
+    final lastOpid =
+        db.select('select max(op_id) from ps_oplog').single.columnAt(0) as int;
+    final allBuckets = db
+        .select('SELECT name FROM ps_buckets')
+        .map((r) => r.columnAt(0) as String);
+    const highPriorityBuckets = {
+      'bucket0',
+      'bucket3',
+      'bucket4',
+      'bucket5',
+      'bucket6'
+    };
+    control(
+      'line_text',
+      json.encode(checkpoint(lastOpId: lastOpid, buckets: [
+        for (final bucket in allBuckets)
+          bucketDescription(bucket,
+              priority: highPriorityBuckets.contains(bucket) ? 2 : 3),
+      ])),
+    );
+
     var timer = Stopwatch()..start();
-    db.select('insert into powersync_operations(op, data) values(?, ?)',
-        ['sync_local', '']);
+    control('line_text', json.encode(checkpointComplete(priority: priority)));
+    db.execute('commit');
+
+    timer.stop();
     print('${timer.elapsed.inMilliseconds}ms ${vfs.stats()}');
+    return timer;
+  }
+
+  test('sync_local (full)', () {
+    final timer = runSyncLocal(null);
 
     // These are fairly generous limits, to catch significant regressions only.
     expect(vfs.tempWrites, lessThan(count / 50));
@@ -103,15 +140,8 @@ COMMIT;
   });
 
   test('sync_local (partial)', () {
-    var timer = Stopwatch()..start();
-    db.select('insert into powersync_operations(op, data) values(?, ?)', [
-      'sync_local',
-      jsonEncode({
-        'buckets': ['bucket0', 'bucket3', 'bucket4', 'bucket5', 'bucket6'],
-        'priority': 2
-      })
-    ]);
-    print('${timer.elapsed.inMilliseconds}ms ${vfs.stats()}');
+    final timer = runSyncLocal(2);
+
     expect(vfs.tempWrites, lessThan(count / 50));
     expect(timer.elapsed,
         lessThan(Duration(milliseconds: 100 + (count / 50).round())));

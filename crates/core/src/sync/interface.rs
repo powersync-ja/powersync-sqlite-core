@@ -224,24 +224,14 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
 
             let op = op.text();
             let event = match op {
-                "start" => {
-                    // Ensure the operations vtab exists. It's not actually used by the sync client,
-                    // but we rely on that vtab being destroyed as a pre-close hook for the database
-                    // connection to free statements preserved across multiple powersync_control
-                    // invocations.
-                    db.exec_safe(
-                        "insert into powersync_operations (op, data) VALUES ('noop', null);",
-                    )?;
-
-                    SyncControlRequest::StartSyncStream({
-                        if payload.value_type() == ColumnType::Text {
-                            serde_json::from_str(payload.text())
-                                .map_err(PowerSyncError::as_argument_error)?
-                        } else {
-                            StartSyncStream::default()
-                        }
-                    })
-                }
+                "start" => SyncControlRequest::StartSyncStream({
+                    if payload.value_type() == ColumnType::Text {
+                        serde_json::from_str(payload.text())
+                            .map_err(PowerSyncError::as_argument_error)?
+                    } else {
+                        StartSyncStream::default()
+                    }
+                }),
                 "stop" => SyncControlRequest::StopSyncStream,
                 "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
                     data: if payload.value_type() == ColumnType::Text {

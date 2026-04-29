@@ -5,23 +5,21 @@ use alloc::rc::Rc;
 use core::ffi::{c_char, c_int, c_void};
 
 use powersync_sqlite_nostd as sqlite;
-use sqlite::{Connection, ResultCode, Value};
+use sqlite::{Connection, ResultCode};
 
-use crate::operations::{
-    clear_remove_ops, delete_bucket, delete_pending_buckets, insert_operation,
-};
 use crate::state::DatabaseState;
-use crate::sync_local::sync_local;
 use crate::vtab_util::*;
 
+/// A virtual table hack to implement a "pre-close hook" for databases.
+///
+/// When `sqlite3_close` is called, SQLite invokes the disconnect callback of virtual tables
+/// attached to the connection. This gives us an opportunity to call
+/// [DatabaseState::release_resources], allowing us to close active sync clients and associated
+/// prepared statements. Without this, our internal statements might lease resources.
 #[repr(C)]
 struct VirtualTable {
     base: sqlite::vtab,
-    db: *mut sqlite::sqlite3,
     state: Rc<DatabaseState>,
-
-    target_applied: bool,
-    target_validated: bool,
 }
 
 extern "C" fn connect(
@@ -32,9 +30,7 @@ extern "C" fn connect(
     vtab: *mut *mut sqlite::vtab,
     _err: *mut *mut c_char,
 ) -> c_int {
-    if let Err(rc) =
-        sqlite::declare_vtab(db, "CREATE TABLE powersync_operations(op TEXT, data TEXT);")
-    {
+    if let Err(rc) = sqlite::declare_vtab(db, "CREATE TABLE powersync_internal_close(_ TEXT);") {
         return rc as c_int;
     }
 
@@ -45,10 +41,7 @@ extern "C" fn connect(
                 pModule: core::ptr::null(),
                 zErrMsg: core::ptr::null_mut(),
             },
-            db,
             state: DatabaseState::clone_from(aux),
-            target_validated: false,
-            target_applied: false,
         }));
         *vtab = tab.cast::<sqlite::vtab>();
         let _ = sqlite::vtab_config(db, 0);
@@ -69,57 +62,12 @@ extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
 }
 
 extern "C" fn update(
-    vtab: *mut sqlite::vtab,
-    argc: c_int,
-    argv: *mut *mut sqlite::value,
-    p_row_id: *mut sqlite::int64,
+    _vtab: *mut sqlite::vtab,
+    _argc: c_int,
+    _argv: *mut *mut sqlite::value,
+    _p_row_id: *mut sqlite::int64,
 ) -> c_int {
-    let args = sqlite::args!(argc, argv);
-
-    let rowid = args[0];
-
-    return if args.len() == 1 {
-        // DELETE
-        ResultCode::MISUSE as c_int
-    } else if rowid.value_type() == sqlite::ColumnType::Null {
-        // INSERT
-        let op = args[2].text();
-
-        let tab = unsafe { &mut *vtab.cast::<VirtualTable>() };
-        let db = tab.db;
-
-        if op == "save" {
-            let result = insert_operation(db, args[3].text());
-            vtab_result(vtab, result)
-        } else if op == "sync_local" {
-            let result = sync_local(&tab.state, db, &args[3]);
-            if let Ok(result_row) = result {
-                unsafe {
-                    *p_row_id = result_row;
-                }
-            }
-            vtab_result(vtab, result)
-        } else if op == "clear_remove_ops" {
-            let result = clear_remove_ops(db, args[3].text());
-            vtab_result(vtab, result)
-        } else if op == "delete_pending_buckets" {
-            let result = delete_pending_buckets(db, args[3].text());
-            vtab_result(vtab, result)
-        } else if op == "delete_bucket" {
-            let result = delete_bucket(db, args[3].text());
-            vtab_result(vtab, result)
-        } else if op == "noop" {
-            // We call this to ensure the table is added to an active database, ensuring that
-            // the disconnect callback runs before the database is closed (allowing us to free
-            // resources from the client state).
-            ResultCode::OK as c_int
-        } else {
-            ResultCode::MISUSE as c_int
-        }
-    } else {
-        // UPDATE - not supported
-        ResultCode::MISUSE as c_int
-    } as c_int;
+    0
 }
 
 // Insert-only virtual table.
@@ -155,7 +103,7 @@ static MODULE: sqlite::module = sqlite::module {
 
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     db.create_module_v2(
-        "powersync_operations",
+        "powersync_internal_close",
         &MODULE,
         Some(Rc::into_raw(state) as *mut c_void),
         Some(DatabaseState::destroy_rc),

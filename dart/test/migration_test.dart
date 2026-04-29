@@ -7,6 +7,7 @@ import 'utils/native_test_utils.dart';
 import 'utils/migration_fixtures.dart' as fixtures;
 import 'utils/fix_035_fixtures.dart' as fix035;
 import 'utils/schema.dart';
+import 'utils/test_utils.dart';
 
 void main() {
   group('Migration Tests', () {
@@ -201,8 +202,23 @@ void main() {
       final data = getData(db);
       expect(data, equals(fix035.dataMigrated.trim()));
 
-      db.select('insert into powersync_operations(op, data) values(?, ?)',
-          ['sync_local', '']);
+      {
+        void control(String op, [Object? payload]) {
+          db.execute('select powersync_control(?, ?)', [op, payload]);
+        }
+
+        db.execute('begin');
+        control('start');
+        control(
+          'line_text',
+          json.encode(checkpoint(lastOpId: 3, buckets: [
+            bucketDescription('b1', checksum: 120),
+            bucketDescription('b2', checksum: 3),
+          ])),
+        );
+        control('line_text', json.encode(checkpointComplete(lastOpId: '3')));
+        db.execute('commit');
+      }
 
       final data2 = getData(db);
       expect(data2, equals(fix035.dataFixed.trim()));

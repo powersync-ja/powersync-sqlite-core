@@ -10,7 +10,6 @@ use sqlite::ResultCode;
 use crate::{error::PowerSyncError, state::DatabaseState};
 
 mod bson;
-mod checkpoint;
 mod constants;
 mod crud_vtab;
 mod diff;
@@ -21,8 +20,7 @@ mod json_util;
 mod kv;
 mod macros;
 mod migrations;
-mod operations;
-mod operations_vtab;
+mod pre_close_vtab;
 mod schema;
 mod state;
 mod sync;
@@ -73,14 +71,13 @@ fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
     crate::fix_data::register(db)?;
     crate::json_util::register(db)?;
     crate::view_admin::register(db, state.clone())?;
-    crate::checkpoint::register(db)?;
     crate::kv::register(db)?;
     crate::state::register(db, state.clone())?;
     sync::register(db, state.clone())?;
     update_hooks::register(db, state.clone())?;
 
     crate::schema::register(db, state.clone())?;
-    crate::operations_vtab::register(db, state.clone())?;
+    crate::pre_close_vtab::register(db, state.clone())?;
     crate::crud_vtab::register(db, state)?;
 
     Ok(())
