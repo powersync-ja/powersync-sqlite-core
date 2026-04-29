@@ -2,9 +2,8 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use serde::Serialize;
 use serde::ser::SerializeMap;
-use serde::{Deserialize, Serialize};
 
 use crate::error::{PSResult, PowerSyncError};
 use crate::schema::inspection::ExistingTable;
@@ -14,20 +13,10 @@ use crate::schema::{
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
 use crate::utils::SqlBuffer;
-use powersync_sqlite_nostd::{self as sqlite, Destructor, ManagedStmt, Value};
-use powersync_sqlite_nostd::{ColumnType, Connection, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite, Destructor, ManagedStmt};
+use powersync_sqlite_nostd::{Connection, ResultCode};
 
 use crate::ext::SafeManagedStmt;
-
-pub fn sync_local<V: Value>(
-    state: &DatabaseState,
-    db: *mut sqlite::sqlite3,
-    data: &V,
-) -> Result<i64, PowerSyncError> {
-    let mut operation: SyncOperation<'_> =
-        SyncOperation::from_args(state, db, data).map_err(PowerSyncError::as_argument_error)?;
-    operation.apply()
-}
 
 pub struct PartialSyncOperation<'a> {
     /// The lowest priority part of the partial sync operation.
@@ -45,39 +34,6 @@ pub struct SyncOperation<'a> {
 }
 
 impl<'a> SyncOperation<'a> {
-    fn from_args<V: Value>(
-        state: &'a DatabaseState,
-        db: *mut sqlite::sqlite3,
-        data: &'a V,
-    ) -> Result<Self, serde_json::Error> {
-        Ok(Self::new(
-            state,
-            db,
-            match data.value_type() {
-                ColumnType::Text => {
-                    let text = data.text();
-                    if text.len() > 0 {
-                        #[derive(Deserialize)]
-                        struct PartialSyncLocalArguments {
-                            #[serde(rename = "buckets")]
-                            _buckets: Vec<String>,
-                            priority: BucketPriority,
-                        }
-
-                        let args: PartialSyncLocalArguments = serde_json::from_str(text)?;
-                        Some(PartialSyncOperation {
-                            priority: args.priority,
-                            args: text,
-                        })
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            },
-        ))
-    }
-
     pub fn new(
         state: &'a DatabaseState,
         db: *mut sqlite::sqlite3,

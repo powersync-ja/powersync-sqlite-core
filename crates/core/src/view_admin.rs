@@ -37,6 +37,11 @@ fn powersync_init_impl(
 ) -> Result<String, PowerSyncError> {
     powersync_migrate(ctx, LATEST_VERSION)?;
 
+    // Register the powersync_internal_close vtab to implement a "pre-close hook".
+    // See `pre_close_vtab.rs` for more details on how that works.
+    ctx.db_handle()
+        .exec(c"INSERT INTO powersync_internal_close(_) VALUES (null)")?;
+
     Ok(String::from(""))
 }
 

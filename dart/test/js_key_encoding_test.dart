@@ -15,32 +15,24 @@ void main() {
   });
 
   test('can fix JS key encoding', () {
-    db.execute('insert into powersync_operations (op, data) VALUES (?, ?);', [
-      'save',
-      json.encode({
-        'buckets': [
-          {
-            'bucket': 'a',
-            'data': [
-              {
-                'op_id': '1',
-                'op': 'PUT',
-                'object_type': 'items',
-                'object_id': '1',
-                'subkey': json.encode('subkey'),
-                'checksum': 0,
-                'data': json.encode({'col': 'a'}),
-              }
-            ],
-          }
-        ],
-      })
-    ]);
+    var [row] = db
+        .select('INSERT INTO ps_buckets(name) VALUES (?) RETURNING id', ['a']);
+    final bucketId = row.columnAt(0) as int;
 
-    db.execute('INSERT INTO powersync_operations(op, data) VALUES (?, ?)',
-        ['sync_local', null]);
-    var [row] = db.select('select * from ps_oplog');
-    expect(row['key'], 'items/1/"subkey"');
+    db.execute(
+      'INSERT INTO ps_oplog(bucket, op_id, key, row_type, row_id, data, hash) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [
+        bucketId,
+        '1',
+        // The JavaScript client used to insert keys like this (encoding the
+        // subkey part as JSON).
+        'items/1/"subkey"',
+        'items',
+        '1',
+        '{}',
+        0
+      ],
+    );
 
     // Apply migration
     db.execute(

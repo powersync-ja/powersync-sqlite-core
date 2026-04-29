@@ -7,7 +7,6 @@ use serde::Serialize;
 use crate::{
     error::{PSResult, PowerSyncError},
     ext::SafeManagedStmt,
-    operations::delete_bucket,
     schema::Schema,
     state::DatabaseState,
     sync::{
@@ -132,9 +131,48 @@ impl StorageAdapter {
         &self,
         buckets: impl IntoIterator<Item = &'a str>,
     ) -> Result<(), ResultCode> {
+        // Prepare statements lazily, this method may be called without any buckets to delete.
+        let mut delete_bucket_returning_id = None::<ManagedStmt>;
+        let mut mark_updated = None::<ManagedStmt>;
+        let mut delete_oplog = None::<ManagedStmt>;
+
         for bucket in buckets {
-            // TODO: This is a neat opportunity to create the statements here and cache them
-            delete_bucket(self.db, bucket)?;
+            let delete_bucket_returning_id = match delete_bucket_returning_id {
+                Some(ref stmt) => stmt,
+                None => delete_bucket_returning_id.insert(
+                    self.db
+                        .prepare_v2("DELETE FROM ps_buckets WHERE name = ?1 RETURNING id")?,
+                ),
+            };
+
+            delete_bucket_returning_id.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
+            if let ResultCode::ROW = delete_bucket_returning_id.step()? {
+                let bucket_id = delete_bucket_returning_id.column_int64(0);
+
+                let mark_updated = match mark_updated {
+                    Some(ref stmt) => stmt,
+                    None => mark_updated.insert(self.db.prepare_v2(
+                        "\
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
+SELECT row_type, row_id
+FROM ps_oplog
+WHERE bucket = ?1",
+                    )?),
+                };
+                let delete_oplog = match delete_oplog {
+                    Some(ref stmt) => stmt,
+                    None => delete_oplog
+                        .insert(self.db.prepare_v2("DELETE FROM ps_oplog WHERE bucket=?1")?),
+                };
+
+                mark_updated.bind_int64(1, bucket_id)?;
+                mark_updated.exec()?;
+
+                delete_oplog.bind_int64(1, bucket_id)?;
+                delete_oplog.exec()?;
+            }
+
+            delete_bucket_returning_id.reset()?;
         }
 
         Ok(())
