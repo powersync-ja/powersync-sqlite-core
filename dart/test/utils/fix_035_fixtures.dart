@@ -25,9 +25,9 @@ const dataMigrated = '''
   (1, 1, 'todos', 't1', '', '{}', 100),
   (1, 2, 'todos', 't2', '', '{}', 20),
   (2, 3, 'lists', 'l1', '', '{}', 3)
-;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
-  ('lists', 'l3'),
-  ('todos', 't3')
+;INSERT INTO ps_updated_rows(row_type, row_id, bucket) VALUES
+  ('lists', 'l3', 0),
+  ('todos', 't3', 0)
 ;INSERT INTO ps_data__lists(id, data) VALUES
   ('l1', '{}'),
   ('l3', '{}')

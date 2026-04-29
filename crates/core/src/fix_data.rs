@@ -38,8 +38,8 @@ pub fn apply_v035_fix(db: *mut sqlite::sqlite3) -> Result<i64, PowerSyncError> {
         // language=SQLite
         let statement = db.prepare_v2(&format!(
             "
-INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
-SELECT ?1, id FROM {}
+INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id, bucket)
+SELECT ?1, id, 0 FROM {}
   WHERE NOT EXISTS (
       SELECT 1 FROM ps_oplog
       WHERE row_type = ?1 AND row_id = {}.id
