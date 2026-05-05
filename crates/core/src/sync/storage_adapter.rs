@@ -47,7 +47,7 @@ impl StorageAdapter {
             .into_db_result(db)?;
 
         // language=SQLite
-        let time = db.prepare_v2("SELECT CAST(unixepoch('subsec') * 1_000_000 as integer)")?;
+        let time = db.prepare_v2("SELECT CAST(unixepoch('subsec') * 1000000 as integer)")?;
 
         // language=SQLite
         let delete_subscription =
@@ -417,7 +417,7 @@ WHERE bucket = ?1",
     pub fn increase_ttl(&self, streams: &[StreamKey]) -> Result<(), PowerSyncError> {
         let now = self.now()?;
         let stmt = self.db.prepare_v2(
-            "UPDATE ps_stream_subscriptions SET expires_at = ? + ttl * 1_000_000 WHERE stream_name = ? AND local_params = ? AND ttl IS NOT NULL",
+            "UPDATE ps_stream_subscriptions SET expires_at = ? + ttl * 1000000 WHERE stream_name = ? AND local_params = ? AND ttl IS NOT NULL",
         )?;
 
         for stream in streams {

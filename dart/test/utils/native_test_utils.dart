@@ -92,7 +92,7 @@ void syncTest(String description, void Function(FakeAsync controller) body) {
   });
 }
 
-/// Generates an expected statement relative to the current mocked time (in
+/// Generates an expected timestamp relative to the current mocked time (in
 /// microseconds).
 int timestamp({
   int plusSeconds = 0,

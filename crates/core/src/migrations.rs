@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use powersync_sqlite_nostd::{self as sqlite, Destructor};
 use powersync_sqlite_nostd::{Connection, Context};
 use serde::Serialize;
-use serde::ser::SerializeSeq;
+use serde_json::json;
 use sqlite::ResultCode;
 
 use crate::error::{PSResult, PowerSyncError};
@@ -429,26 +429,26 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 12')
 
     if current_version < 13 && target_version >= 13 {
         let up = "\
-UPDATE ps_stream_subscriptions SET expires_at = expires_at * 1_000_000, last_synced_at = last_synced_at * 1_000_000;
+UPDATE ps_stream_subscriptions SET expires_at = expires_at * 1000000, last_synced_at = last_synced_at * 1000000;
 ALTER TABLE ps_sync_state RENAME TO ps_sync_state_old;
 CREATE TABLE ps_sync_state (
   priority INTEGER NOT NULL PRIMARY KEY,
   last_synced_at INTEGER NOT NULL
 ) STRICT;
 INSERT INTO ps_sync_state (priority, last_synced_at)
-  SELECT priority, unixepoch(last_synced_at) * 1_000_000 FROM ps_sync_state_old;
+  SELECT priority, unixepoch(last_synced_at) * 1000000 FROM ps_sync_state_old;
 DROP TABLE ps_sync_state_old;
 ";
         local_db.exec_safe(up).into_db_result(local_db)?;
 
         const DOWN_STATEMENTS: &[&str] = &[
-            "UPDATE ps_stream_subscriptions SET expires_at = expires_at / 1_000_000, last_synced_at = last_synced_at / 1_000_000",
+            "UPDATE ps_stream_subscriptions SET expires_at = expires_at / 1000000, last_synced_at = last_synced_at / 1000000",
             "ALTER TABLE ps_sync_state RENAME TO ps_sync_state_new",
             "CREATE TABLE ps_sync_state (
   priority INTEGER NOT NULL PRIMARY KEY,
   last_synced_at TEXT NOT NULL
 ) STRICT;",
-            "INSERT INTO ps_sync_state (priority, last_synced_at) SELECT priority, datetime(last_synced_at / 1_000_000, 'unixepoch') FROM ps_sync_state",
+            "INSERT INTO ps_sync_state (priority, last_synced_at) SELECT priority, datetime(last_synced_at / 1000000, 'unixepoch') FROM ps_sync_state_new",
             "DROP TABLE ps_sync_state_new",
             "DELETE FROM ps_migration WHERE id >= 13",
         ];
@@ -466,22 +466,12 @@ DROP TABLE ps_sync_state_old;
 fn serialize_down_statements(statements: &[&'static str]) -> Result<String, PowerSyncError> {
     struct DownStatements<'a>(&'a [&'static str]);
 
-    #[derive(Serialize)]
-    struct DownStatement {
-        sql: &'static str,
-    }
-
     impl<'a> Serialize for DownStatements<'a> {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {
-            let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-            for element in self.0 {
-                seq.serialize_element(&DownStatement { sql: element })?;
-            }
-
-            seq.end()
+            serializer.collect_seq(self.0.iter().map(|s| json!({"sql": s})).into_iter())
         }
     }
 
