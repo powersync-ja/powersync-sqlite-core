@@ -11,6 +11,7 @@ pub mod operations;
 pub mod storage_adapter;
 mod streaming_sync;
 mod subscriptions;
+mod sync_local;
 mod sync_status;
 
 pub use bucket_priority::BucketPriority;

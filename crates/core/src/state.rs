@@ -12,8 +12,9 @@ use powersync_sqlite_nostd::{self as sqlite, Context};
 use sqlite::{Connection, ResultCode};
 
 use crate::{
+    error::PowerSyncError,
     schema::{InferredSchemaCache, Schema},
-    sync::SyncClient,
+    sync::{SyncClient, storage_adapter::StorageAdapter},
 };
 
 /// State that is shared for a SQLite database connection after the core extension has been
@@ -27,6 +28,7 @@ pub struct DatabaseState {
     schema: RefCell<Option<Schema>>,
     pending_updates: RefCell<BTreeSet<String>>,
     commited_updates: RefCell<BTreeSet<String>>,
+    pub storage_adapter: RefCell<Option<Rc<StorageAdapter>>>,
     pub sync_client: RefCell<Option<SyncClient>>,
     /// Cached put and delete statements for raw tables, used by the `sync_local` step of the sync
     /// client.
@@ -97,10 +99,29 @@ impl DatabaseState {
         core::mem::replace(&mut *committed, Default::default())
     }
 
+    pub fn storage_adapter(
+        &self,
+        db: *mut sqlite::sqlite3,
+    ) -> Result<Rc<StorageAdapter>, PowerSyncError> {
+        let mut adapter = self.storage_adapter.borrow_mut();
+        Ok(match *adapter {
+            Some(ref adapter) => {
+                debug_assert!(db == adapter.db);
+                adapter.clone()
+            }
+            None => {
+                let created = Rc::new(StorageAdapter::new(db)?);
+                *adapter = Some(created.clone());
+                created
+            }
+        })
+    }
+
     /// Releases global resources (like prepared statements for the sync client) referenced from
     /// this state.
     pub fn release_resources(&self) {
-        self.sync_client.replace(None);
+        self.sync_client.take();
+        self.storage_adapter.take();
     }
 
     /// ## Safety

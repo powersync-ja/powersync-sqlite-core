@@ -9,7 +9,6 @@ use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
 use crate::sync::diagnostics::{DiagnosticOptions, DiagnosticsEvent};
-use crate::sync::storage_adapter::StorageAdapter;
 use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
@@ -267,9 +266,10 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     }
                 }),
                 "subscriptions" => {
+                    let adapter = state.storage_adapter(db)?;
                     let request = serde_json::from_str(payload.text())
                         .map_err(PowerSyncError::as_argument_error)?;
-                    return apply_subscriptions(db, request);
+                    return apply_subscriptions(&adapter, request);
                 }
                 _ => {
                     return Err(PowerSyncError::argument_error("Unknown operation"));
@@ -278,14 +278,15 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
 
             let instructions = {
                 let mut client = state.sync_client.borrow_mut();
-
-                client
-                    .get_or_insert_with(|| {
+                let client = match *client {
+                    Some(ref mut client) => client,
+                    None => {
                         let state = unsafe { DatabaseState::clone_from(ctx.user_data()) };
-
-                        SyncClient::new(db, &state)
-                    })
-                    .push_event(event)
+                        let created = SyncClient::new(db, &state)?;
+                        client.insert(created)
+                    }
+                };
+                client.push_event(event)
             }?;
 
             let formatted =
@@ -316,11 +317,11 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         "powersync_offline_sync_status",
         0,
         sqlite::UTF8 | sqlite::DIRECTONLY | SQLITE_RESULT_SUBTYPE,
-        None,
+        Some(Rc::into_raw(state.clone()) as *mut c_void),
         Some(powersync_offline_sync_status),
         None,
         None,
-        None,
+        Some(DatabaseState::destroy_rc),
     )?;
 
     Ok(())
@@ -330,7 +331,9 @@ fn powersync_offline_sync_status_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let adapter = StorageAdapter::new(ctx.db_handle())?;
+    let db_state = unsafe { DatabaseState::from_context(&ctx) };
+    let adapter = db_state.storage_adapter(ctx.db_handle())?;
+
     let state = adapter.offline_sync_state()?;
     let serialized = serde_json::to_string(&state).map_err(PowerSyncError::internal)?;
 

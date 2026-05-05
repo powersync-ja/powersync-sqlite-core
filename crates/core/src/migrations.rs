@@ -4,16 +4,19 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use powersync_sqlite_nostd as sqlite;
+use powersync_sqlite_nostd::{self as sqlite, Destructor};
 use powersync_sqlite_nostd::{Connection, Context};
+use serde::Serialize;
+use serde::ser::SerializeSeq;
 use sqlite::ResultCode;
 
 use crate::error::{PSResult, PowerSyncError};
+use crate::ext::SafeManagedStmt;
 use crate::fix_data::apply_v035_fix;
 use crate::schema::inspection::ExistingView;
 use crate::sync::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 12;
+pub const LATEST_VERSION: i32 = 13;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -424,5 +427,63 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 12')
         local_db.exec_safe(stmt).into_db_result(local_db)?;
     }
 
+    if current_version < 13 && target_version >= 13 {
+        let up = "\
+UPDATE ps_stream_subscriptions SET expires_at = expires_at * 1_000_000, last_synced_at = last_synced_at * 1_000_000;
+ALTER TABLE ps_sync_state RENAME TO ps_sync_state_old;
+CREATE TABLE ps_sync_state (
+  priority INTEGER NOT NULL PRIMARY KEY,
+  last_synced_at INTEGER NOT NULL
+) STRICT;
+INSERT INTO ps_sync_state (priority, last_synced_at)
+  SELECT priority, unixepoch(last_synced_at) * 1_000_000 FROM ps_sync_state_old;
+DROP TABLE ps_sync_state_old;
+";
+        local_db.exec_safe(up).into_db_result(local_db)?;
+
+        const DOWN_STATEMENTS: &[&str] = &[
+            "UPDATE ps_stream_subscriptions SET expires_at = expires_at / 1_000_000, last_synced_at = last_synced_at / 1_000_000",
+            "ALTER TABLE ps_sync_state RENAME TO ps_sync_state_new",
+            "CREATE TABLE ps_sync_state (
+  priority INTEGER NOT NULL PRIMARY KEY,
+  last_synced_at TEXT NOT NULL
+) STRICT;",
+            "INSERT INTO ps_sync_state (priority, last_synced_at) SELECT priority, datetime(last_synced_at / 1_000_000, 'unixepoch') FROM ps_sync_state",
+            "DROP TABLE ps_sync_state_new",
+            "DELETE FROM ps_migration WHERE id >= 13",
+        ];
+        let down = serialize_down_statements(DOWN_STATEMENTS)?;
+        let track_migration =
+            local_db.prepare_v2("INSERT INTO ps_migration(id, down_migrations) VALUES (?, ?)")?;
+        track_migration.bind_int(1, 13)?;
+        track_migration.bind_text(2, &down, Destructor::STATIC)?;
+        track_migration.exec()?;
+    }
+
     Ok(())
+}
+
+fn serialize_down_statements(statements: &[&'static str]) -> Result<String, PowerSyncError> {
+    struct DownStatements<'a>(&'a [&'static str]);
+
+    #[derive(Serialize)]
+    struct DownStatement {
+        sql: &'static str,
+    }
+
+    impl<'a> Serialize for DownStatements<'a> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+            for element in self.0 {
+                seq.serialize_element(&DownStatement { sql: element })?;
+            }
+
+            seq.end()
+        }
+    }
+
+    serde_json::to_string(&DownStatements(statements)).map_err(PowerSyncError::internal)
 }

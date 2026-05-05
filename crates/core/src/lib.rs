@@ -24,7 +24,6 @@ mod pre_close_vtab;
 mod schema;
 mod state;
 mod sync;
-mod sync_local;
 mod update_hooks;
 mod utils;
 mod uuid;

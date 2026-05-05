@@ -12,6 +12,7 @@ use crate::schema::{
 };
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
+use crate::sync::sync_status::TimestampMicros;
 use crate::utils::SqlBuffer;
 use powersync_sqlite_nostd::{self as sqlite, Destructor, ManagedStmt};
 use powersync_sqlite_nostd::{Connection, ResultCode};
@@ -31,6 +32,7 @@ pub struct SyncOperation<'a> {
     db: *mut sqlite::sqlite3,
     schema: ParsedDatabaseSchema<'a>,
     partial: Option<PartialSyncOperation<'a>>,
+    time: TimestampMicros,
 }
 
 impl<'a> SyncOperation<'a> {
@@ -38,12 +40,14 @@ impl<'a> SyncOperation<'a> {
         state: &'a DatabaseState,
         db: *mut sqlite::sqlite3,
         partial: Option<PartialSyncOperation<'a>>,
+        time: TimestampMicros,
     ) -> Self {
         Self {
             state,
             db,
             schema: ParsedDatabaseSchema::new(),
             partial,
+            time,
         }
     }
 
@@ -380,8 +384,12 @@ SELECT
         // language=SQLite
         let stmt = self
             .db
-            .prepare_v2("INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, datetime());")                            .into_db_result(self.db)?;
+            .prepare_v2(
+                "INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, ?);",
+            )
+            .into_db_result(self.db)?;
         stmt.bind_int(1, priority_code)?;
+        stmt.bind_int64(2, self.time.0)?;
         stmt.exec()?;
 
         Ok(())

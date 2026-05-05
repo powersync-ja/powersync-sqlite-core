@@ -102,7 +102,7 @@ impl DownloadSyncStatus {
         }
     }
 
-    pub fn partial_checkpoint_complete(&mut self, priority: BucketPriority, now: Timestamp) {
+    pub fn partial_checkpoint_complete(&mut self, priority: BucketPriority, now: TimestampMicros) {
         self.debug_assert_priority_status_is_sorted();
         // We can delete entries with a higher priority because this partial sync includes them.
         self.priority_status.retain(|i| i.priority < priority);
@@ -117,7 +117,7 @@ impl DownloadSyncStatus {
         self.debug_assert_priority_status_is_sorted();
     }
 
-    pub fn applied_checkpoint(&mut self, now: Timestamp) {
+    pub fn applied_checkpoint(&mut self, now: TimestampMicros) {
         self.downloading = None;
         self.priority_status.clear();
 
@@ -257,12 +257,12 @@ impl SyncStatusContainer {
 
 #[repr(transparent)]
 #[derive(Serialize, Hash, Clone, Copy)]
-pub struct Timestamp(pub i64);
+pub struct TimestampMicros(pub i64);
 
 #[derive(Serialize, Hash)]
 pub struct SyncPriorityStatus {
     pub priority: BucketPriority,
-    pub last_synced_at: Option<Timestamp>,
+    pub last_synced_at: Option<TimestampMicros>,
     pub has_synced: Option<bool>,
 }
 
@@ -405,8 +405,8 @@ pub struct ActiveStreamSubscription {
     pub active: bool,
     pub is_default: bool,
     pub has_explicit_subscription: bool,
-    pub expires_at: Option<Timestamp>,
-    pub last_synced_at: Option<Timestamp>,
+    pub expires_at: Option<TimestampMicros>,
+    pub last_synced_at: Option<TimestampMicros>,
 }
 
 impl ActiveStreamSubscription {
@@ -421,8 +421,8 @@ impl ActiveStreamSubscription {
             active: local.active,
 
             has_explicit_subscription: local.has_subscribed_manually(),
-            expires_at: local.expires_at.clone().map(|e| Timestamp(e)),
-            last_synced_at: local.last_synced_at.map(|e| Timestamp(e)),
+            expires_at: local.expires_at.clone().map(|e| TimestampMicros(e)),
+            last_synced_at: local.last_synced_at.map(|e| TimestampMicros(e)),
         }
     }
 
