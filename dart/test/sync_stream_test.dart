@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:clock/clock.dart';
 import 'package:file/local.dart';
 import 'package:sqlite3/common.dart';
 import 'package:sqlite3/sqlite3.dart';
@@ -655,5 +656,62 @@ void main() {
     expect(db.select('select * from ps_stream_subscriptions'), isNotEmpty);
     db.execute('select powersync_clear(0);');
     expect(db.select('select * from ps_stream_subscriptions'), isEmpty);
+  });
+
+  syncTest('can migrate from old timestamps', (async) {
+    // Migrate ps_sync_state to text-based date values and stream subscriptions
+    // to timestamps with second precision.
+    db.execute('SELECT powersync_test_migration(?)', [12]);
+
+    // Mark as synced
+    db
+      ..execute(
+          'INSERT INTO ps_sync_state(priority, last_synced_at) VALUES (?, ?)', [
+        2147483647,
+        clock.now().toIso8601String(),
+      ])
+      ..execute(
+        'INSERT INTO ps_stream_subscriptions(stream_name, active, ttl, expires_at, last_synced_at) '
+        'VALUES (?, ?, ?, ?, ?)',
+        [
+          'stream',
+          1,
+          3600,
+          clock.now().millisecondsSinceEpoch ~/ 1000 + 1800,
+          clock.now().millisecondsSinceEpoch ~/ 1000,
+        ],
+      );
+
+    db.execute('SELECT powersync_test_migration(?)', [13]);
+
+    final [statusRow] = db.select('SELECT powersync_offline_sync_status()');
+    expect(
+      json.decode(statusRow.columnAt(0)),
+      allOf(
+        containsPair(
+          'priority_status',
+          [
+            {
+              'priority': 2147483647,
+              'has_synced': true,
+              'last_synced_at': timestamp()
+            }
+          ],
+        ),
+        containsPair('streams', [
+          {
+            'name': 'stream',
+            'parameters': null,
+            'priority': null,
+            'active': true,
+            'is_default': false,
+            'has_explicit_subscription': true,
+            'expires_at': timestamp(plusMinutes: 30),
+            'last_synced_at': timestamp(),
+            'progress': anything,
+          }
+        ]),
+      ),
+    );
   });
 }
