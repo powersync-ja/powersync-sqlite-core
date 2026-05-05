@@ -8,7 +8,7 @@ use serde_with::{DurationSeconds, serde_as};
 use crate::{
     error::{PSResult, PowerSyncError},
     ext::SafeManagedStmt,
-    sync::BucketPriority,
+    sync::{BucketPriority, storage_adapter::StorageAdapter},
     utils::JsonString,
 };
 
@@ -79,21 +79,25 @@ pub struct SubscribeToStream {
 }
 
 pub fn apply_subscriptions(
-    db: *mut sqlite::sqlite3,
+    adapter: &StorageAdapter,
     subscription: SubscriptionChangeRequest,
 ) -> Result<(), PowerSyncError> {
+    let db = adapter.db;
+
     match subscription {
         SubscriptionChangeRequest::Subscribe(subscription) => {
+            let now = adapter.now()?;
+
             let stmt = db
                 .prepare_v2(
                     "
 INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, ttl, expires_at)
-    VALUES (?, ?2, ?, ?4, unixepoch() + ?4)
+    VALUES (?, ?2, ?, ?4, ?5)
     ON CONFLICT DO UPDATE SET
         local_priority = min(coalesce(?2, local_priority),
         local_priority),
         ttl = ?4,
-        expires_at = unixepoch() + ?4
+        expires_at = ?5
                 ",
                 )
                 .into_db_result(db)?;
@@ -108,13 +112,14 @@ INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, 
                 subscription.stream.serialized_params(),
                 sqlite::Destructor::STATIC,
             )?;
-            stmt.bind_int64(
-                4,
-                subscription
-                    .ttl
-                    .map(|f| f.as_secs() as i64)
-                    .unwrap_or(LocallyTrackedSubscription::DEFAULT_TTL) as i64,
-            )?;
+            let ttl_seconds = subscription
+                .ttl
+                .map(|f| f.as_secs() as i64)
+                .unwrap_or(LocallyTrackedSubscription::DEFAULT_TTL)
+                as i64;
+            stmt.bind_int64(4, ttl_seconds)?;
+            stmt.bind_int64(5, now.0 + ttl_seconds * 1_000_000)?;
+
             stmt.exec()?;
         }
         SubscriptionChangeRequest::Unsubscribe(subscription) => {

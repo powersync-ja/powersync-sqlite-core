@@ -19,6 +19,7 @@ use futures_lite::FutureExt;
 
 use crate::{
     error::{PowerSyncError, PowerSyncErrorCause},
+    ext::SafeManagedStmt,
     kv::client_id,
     state::DatabaseState,
     sync::{
@@ -31,10 +32,10 @@ use crate::{
             StreamSubscriptionErrorCause, SyncLineWithSource,
         },
         subscriptions::LocallyTrackedSubscription,
-        sync_status::{ActiveStreamSubscription, Timestamp},
+        sync_status::{ActiveStreamSubscription, TimestampMicros},
     },
 };
-use powersync_sqlite_nostd::{self as sqlite, Connection, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite, Connection};
 
 use super::{
     interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},
@@ -51,18 +52,25 @@ use super::{
 /// initialized.
 pub struct SyncClient {
     db: *mut sqlite::sqlite3,
+    adapter: Rc<StorageAdapter>,
     db_state: Weak<DatabaseState>,
     /// The current [ClientState] (essentially an optional [StreamingSyncIteration]).
     state: ClientState,
 }
 
 impl SyncClient {
-    pub fn new(db: *mut sqlite::sqlite3, state: &Rc<DatabaseState>) -> Self {
-        Self {
+    pub fn new(
+        db: *mut sqlite::sqlite3,
+        state: &Rc<DatabaseState>,
+    ) -> Result<Self, PowerSyncError> {
+        let adapter = state.storage_adapter(db)?;
+
+        Ok(Self {
             db,
+            adapter,
             db_state: Rc::downgrade(state),
             state: ClientState::Idle,
-        }
+        })
     }
 
     pub fn push_event<'a>(
@@ -73,7 +81,12 @@ impl SyncClient {
             SyncControlRequest::StartSyncStream(options) => {
                 self.state.tear_down()?;
 
-                let mut handle = SyncIterationHandle::new(self.db, options, self.db_state.clone())?;
+                let mut handle = SyncIterationHandle::new(
+                    self.db,
+                    options,
+                    self.adapter.clone(),
+                    self.db_state.clone(),
+                );
                 let instructions = handle.initialize()?;
                 self.state = ClientState::IterationActive(handle);
 
@@ -150,20 +163,20 @@ impl SyncIterationHandle {
     fn new(
         db: *mut sqlite::sqlite3,
         options: StartSyncStream,
+        adapter: Rc<StorageAdapter>,
         state: Weak<DatabaseState>,
-    ) -> Result<Self, PowerSyncError> {
+    ) -> Self {
         let runner = StreamingSyncIteration {
             db,
             validated_but_not_applied: None,
             diagnostics: DiagnosticsCollector::for_options(&options),
             options,
             state,
-            adapter: StorageAdapter::new(db)?,
+            adapter,
             status: SyncStatusContainer::new(),
         };
         let future = runner.run().boxed_local();
-
-        Ok(Self { future })
+        Self { future }
     }
 
     /// Forwards a [SyncEvent::Initialize] to the current sync iteration, returning the initial
@@ -231,7 +244,7 @@ impl<'a> ActiveEvent<'a> {
 struct StreamingSyncIteration {
     db: *mut sqlite::sqlite3,
     state: Weak<DatabaseState>,
-    adapter: StorageAdapter,
+    adapter: Rc<StorageAdapter>,
     options: StartSyncStream,
     status: SyncStatusContainer,
     // A checkpoint that has been fully received and validated, but couldn't be applied due to
@@ -344,7 +357,7 @@ impl StreamingSyncIteration {
                             validated_but_not_applied: target.clone(),
                         }
                     }
-                    SyncLocalResult::ChangesApplied => {
+                    SyncLocalResult::ChangesApplied { timestamp } => {
                         event.instructions.push(Instruction::LogLine {
                             severity: LogSeverity::DEBUG,
                             line: "Validated and applied checkpoint".into(),
@@ -352,7 +365,7 @@ impl StreamingSyncIteration {
                         event.instructions.push(Instruction::FlushFileSystem {});
                         SyncStateMachineTransition::SyncLocalChangesApplied {
                             partial: None,
-                            timestamp: self.adapter.now()?,
+                            timestamp,
                         }
                     }
                 }
@@ -385,11 +398,10 @@ impl StreamingSyncIteration {
                         // of priority 0. We'll resolve this for a complete checkpoint later.
                         SyncStateMachineTransition::Empty
                     }
-                    SyncLocalResult::ChangesApplied => {
-                        let now = self.adapter.now()?;
+                    SyncLocalResult::ChangesApplied { timestamp } => {
                         SyncStateMachineTransition::SyncLocalChangesApplied {
                             partial: Some(priority),
-                            timestamp: now,
+                            timestamp,
                         }
                     }
                 }
@@ -629,13 +641,13 @@ impl StreamingSyncIteration {
 
         let result = self.sync_local(&checkpoint, None)?;
         match result {
-            SyncLocalResult::ChangesApplied => {
+            SyncLocalResult::ChangesApplied { timestamp } => {
                 event.instructions.push(Instruction::LogLine {
                     severity: LogSeverity::DEBUG,
                     line: "Applied pending checkpoint after completed upload".into(),
                 });
 
-                self.handle_checkpoint_applied(event, self.adapter.now()?);
+                self.handle_checkpoint_applied(event, timestamp);
             }
             _ => {
                 event.instructions.push(Instruction::LogLine {
@@ -841,24 +853,21 @@ impl StreamingSyncIteration {
             .adapter
             .sync_local(&*state, target, priority, &self.options.schema)?;
 
-        if matches!(&result, SyncLocalResult::ChangesApplied) {
+        if let SyncLocalResult::ChangesApplied { timestamp } = result {
             // Update affected stream subscriptions to mark them as synced.
             let mut status = self.status.inner().borrow_mut();
 
             if !status.streams.is_empty() {
                 let stmt = self.adapter.db.prepare_v2(
-                    "UPDATE ps_stream_subscriptions SET last_synced_at = unixepoch() WHERE id = ? RETURNING last_synced_at",
+                    "UPDATE ps_stream_subscriptions SET last_synced_at = ?2 WHERE id = ?1",
                 )?;
 
                 for stream in &mut status.streams {
                     if stream.is_in_priority(priority) {
                         stmt.bind_int64(1, stream.id)?;
-                        if stmt.step()? == ResultCode::ROW {
-                            let timestamp = Timestamp(stmt.column_int64(0));
-                            stream.last_synced_at = Some(timestamp);
-                        }
-
-                        stmt.reset()?;
+                        stmt.bind_int64(2, timestamp.0)?;
+                        stream.last_synced_at = Some(timestamp);
+                        stmt.exec()?;
                     }
                 }
             }
@@ -922,7 +931,7 @@ impl StreamingSyncIteration {
         })
     }
 
-    fn handle_checkpoint_applied(&mut self, event: &mut ActiveEvent, timestamp: Timestamp) {
+    fn handle_checkpoint_applied(&mut self, event: &mut ActiveEvent, timestamp: TimestampMicros) {
         event.instructions.push(Instruction::DidCompleteSync {});
 
         self.status.update(
@@ -1105,7 +1114,7 @@ enum SyncStateMachineTransition<'a> {
     },
     SyncLocalChangesApplied {
         partial: Option<BucketPriority>,
-        timestamp: Timestamp,
+        timestamp: TimestampMicros,
     },
     CloseIteration(CloseSyncStream),
     Empty,

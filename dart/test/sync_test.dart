@@ -302,22 +302,12 @@ void _syncTests<T>({
         // Make sure there's only a single row in last_synced_at
         expect(
           db.select(
-              "SELECT datetime(last_synced_at) AS last_synced_at FROM ps_sync_state WHERE priority = ?",
+              "SELECT datetime(last_synced_at / 1_000_000, 'unixepoch') AS last_synced_at FROM ps_sync_state WHERE priority = ?",
               [prio ?? 2147483647]),
           [
             {'last_synced_at': '2025-03-01 ${10 + i}:00:00'}
           ],
         );
-
-        if (prio == null) {
-          expect(
-            db.select(
-                "SELECT datetime(powersync_last_synced_at()) AS last_synced_at"),
-            [
-              {'last_synced_at': '2025-03-01 ${10 + i}:00:00'}
-            ],
-          );
-        }
       }
 
       controller.elapse(const Duration(hours: 1));
@@ -348,12 +338,12 @@ void _syncTests<T>({
               [
                 {
                   'priority': 2,
-                  'last_synced_at': 1740823800,
+                  'last_synced_at': timestamp(),
                   'has_synced': true
                 },
                 {
                   'priority': 2147483647,
-                  'last_synced_at': 1740823200,
+                  'last_synced_at': timestamp(plusMinutes: -10),
                   'has_synced': true
                 },
               ],
@@ -368,10 +358,10 @@ void _syncTests<T>({
       'connected': false,
       'connecting': false,
       'priority_status': [
-        {'priority': 2, 'last_synced_at': 1740823800, 'has_synced': true},
+        {'priority': 2, 'last_synced_at': timestamp(), 'has_synced': true},
         {
           'priority': 2147483647,
-          'last_synced_at': 1740823200,
+          'last_synced_at': timestamp(plusMinutes: -10),
           'has_synced': true
         }
       ],
@@ -385,14 +375,10 @@ void _syncTests<T>({
     pushCheckpoint(buckets: priorityBuckets);
     pushCheckpointComplete();
 
-    expect(db.select('SELECT powersync_last_synced_at() AS r').single,
-        {'r': isNotNull});
     expect(db.select('SELECT priority FROM ps_sync_state').single,
         {'priority': 2147483647});
 
     db.execute('SELECT powersync_clear(0)');
-    expect(db.select('SELECT powersync_last_synced_at() AS r').single,
-        {'r': isNull});
     expect(db.select('SELECT * FROM ps_sync_state'), hasLength(0));
   });
 

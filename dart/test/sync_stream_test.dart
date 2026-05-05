@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:clock/clock.dart';
 import 'package:file/local.dart';
 import 'package:sqlite3/common.dart';
 import 'package:sqlite3/sqlite3.dart';
@@ -107,12 +108,12 @@ void main() {
         lastStatus,
         containsPair(
           'streams',
-          [containsPair('last_synced_at', 1740823200)],
+          [containsPair('last_synced_at', timestamp())],
         ),
       );
 
       final [stored] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(stored, containsPair('last_synced_at', 1740823200));
+      expect(stored, containsPair('last_synced_at', timestamp()));
     });
 
     syncTest('are deleted', (_) {
@@ -314,7 +315,7 @@ void main() {
       );
 
       final [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', 1740826800));
+      expect(row, containsPair('expires_at', timestamp(plusSeconds: 3600)));
 
       var startInstructions = control('start', null);
       expect(
@@ -368,8 +369,6 @@ void main() {
     });
 
     syncTest('increase ttl', (controller) {
-      const startTime = 1740826800;
-
       control(
         'subscriptions',
         json.encode({
@@ -381,7 +380,7 @@ void main() {
       );
 
       var [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', startTime));
+      expect(row, containsPair('expires_at', timestamp(plusHours: 1)));
 
       controller.elapse(const Duration(minutes: 30));
 
@@ -397,7 +396,7 @@ void main() {
 
       // Which should increase its expiry date.
       [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', startTime + 1800));
+      expect(row, containsPair('expires_at', timestamp(plusHours: 1)));
 
       // The sync client uses token_expires_in lines to extend the expiry date
       // of active stream subscriptions.
@@ -405,14 +404,14 @@ void main() {
       control('line_text', json.encode({'token_expires_in': 3600}));
 
       [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', startTime + 3600));
+      expect(row, containsPair('expires_at', timestamp(plusHours: 1)));
 
       // Stopping should not increase the expiry date.
       controller.elapse(const Duration(minutes: 30));
       control('stop', null);
 
       [row] = db.select('SELECT * FROM ps_stream_subscriptions');
-      expect(row, containsPair('expires_at', startTime + 3600));
+      expect(row, containsPair('expires_at', timestamp(plusMinutes: 30)));
     });
 
     syncTest('can be made implicit', (_) {
@@ -639,8 +638,8 @@ void main() {
             'active': true,
             'is_default': false,
             'has_explicit_subscription': true,
-            'expires_at': 1740909600,
-            'last_synced_at': 1740823200
+            'expires_at': timestamp(plusDays: 1),
+            'last_synced_at': timestamp()
           }
         ]));
   });
@@ -657,5 +656,62 @@ void main() {
     expect(db.select('select * from ps_stream_subscriptions'), isNotEmpty);
     db.execute('select powersync_clear(0);');
     expect(db.select('select * from ps_stream_subscriptions'), isEmpty);
+  });
+
+  syncTest('can migrate from old timestamps', (async) {
+    // Migrate ps_sync_state to text-based date values and stream subscriptions
+    // to timestamps with second precision.
+    db.execute('SELECT powersync_test_migration(?)', [12]);
+
+    // Mark as synced
+    db
+      ..execute(
+          'INSERT INTO ps_sync_state(priority, last_synced_at) VALUES (?, ?)', [
+        2147483647,
+        clock.now().toIso8601String(),
+      ])
+      ..execute(
+        'INSERT INTO ps_stream_subscriptions(stream_name, active, ttl, expires_at, last_synced_at) '
+        'VALUES (?, ?, ?, ?, ?)',
+        [
+          'stream',
+          1,
+          3600,
+          clock.now().millisecondsSinceEpoch ~/ 1000 + 1800,
+          clock.now().millisecondsSinceEpoch ~/ 1000,
+        ],
+      );
+
+    db.execute('SELECT powersync_test_migration(?)', [13]);
+
+    final [statusRow] = db.select('SELECT powersync_offline_sync_status()');
+    expect(
+      json.decode(statusRow.columnAt(0)),
+      allOf(
+        containsPair(
+          'priority_status',
+          [
+            {
+              'priority': 2147483647,
+              'has_synced': true,
+              'last_synced_at': timestamp()
+            }
+          ],
+        ),
+        containsPair('streams', [
+          {
+            'name': 'stream',
+            'parameters': null,
+            'priority': null,
+            'active': true,
+            'is_default': false,
+            'has_explicit_subscription': true,
+            'expires_at': timestamp(plusMinutes: 30),
+            'last_synced_at': timestamp(),
+            'progress': anything,
+          }
+        ]),
+      ),
+    );
   });
 }

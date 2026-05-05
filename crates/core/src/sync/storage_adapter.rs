@@ -14,15 +14,16 @@ use crate::{
         interface::{RequestedStreamSubscription, StreamSubscriptionRequest},
         streaming_sync::{OwnedStreamDescription, RequestedStreamSubscriptions},
         subscriptions::{LocallyTrackedSubscription, StreamKey},
-        sync_status::{ActiveStreamSubscription, DownloadSyncStatus, SyncPriorityStatus},
+        sync_local::{PartialSyncOperation, SyncOperation},
+        sync_status::{
+            ActiveStreamSubscription, DownloadSyncStatus, SyncPriorityStatus, TimestampMicros,
+        },
     },
-    sync_local::{PartialSyncOperation, SyncOperation},
     utils::{JsonString, column_nullable},
 };
 
 use super::{
     bucket_priority::BucketPriority, interface::BucketRequest, streaming_sync::OwnedCheckpoint,
-    sync_status::Timestamp,
 };
 
 /// An adapter for storing sync state.
@@ -46,7 +47,7 @@ impl StorageAdapter {
             .into_db_result(db)?;
 
         // language=SQLite
-        let time = db.prepare_v2("SELECT unixepoch()")?;
+        let time = db.prepare_v2("SELECT CAST(unixepoch('subsec') * 1000000 as integer)")?;
 
         // language=SQLite
         let delete_subscription =
@@ -90,11 +91,9 @@ impl StorageAdapter {
         let priority_items = {
             // language=SQLite
             let statement = self
-            .db
-            .prepare_v2(
-                "SELECT priority, unixepoch(last_synced_at) FROM ps_sync_state ORDER BY priority",
-            )
-            .into_db_result(self.db)?;
+                .db
+                .prepare_v2("SELECT priority, last_synced_at FROM ps_sync_state ORDER BY priority")
+                .into_db_result(self.db)?;
 
             let mut items = Vec::<SyncPriorityStatus>::new();
             while statement.step()? == ResultCode::ROW {
@@ -105,7 +104,7 @@ impl StorageAdapter {
 
                 items.push(SyncPriorityStatus {
                     priority,
-                    last_synced_at: Some(Timestamp(timestamp)),
+                    last_synced_at: Some(TimestampMicros(timestamp)),
                     has_synced: Some(true),
                 });
             }
@@ -272,10 +271,11 @@ WHERE bucket = ?1",
             priority: BucketPriority,
             buckets: Vec<&'a str>,
         }
+        let now = self.now()?;
 
         let sync_result = match priority {
             None => {
-                let mut sync = SyncOperation::new(state, self.db, None);
+                let mut sync = SyncOperation::new(state, self.db, None, now);
                 sync.use_schema(schema);
                 sync.apply()
             }
@@ -305,6 +305,7 @@ WHERE bucket = ?1",
                         priority,
                         args: &serialized_args,
                     }),
+                    now,
                 );
                 sync.use_schema(schema);
                 sync.apply()
@@ -331,7 +332,7 @@ WHERE bucket = ?1",
                 }
             }
 
-            Ok(SyncLocalResult::ChangesApplied)
+            Ok(SyncLocalResult::ChangesApplied { timestamp: now })
         } else {
             Ok(SyncLocalResult::PendingLocalChanges)
         }
@@ -372,9 +373,9 @@ WHERE bucket = ?1",
         })
     }
 
-    pub fn now(&self) -> Result<Timestamp, ResultCode> {
+    pub fn now(&self) -> Result<TimestampMicros, ResultCode> {
         self.time_stmt.step()?;
-        let res = Timestamp(self.time_stmt.column_int64(0));
+        let res = TimestampMicros(self.time_stmt.column_int64(0));
         self.time_stmt.reset()?;
 
         Ok(res)
@@ -405,20 +406,24 @@ WHERE bucket = ?1",
     }
 
     fn delete_outdated_subscriptions(&self) -> Result<(), PowerSyncError> {
-        self.db
-            .exec_safe("DELETE FROM ps_stream_subscriptions WHERE (expires_at < unixepoch()) OR (ttl IS NULL AND NOT active)")?;
+        let now = self.now()?;
+        let stmt = self.db.prepare_v2("DELETE FROM ps_stream_subscriptions WHERE (expires_at < ?) OR (ttl IS NULL AND NOT active)")?;
+        stmt.bind_int64(1, now.0)?;
+        stmt.exec()?;
         Ok(())
     }
 
     /// Increases the TTL for explicit subscriptions that are currently marked as active.
     pub fn increase_ttl(&self, streams: &[StreamKey]) -> Result<(), PowerSyncError> {
+        let now = self.now()?;
         let stmt = self.db.prepare_v2(
-            "UPDATE ps_stream_subscriptions SET expires_at = unixepoch() + ttl WHERE stream_name = ? AND local_params = ? AND ttl IS NOT NULL",
+            "UPDATE ps_stream_subscriptions SET expires_at = ? + ttl * 1000000 WHERE stream_name = ? AND local_params = ? AND ttl IS NOT NULL",
         )?;
 
         for stream in streams {
-            stmt.bind_text(1, &stream.name, sqlite::Destructor::STATIC)?;
-            stmt.bind_text(2, &stream.serialized_params(), sqlite::Destructor::STATIC)?;
+            stmt.bind_int64(1, now.0)?;
+            stmt.bind_text(2, &stream.name, sqlite::Destructor::STATIC)?;
+            stmt.bind_text(3, &stream.serialized_params(), sqlite::Destructor::STATIC)?;
             stmt.exec()?;
         }
 
@@ -569,7 +574,7 @@ pub enum SyncLocalResult {
     /// pending local CRUD data to be uploaded and acknowledged in a write checkpoint.
     PendingLocalChanges,
     /// The checkpoint has been applied and changes have been published.
-    ChangesApplied,
+    ChangesApplied { timestamp: TimestampMicros },
 }
 
 /// Information about the amount of operations a bucket had at the last checkpoint and how many

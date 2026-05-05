@@ -1,6 +1,7 @@
 import 'dart:ffi';
 import 'dart:io';
 
+import 'package:clock/clock.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:meta/meta.dart';
 import 'package:sqlite3/common.dart';
@@ -89,4 +90,22 @@ void syncTest(String description, void Function(FakeAsync controller) body) {
     // Give each test the same starting time to make goldens easier to compare.
     fakeAsync(body, initialTime: DateTime.utc(2025, 3, 1, 10));
   });
+}
+
+/// Generates an expected timestamp relative to the current mocked time (in
+/// microseconds).
+int timestamp({
+  int plusSeconds = 0,
+  int plusMinutes = 0,
+  int plusHours = 0,
+  int plusDays = 0,
+}) {
+  final plus = Duration(
+    seconds: plusSeconds,
+    minutes: plusMinutes,
+    hours: plusHours,
+    days: plusDays,
+  );
+
+  return clock.now().microsecondsSinceEpoch + plus.inMicroseconds;
 }
