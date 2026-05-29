@@ -7,7 +7,6 @@ rules:
         "dart-lang/*": ref-pin
         "rust-lang/*": ref-pin
         "gradle/actions/wrapper-validation": ref-pin
-        "emscripten-core/setup-emsdk": ref-pin
   anonymous-definition:
     disable: true
   concurrency-limits:

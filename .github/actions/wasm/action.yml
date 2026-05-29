@@ -8,11 +8,6 @@ runs:
       shell: bash
       run: rustup install
 
-    - name: Setup emsdk
-      uses: emscripten-core/setup-emsdk@v16
-      with:
-        version: 4.0.10
-
     - name: Build WASM
       shell: bash
       run: ./tool/build_wasm.sh
@@ -21,7 +16,4 @@ runs:
       with:
         name: wasm-library
         retention-days: 14
-        path: |
-          libpowersync-async.wasm
-          libpowersync.wasm
-          libpowersync-wasm.a
+        path: libpowersync-wasm.a
