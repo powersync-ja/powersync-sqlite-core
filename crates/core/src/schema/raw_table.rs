@@ -324,6 +324,7 @@ pub fn generate_raw_table_trigger(
 #[cfg(test)]
 mod test {
     use alloc::{string::ToString, vec};
+    use core::assert_matches;
 
     use crate::schema::{PendingStatementValue, raw_table::InferredTableStructure};
 
@@ -340,19 +341,19 @@ mod test {
             r#"INSERT INTO "tbl" (id, "foo", "bar") VALUES (?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET "foo" = ?2, "bar" = ?3"#
         );
         assert_eq!(put.params.len(), 3);
-        assert!(matches!(put.params[0], PendingStatementValue::Id));
-        assert!(matches!(
+        assert_matches!(put.params[0], PendingStatementValue::Id);
+        assert_matches!(
             put.params[1],
             PendingStatementValue::Column(ref name) if name == "foo"
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             put.params[2],
             PendingStatementValue::Column(ref name) if name == "bar"
-        ));
+        );
 
         let delete = structure.infer_delete_stmt();
         assert_eq!(delete.sql, r#"DELETE FROM "tbl" WHERE id = ?"#);
         assert_eq!(delete.params.len(), 1);
-        assert!(matches!(delete.params[0], PendingStatementValue::Id));
+        assert_matches!(delete.params[0], PendingStatementValue::Id);
     }
 }

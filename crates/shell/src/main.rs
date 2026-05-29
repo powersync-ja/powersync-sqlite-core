@@ -2,7 +2,7 @@
 #![no_std]
 #![allow(internal_features)]
 #![feature(lang_items)]
-#![feature(core_intrinsics)]
+#![cfg_attr(not(test), feature(core_intrinsics))]
 
 use core::ffi::{c_char, c_int};
 

@@ -1,7 +1,6 @@
 #![no_std]
 #![allow(internal_features)]
-#![cfg_attr(feature = "nightly", feature(core_intrinsics))]
-#![cfg_attr(feature = "nightly", feature(lang_items))]
+#![cfg_attr(feature = "nightly", feature(core_intrinsics, lang_items))]
 
 extern crate alloc;
 

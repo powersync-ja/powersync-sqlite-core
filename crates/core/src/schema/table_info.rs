@@ -357,7 +357,7 @@ impl<'de> Deserialize<'de> for PendingStatement {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub enum PendingStatementValue {
     /// Bind to the PowerSync row id of the affected row.
     Id,
