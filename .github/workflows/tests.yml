@@ -158,24 +158,24 @@ jobs:
         run: |
           dart pub get
           dart analyze
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: dart/.dart_tool/hooks_runner/
           key: hooks-${{ matrix.os }}-${{ hashFiles('dart/pubspec.lock') }}
           restore-keys: hooks-${{ matrix.os }}
 
       - name: Download libs
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: linux-library
           path: dart/assets
       - name: Download libs
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: macos-library
           path: dart/assets
       - name: Download libs
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: windows-library
           path: dart/assets
@@ -208,7 +208,7 @@ jobs:
           dart pub get
           dart analyze
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: dart/.dart_tool/hooks_runner/
           key: hooks-${{ matrix.os }}-${{ hashFiles('dart/pubspec.lock') }}

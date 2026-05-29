@@ -108,7 +108,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: android-library
 
@@ -131,7 +131,7 @@ jobs:
           persist-credentials: false
 
       - name: Download libs
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: xcframework
 
@@ -194,23 +194,23 @@ jobs:
           persist-credentials: false
 
       - name: Download Linux libraries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: linux-library
       - name: Download macOS libraries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: macos-library
       - name: Download Windows libraries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: windows-library
       - name: Download Windows libraries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: windows-library
       - name: Download static Android libraries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: android-static
 
@@ -243,7 +243,7 @@ jobs:
           persist-credentials: false
 
       - name: Download wasm bundle
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: wasm-library
 
