@@ -5,15 +5,8 @@ runs:
   using: "composite"
   steps:
     - name: Install Rust Nightly
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: nightly-2026-04-10
-        components: rust-src
-
-    - name: Setup emsdk
-      uses: mymindstorm/setup-emsdk@v14
-      with:
-        version: 4.0.10
+      shell: bash
+      run: rustup install
 
     - name: Build WASM
       shell: bash
@@ -23,7 +16,4 @@ runs:
       with:
         name: wasm-library
         retention-days: 14
-        path: |
-          libpowersync-async.wasm
-          libpowersync.wasm
-          libpowersync-wasm.a
+        path: libpowersync-wasm.a

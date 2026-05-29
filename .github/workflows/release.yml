@@ -4,28 +4,34 @@ on:
     tags:
       - v[0-9]+.[0-9]+.[0-9]+
 
+permissions: {}
+
 jobs:
   draft_release:
     name: Create Draft GitHub Release
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
+    permissions:
+      contents: write # Needed to create a release
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Set tag name
         id: tag
         run: |
-          tag=$(basename "${{ github.ref }}")
+          tag=$(basename "${GITHUB_REF}")
           echo "tag=$tag" >> $GITHUB_OUTPUT
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          STEPS_TAG_OUTPUTS_TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          tag="${{ steps.tag.outputs.tag }}"
+          tag="${STEPS_TAG_OUTPUTS_TAG}"
           body="Release $tag"
           gh release create --draft "$tag" --title "$tag" --notes "$body"
 
@@ -33,7 +39,9 @@ jobs:
     name: Building Linux libraries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build Linux
         uses: ./.github/actions/linux
 
@@ -41,7 +49,9 @@ jobs:
     name: Building macOS libraries
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build macOS
         uses: ./.github/actions/macos
 
@@ -49,7 +59,9 @@ jobs:
     name: Building Windows libraries
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build Windows
         uses: ./.github/actions/windows
 
@@ -57,7 +69,9 @@ jobs:
     name: Building Android libraries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build Android
         uses: ./.github/actions/android
         with:
@@ -68,7 +82,9 @@ jobs:
     name: Basic WASM build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Build wasm
         uses: ./.github/actions/wasm
@@ -77,28 +93,31 @@ jobs:
     name: Build XCFramework
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build XCFramework
         uses: ./.github/actions/xcframework
 
   publish_android:
-    permissions:
-      contents: read
-      packages: write
     name: Publish Android
     needs: [ draft_release, libs_android ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@v4
         with:
           name: android-library
 
       - name: Publish to Maven Central
+        env:
+          AUTH_TOKEN: ${{ secrets.CENTRAL_AUTH }}
         run: |
           curl --request POST \
-            --header 'Authorization: Bearer ${{ secrets.CENTRAL_AUTH }}' \
+            --header "Authorization: Bearer $AUTH_TOKEN" \
             --form bundle=@powersync_android.zip \
             'https://central.sonatype.com/api/v1/publisher/upload?publishingType=AUTOMATIC'
 
@@ -107,7 +126,9 @@ jobs:
     needs: [ draft_release, libs_xcframework ]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Download libs
         uses: actions/download-artifact@v5
@@ -132,17 +153,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          NEEDS_DRAFT_RELEASE_OUTPUTS_TAG: ${{ needs.draft_release.outputs.tag }}
+          STEPS_FILENAME_OUTPUTS_FILENAME: ${{ steps.fileName.outputs.fileName }}
         run: |
-          gh release upload "${{ needs.draft_release.outputs.tag }}" ${{ steps.fileName.outputs.fileName }}
+          gh release upload "${NEEDS_DRAFT_RELEASE_OUTPUTS_TAG}" ${STEPS_FILENAME_OUTPUTS_FILENAME}
 
       # For SPM package
       - name: Generate and add checksum to output
         id: checksum
         run: |
-          CHECKSUM=$(swift package compute-checksum ${{ steps.fileName.outputs.fileName }})
+          CHECKSUM=$(swift package compute-checksum ${STEPS_FILENAME_OUTPUTS_FILENAME})
           echo "checksum=$CHECKSUM" >> $GITHUB_OUTPUT
+        env:
+          STEPS_FILENAME_OUTPUTS_FILENAME: ${{ steps.fileName.outputs.fileName }}
       - name: Dispatch release to SPM package
-        uses: peter-evans/repository-dispatch@v3
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
           token: ${{ secrets.SWIFT_PUBLISH_TOKEN }}
           repository: powersync-ja/powersync-sqlite-core-swift
@@ -160,9 +185,13 @@ jobs:
     name: Publish Desktop libraries
     needs: [ draft_release, libs_linux, libs_macos, libs_windows ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needed to upload binaries to release.
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Download Linux libraries
         uses: actions/download-artifact@v5
@@ -195,51 +224,45 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft_release.outputs.tag }}
         run: |
-          gh release upload "${{ needs.draft_release.outputs.tag }}" *.dll
-          gh release upload "${{ needs.draft_release.outputs.tag }}" *.dylib
-          gh release upload "${{ needs.draft_release.outputs.tag }}" *.so
-          gh release upload "${{ needs.draft_release.outputs.tag }}" static_libs.zip
+          gh release upload "${TAG}" *.dll
+          gh release upload "${TAG}" *.dylib
+          gh release upload "${TAG}" *.so
+          gh release upload "${TAG}" static_libs.zip
 
   publish_wasm:
     name: Publish WASM builds
     needs: [ draft_release, libs_wasm ]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needed to upload binaries to release.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Download wasm bundle
         uses: actions/download-artifact@v5
         with:
           name: wasm-library
 
-      - name: Upload libpowersync.wasm
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync.wasm
-          tag: ${{ needs.draft_release.outputs.tag }}
-
-      - name: Upload libpowersync-async.wasm
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync-async.wasm
-          tag: ${{ needs.draft_release.outputs.tag }}
-
-      - name: Upload libpowersync-wasm.a
-        uses: ./.github/actions/upload
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          file-name: libpowersync-wasm.a
-          tag: ${{ needs.draft_release.outputs.tag }}
+      - name: Upload wasm binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft_release.outputs.tag }}
+        run: |
+          gh release upload "${TAG}" libpowersync-wasm.a
 
   publish_crates_io:
     runs-on: ubuntu-latest
     permissions:
       id-token: write # Required for OIDC token exchange
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
 
@@ -257,7 +280,7 @@ jobs:
   create_sdk_issue:
     name: "Create issue for SDK updates"
     permissions:
-      issues: write
+      issues: write # To create issue
     runs-on: macos-latest
     needs:
       - draft_release

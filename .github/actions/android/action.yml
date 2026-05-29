@@ -39,9 +39,12 @@ runs:
       if: ${{ inputs.sign-publication == '1' }}
       run: |
         cd android
-        ./gradlew build zipPublication  -PgpgKey=${{ inputs.gpg-key }} -PgpgPassword=${{ inputs.gpg-password }}
+        ./gradlew build zipPublication  -PgpgKey=${INPUTS_GPG_KEY} -PgpgPassword=${INPUTS_GPG_PASSWORD}
         ls -lh build/outputs/aar
         find build/repository
+      env:
+        INPUTS_GPG_KEY: ${{ inputs.gpg-key }}
+        INPUTS_GPG_PASSWORD: ${{ inputs.gpg-password }}
 
     - name: Build library without signing
       shell: bash
