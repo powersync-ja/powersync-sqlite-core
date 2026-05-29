@@ -5,11 +5,9 @@ runs:
   using: "composite"
   steps:
     - name: Install Rust Nightly
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: nightly-2026-04-10
-        components: rust-src
-        targets: x86_64-apple-darwin,aarch64-apple-darwin
+      shell: bash
+      run:
+        rustup install --target x86_64-apple-darwin,aarch64-apple-darwin
     
     - name: Build binaries
       shell: bash

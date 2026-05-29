@@ -5,11 +5,8 @@ runs:
   using: "composite"
   steps:
     - name: Install Rust Nightly
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: nightly-2026-04-10
-        components: rust-src
-        targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc,i686-pc-windows-msvc
+      shell: powershell
+      run: rustup install --target x86_64-pc-windows-msvc,aarch64-pc-windows-msvc,i686-pc-windows-msvc
 
     - name: Build binaries
       shell: bash

@@ -5,11 +5,9 @@ runs:
   using: "composite"
   steps:
     - name: Install Rust Nightly
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: nightly-2026-04-10
-        components: rust-src
-        targets: aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,i686-unknown-linux-gnu,riscv64gc-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
+      shell: bash
+      run:
+        rustup install --target aarch64-unknown-linux-gnu,x86_64-unknown-linux-gnu,i686-unknown-linux-gnu,riscv64gc-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
     
     - name: Install cross-compiling GCC
       shell: bash

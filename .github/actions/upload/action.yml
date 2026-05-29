@@ -19,5 +19,7 @@ runs:
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
+        INPUTS_TAG: ${{ inputs.tag }}
+        INPUTS_FILE_NAME: ${{ inputs.file-name }}
       run: |
-        gh release upload "${{ inputs.tag }}" "${{ inputs.file-name }}"
+        gh release upload "${INPUTS_TAG}" "${INPUTS_FILE_NAME}"

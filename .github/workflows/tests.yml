@@ -3,13 +3,21 @@ on:
   pull_request:
 name: "tests"
 
+permissions: {}
+
+concurrency:
+  group: packages-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   libs_linux:
     name: Building Linux libraries
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build Linux libraries
         uses: ./.github/actions/linux
 
@@ -18,7 +26,9 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build macOS
         uses: ./.github/actions/macos
 
@@ -27,7 +37,9 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Build Windows
         uses: ./.github/actions/windows
@@ -37,7 +49,9 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build Android
         uses: ./.github/actions/android
         with:
@@ -48,7 +62,9 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Build wasm
         uses: ./.github/actions/wasm
@@ -58,7 +74,9 @@ jobs:
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Build XCFramework
         uses: ./.github/actions/xcframework
 
@@ -71,7 +89,9 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Ubuntu setup
         if: matrix.os == 'ubuntu-24.04'
@@ -79,10 +99,7 @@ jobs:
           sudo apt install libreadline-dev
 
       - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly-2026-04-10
-          components: rust-src,rustfmt,clippy
+        run: rustup install
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -117,7 +134,9 @@ jobs:
         os: [ubuntu-24.04, ubuntu-arm64, macos-latest, windows-latest, windows-11-arm]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: dart-lang/setup-dart@v1
 
@@ -162,11 +181,13 @@ jobs:
   build_stable_rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - uses: dart-lang/setup-dart@v1
       - name: Install Rust Stable
-        uses: dtolnay/rust-toolchain@stable
+        run: rustup install stable
 
       - name: Setup Dart tests
         working-directory: dart
@@ -197,12 +218,11 @@ jobs:
         include:
           - os: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust Nightly
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v6
         with:
-          toolchain: nightly-2026-04-10
-          components: rust-src
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup install
 
       - name: Install valgrind
         run: sudo apt update && sudo apt install -y valgrind

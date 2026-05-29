@@ -5,13 +5,11 @@ runs:
   using: "composite"
   steps:
     - name: Install Rust Nightly
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: nightly-2026-04-10
-        components: rust-src
+      shell: bash
+      run: rustup install
 
     - name: Setup emsdk
-      uses: mymindstorm/setup-emsdk@v14
+      uses: emscripten-core/setup-emsdk@v16
       with:
         version: 4.0.10
 
