@@ -159,7 +159,7 @@ mod test {
     use super::remove_duplicate_key_encoding;
 
     fn assert_unaffected(source: &str) {
-        assert!(matches!(remove_duplicate_key_encoding(source), None));
+        assert_matches!(remove_duplicate_key_encoding(source), None);
     }
 
     #[test]

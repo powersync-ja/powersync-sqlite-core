@@ -9,6 +9,7 @@ authors.workspace = true
 keywords.workspace = true
 description = "The PowerSync SQLite extension"
 readme = "README.md"
+rust-version = "1.96"
 
 [lib]
 name = "powersync_core"
