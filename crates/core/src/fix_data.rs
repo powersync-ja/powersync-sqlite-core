@@ -157,6 +157,7 @@ pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
 mod test {
 
     use super::remove_duplicate_key_encoding;
+    use core::assert_matches;
 
     fn assert_unaffected(source: &str) {
         assert_matches!(remove_duplicate_key_encoding(source), None);

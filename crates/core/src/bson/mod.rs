@@ -16,6 +16,7 @@ pub fn from_bytes<'de, T: Deserialize<'de>>(bytes: &'de [u8]) -> Result<T, BsonE
 #[cfg(test)]
 mod test {
     use alloc::{vec, vec::Vec};
+    use core::assert_matches;
 
     use crate::sync::line::{SyncLine, TokenExpiresIn};
 

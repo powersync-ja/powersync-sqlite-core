@@ -324,6 +324,7 @@ pub fn generate_raw_table_trigger(
 #[cfg(test)]
 mod test {
     use alloc::{string::ToString, vec};
+    use core::assert_matches;
 
     use crate::schema::{PendingStatementValue, raw_table::InferredTableStructure};
 

@@ -373,6 +373,7 @@ impl<'a, 'de: 'a> Deserialize<'de> for OplogData<'a> {
 mod tests {
 
     use alloc::string::ToString;
+    use core::assert_matches;
 
     use super::*;
 
