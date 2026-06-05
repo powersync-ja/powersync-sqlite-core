@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: write # Needed to create a release
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -39,7 +39,7 @@ jobs:
     name: Building Linux libraries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
       - name: Build Linux
@@ -49,7 +49,7 @@ jobs:
     name: Building macOS libraries
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
       - name: Build macOS
@@ -59,7 +59,7 @@ jobs:
     name: Building Windows libraries
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
       - name: Build Windows
@@ -69,7 +69,7 @@ jobs:
     name: Building Android libraries
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
       - name: Build Android
@@ -82,7 +82,7 @@ jobs:
     name: Basic WASM build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
 
@@ -93,7 +93,7 @@ jobs:
     name: Build XCFramework
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
       - name: Build XCFramework
@@ -104,7 +104,7 @@ jobs:
     needs: [ draft_release, libs_android ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
 
@@ -126,7 +126,7 @@ jobs:
     needs: [ draft_release, libs_xcframework ]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
 
@@ -189,7 +189,7 @@ jobs:
       contents: write # Needed to upload binaries to release.
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
 
@@ -238,7 +238,7 @@ jobs:
     permissions:
       contents: write # Needed to upload binaries to release.
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
 
@@ -260,7 +260,7 @@ jobs:
     permissions:
       id-token: write # Required for OIDC token exchange
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6.0.2
         with:
           persist-credentials: false
       - uses: rust-lang/crates-io-auth-action@v1
