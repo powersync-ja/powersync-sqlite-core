@@ -222,30 +222,30 @@ jobs:
         working-directory: dart
         run: dart test
 
-  valgrind:
-    name: Testing with Valgrind on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
+  test_with_sanitizers:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-      - name: Install Rust
+      - uses: dart-lang/setup-dart@v1
+      - name: Install Rust Nightly
         run: rustup install
-
-      - name: Install valgrind
-        run: sudo apt update && sudo apt install -y valgrind
-
-      - name: Install Cargo Valgrind
-        # TODO: Use released version. Currently we rely on the git version while we wait for this
-        # to be released: https://github.com/jfrimmel/cargo-valgrind/commit/408c0b4fb56e84eddc2bb09c88a11ba3adc0c188
-        run: cargo install --git https://github.com/jfrimmel/cargo-valgrind cargo-valgrind
-        #run: cargo install cargo-valgrind
-
-      - name: Test Core
+      - name: Install LLVM toolchain
         run: |
-          cargo valgrind test -p powersync_core
+          sudo apt update
+          sudo apt install -y llvm clang lld
+
+      - name: Build with sanitizers
+        run: tool/build_linux_sanitized.sh
+
+      - run: dart pub get
+        working-directory: dart
+
+      - name: Test with MemorySanitizer
+        working-directory: dart
+        run: dart tool/run_tests.dart msan
+
+      - name: Test with AddressSanitizer
+        working-directory: dart
+        run: dart tool/run_tests.dart asan

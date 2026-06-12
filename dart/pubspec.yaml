@@ -19,6 +19,15 @@ dev_dependencies:
   meta: ^1.16.0
   path: ^1.9.1
 
+dependency_overrides:
+  # TODO: Remove after https://github.com/simolus3/sqlite3.dart/commit/97268a5b32cf6313dd670e6fa57ae88d38a6564b
+  # gets released.
+  sqlite3:
+    git:
+      url: https://github.com/simolus3/sqlite3.dart.git
+      path: sqlite3
+      ref: main
+
 # See https://pub.dev/documentation/sqlite3/latest/topics/hook-topic.html
 hooks:
   user_defines:

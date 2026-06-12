@@ -25,6 +25,8 @@ use crate::{
 #[derive(Default)]
 pub struct DatabaseState {
     pub is_in_sync_local: Cell<bool>,
+    /// Whether the core extension has installed update, commit and rollback hooks.
+    pub core_extension_has_update_hooks: Cell<bool>,
     schema: RefCell<Option<Schema>>,
     pending_updates: RefCell<BTreeSet<String>>,
     commited_updates: RefCell<BTreeSet<String>>,

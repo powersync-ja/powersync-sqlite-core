@@ -8,6 +8,7 @@ use powersync_sqlite_nostd as sqlite;
 use sqlite::{Connection, ResultCode};
 
 use crate::state::DatabaseState;
+use crate::update_hooks::uninstall_update_hooks;
 use crate::vtab_util::*;
 
 /// A virtual table hack to implement a "pre-close hook" for databases.
@@ -20,6 +21,7 @@ use crate::vtab_util::*;
 struct VirtualTable {
     base: sqlite::vtab,
     state: Rc<DatabaseState>,
+    db: *mut sqlite::sqlite3,
 }
 
 extern "C" fn connect(
@@ -42,6 +44,7 @@ extern "C" fn connect(
                 zErrMsg: core::ptr::null_mut(),
             },
             state: DatabaseState::clone_from(aux),
+            db,
         }));
         *vtab = tab.cast::<sqlite::vtab>();
         let _ = sqlite::vtab_config(db, 0);
@@ -57,6 +60,7 @@ extern "C" fn disconnect(vtab: *mut sqlite::vtab) -> c_int {
     // So we can use this as a "pre-close" hook and ensure we clear prepared statements the core
     // extension might hold.
     vtab.state.release_resources();
+    uninstall_update_hooks(vtab.db, &vtab.state);
 
     ResultCode::OK as c_int
 }

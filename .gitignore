@@ -10,3 +10,4 @@ target/
 *.tar.xz
 *.zip
 .build
+/sanitized/
