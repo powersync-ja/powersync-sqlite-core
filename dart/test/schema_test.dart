@@ -322,6 +322,141 @@ END''',
         test('#$i', () => testCase.testWith(db));
       }
     });
+
+    group('powersync_raw_table_migrate', () {
+      const syncName = 'synced_table';
+
+      Object singleRawTableSchema(Object rawTable) {
+        return {
+          'tables': [],
+          'raw_tables': [rawTable]
+        };
+      }
+
+      setUp(() => db.execute('SELECT powersync_init();'));
+
+      group('create', () {
+        void createUntypedItem(String id, Object? json) {
+          db.execute(
+            'INSERT INTO ps_untyped (type, id, data) VALUES (?, ?, ?)',
+            [syncName, id, jsonEncode(json)],
+          );
+        }
+
+        test('inferred statements', () {
+          createUntypedItem('foo', {'hello': 'world'});
+          createUntypedItem('bar', {'hello': 'again'});
+
+          db.execute('SELECT powersync_replace_schema(?)', [
+            json.encode(singleRawTableSchema(
+                {'name': syncName, 'table_name': 'greetings'})),
+          ]);
+          db.execute(
+              'CREATE TABLE greetings (id TEXT PRIMARY KEY, hello TEXT) STRICT;');
+
+          db.execute(
+              'SELECT powersync_raw_table_migrate(?, ?)', ['create', syncName]);
+          expect(db.select('select * from ps_untyped'), isEmpty);
+          expect(db.select('select * from greetings'), [
+            {'id': 'foo', 'hello': 'world'},
+            {'id': 'bar', 'hello': 'again'},
+          ]);
+        });
+
+        test('custom put statement', () {
+          createUntypedItem('foo', {'hello': 'world'});
+          createUntypedItem('bar', {'hello': 'again'});
+
+          db.execute('SELECT powersync_replace_schema(?)', [
+            json.encode(singleRawTableSchema({
+              'name': syncName,
+              'put': {
+                'sql': 'INSERT INTO greetings (id, hello) VALUES (?, ?)',
+                'params': [
+                  'Id',
+                  {'Column': 'hello'},
+                ],
+              },
+              'delete': {'sql': 'unused', 'params': []}
+            })),
+          ]);
+          db.execute(
+              'CREATE TABLE greetings (id TEXT PRIMARY KEY, hello TEXT) STRICT;');
+
+          db.execute(
+              'SELECT powersync_raw_table_migrate(?, ?)', ['create', syncName]);
+          expect(db.select('select * from ps_untyped'), isEmpty);
+          expect(db.select('select * from greetings'), [
+            {'id': 'foo', 'hello': 'world'},
+            {'id': 'bar', 'hello': 'again'},
+          ]);
+        });
+      });
+
+      test('drop', () {
+        db
+          ..execute(
+              'CREATE TABLE greetings (id TEXT PRIMARY KEY, hello TEXT, local TEXT) STRICT;')
+          ..execute(
+            'INSERT INTO greetings (id, hello, local) VALUES (?, ?, uuid())',
+            ['id_0', 'first'],
+          )
+          ..execute(
+            'INSERT INTO greetings (id, hello, local) VALUES (?, ?, uuid())',
+            ['id_1', 'second'],
+          )
+          ..execute('SELECT powersync_raw_table_migrate(?, ?)', [
+            'drop',
+            json.encode({
+              'name': syncName,
+              'table_name': 'greetings',
+              'synced_columns': ['hello']
+            })
+          ]);
+
+        expect(db.select('select * from ps_untyped'), [
+          {'type': 'synced_table', 'id': 'id_0', 'data': '{"hello":"first"}'},
+          {'type': 'synced_table', 'id': 'id_1', 'data': '{"hello":"second"}'},
+        ]);
+      });
+
+      test('crud triggers are not invoked during migration', () {
+        final tableJson =
+            json.encode({'name': syncName, 'table_name': 'greetings'});
+
+        db.execute('SELECT powersync_replace_schema(?)', [
+          json.encode(
+              singleRawTableSchema({'name': syncName, 'table_name': 'greetings'})),
+        ]);
+        db.execute(
+            'CREATE TABLE greetings (id TEXT PRIMARY KEY, hello TEXT) STRICT;');
+
+        db.execute('''
+SELECT
+  powersync_create_raw_table_crud_trigger(?1, 'greetings_insert', 'INSERT'),
+  powersync_create_raw_table_crud_trigger(?1, 'greetings_update', 'UPDATE'),
+  powersync_create_raw_table_crud_trigger(?1, 'greetings_delete', 'DELETE')
+''', [tableJson]);
+
+        db
+          ..execute('INSERT INTO ps_untyped (type, id, data) VALUES (?, ?, ?)',
+              [syncName, 'id_1', json.encode({'hello': 'world'})])
+          ..execute('INSERT INTO ps_untyped (type, id, data) VALUES (?, ?, ?)',
+              [syncName, 'id_2', json.encode({'hello': 'again'})]);
+
+        // create migration: ps_untyped -> raw table; triggers must not fire
+        db.execute(
+            'SELECT powersync_raw_table_migrate(?, ?)', ['create', syncName]);
+        expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+
+        // drop migration: raw table -> ps_untyped; triggers must not fire
+        db.execute('SELECT powersync_raw_table_migrate(?, ?)', [
+          'drop',
+          json.encode({'name': syncName, 'table_name': 'greetings'}),
+        ]);
+        expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+      });
+    });
   });
 }
 
