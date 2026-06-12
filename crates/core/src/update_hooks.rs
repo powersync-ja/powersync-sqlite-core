@@ -18,7 +18,7 @@ use crate::{constants::SUBTYPE_JSON, error::PowerSyncError, state::DatabaseState
 ///      and comitted since the last `powersync_update_hooks` call.
 ///
 /// The update hooks don't have to be uninstalled manually, that happens when the connection is
-/// closed and the function is unregistered.
+/// closed (`powersync_init()` installs a vtab calling `uninstall_update_hooks()`).
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     let state = Box::new(HookState { db, state });
 

@@ -5,8 +5,8 @@ import 'package:path/path.dart' as p;
 /// Runs `all_tests.dart` as a single AOT-compiled executable with sanitizers
 /// enabled.
 ///
-/// To run tests with a sanitizer, use `dart tool/run_tests.dart
-/// --sanitizer $sanitizer`, where `$sanitizer` is either `asan` or `msan`.
+/// To run tests with a sanitizer, use `dart tool/run_tests.dart $sanitizer`,
+/// where `$sanitizer` is either `asan` or `msan`.
 /// Note that sanitizers are only supported on X64 Linux hosts.
 ///
 /// Running tests with sanitizers also requires an instrumented build of SQLite
@@ -78,7 +78,7 @@ stderr: ${result.stderr}
 
 Future<File> _createNativeAssetsConfig(
   Directory tmpForRun,
-  String? expandedName,
+  String expandedName,
 ) async {
   final sqliteFile = p.normalize(
     p.absolute('../sanitized/sqlite', 'libsqlite3_$expandedName.so'),

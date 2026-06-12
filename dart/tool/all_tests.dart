@@ -8,6 +8,7 @@ import '../test/schema_test.dart' as schema_test;
 // Skipping sync_local_performance_test because it's slow. It's functionality is
 // covered by other tests.
 import '../test/sync_stream_test.dart' as sync_stream_test;
+import '../test/sync_test.dart' as sync_test;
 import '../test/update_hooks_test.dart' as update_hooks_test;
 
 import '../test/utils/native_test_utils.dart';
@@ -24,5 +25,6 @@ void main(List<String> args) {
   group('migration_test.dart', migration_test.main);
   group('schema_test.dart', schema_test.main);
   group('sync_stream_test.dart', sync_stream_test.main);
+  group('sync_test.dart', sync_test.main);
   group('update_hooks_test.dart', update_hooks_test.main);
 }

@@ -21,7 +21,8 @@ function compile_sqlite() {
     -DSQLITE_ENABLE_API_ARMOR=1 \
     -DSQLITE_OMIT_DEPRECATED \
     -DSQLITE_DQS=0 \
-    -DSQLISQLITE_ENABLE_DBSTAT_VTABTE_ENABLE_FTS5 \
+    -DSQLITE_ENABLE_DBSTAT_VTAB \
+    -DSQLITE_ENABLE_FTS5 \
     -DSQLITE_ENABLE_STMTVTAB \
     -shared \
     crates/sqlite/sqlite/sqlite3.c \
