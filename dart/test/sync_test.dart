@@ -978,7 +978,10 @@ void _syncTests<T>({
       expect(db.select('SELECT * FROM ps_buckets'), isEmpty);
     });
 
-    group('recoverable', () {
+    group('recoverable',
+        skip: testingWithSanitizers != null
+            ? 'Unsupported in memory VFS'
+            : null, () {
       late CommonDatabase secondary;
       final checkpoint = {
         'checkpoint': {
