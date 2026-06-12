@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:clock/clock.dart';
 import 'package:fake_async/fake_async.dart';
@@ -14,10 +15,21 @@ const defaultSqlitePath = 'libsqlite3.so.0';
 const cargoDebugPath = '../target/debug';
 var didLoadExtension = false;
 
+String? testingWithSanitizers = null;
+
 CommonDatabase openTestDatabase(
     {VirtualFileSystem? vfs, String fileName = ':memory:'}) {
   if (!didLoadExtension) {
     loadExtension();
+  }
+
+  if (testingWithSanitizers != null && vfs == null) {
+    final inMemory =
+        InMemoryFileSystem(name: 'in-memory-${Random().nextInt(1 << 32)}');
+    sqlite3.registerVirtualFileSystem(inMemory);
+    addTearDown(() => sqlite3.unregisterVirtualFileSystem(inMemory));
+
+    vfs = inMemory;
   }
 
   final db = sqlite3.open(fileName, vfs: vfs?.name);
@@ -64,6 +76,10 @@ String resolvePowerSyncLibrary() {
 }
 
 String _getLibraryForPlatform({String? path = cargoDebugPath}) {
+  if (testingWithSanitizers case final sanitizer?) {
+    return '../sanitized/core_extension/libpowersync_$sanitizer.linux.so';
+  }
+
   return switch (Abi.current()) {
     Abi.androidArm ||
     Abi.androidArm64 ||
