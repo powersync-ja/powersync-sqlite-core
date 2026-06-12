@@ -24,6 +24,9 @@ CommonDatabase openTestDatabase(
   }
 
   if (testingWithSanitizers != null && vfs == null) {
+    // When testing with sanitizers, always use a Dart VFS since we use an
+    // uninstrumented libc that wouldn't report buffers for read files as
+    // initialized.
     final inMemory =
         InMemoryFileSystem(name: 'in-memory-${Random().nextInt(1 << 32)}');
     sqlite3.registerVirtualFileSystem(inMemory);

@@ -239,6 +239,9 @@ jobs:
       - name: Build with sanitizers
         run: tool/build_linux_sanitized.sh
 
+      - run: dart pub get
+        working-directory: dart
+
       - name: Test with MemorySanitizer
         working-directory: dart
         run: dart tool/run_tests.dart msan
