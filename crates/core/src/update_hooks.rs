@@ -1,5 +1,4 @@
 use core::{
-    cell::Cell,
     ffi::{CStr, c_char, c_int, c_void},
     ptr::null_mut,
 };
@@ -21,11 +20,7 @@ use crate::{constants::SUBTYPE_JSON, error::PowerSyncError, state::DatabaseState
 /// The update hooks don't have to be uninstalled manually, that happens when the connection is
 /// closed and the function is unregistered.
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
-    let state = Box::new(HookState {
-        has_registered_hooks: Cell::new(false),
-        db,
-        state,
-    });
+    let state = Box::new(HookState { db, state });
 
     db.create_function_v2(
         "powersync_update_hooks",
@@ -41,31 +36,13 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
 }
 
 struct HookState {
-    has_registered_hooks: Cell<bool>,
     db: *mut sqlite::sqlite3,
     state: Rc<DatabaseState>,
 }
 
 extern "C" fn destroy_function(ctx: *mut c_void) {
     let state = unsafe { Box::from_raw(ctx as *mut HookState) };
-
-    if state.has_registered_hooks.get() {
-        check_previous(
-            "update",
-            &state.state,
-            state.db.update_hook(None, null_mut()),
-        );
-        check_previous(
-            "commit",
-            &state.state,
-            state.db.commit_hook(None, null_mut()),
-        );
-        check_previous(
-            "rollback",
-            &state.state,
-            state.db.rollback_hook(None, null_mut()),
-        );
-    }
+    uninstall_update_hooks(state.db, &state.state);
 }
 
 extern "C" fn powersync_update_hooks(
@@ -107,7 +84,7 @@ extern "C" fn powersync_update_hooks(
                     Rc::into_raw(db_state.clone()) as *mut c_void,
                 ),
             );
-            state.has_registered_hooks.set(true);
+            db_state.core_extension_has_update_hooks.set(true);
         }
         "get" => {
             let state = unsafe { user_data.as_ref().unwrap_unchecked() };
@@ -153,6 +130,14 @@ unsafe extern "C" fn commit_hook_impl(ctx: *mut c_void) -> c_int {
 unsafe extern "C" fn rollback_hook_impl(ctx: *mut c_void) {
     let state = unsafe { (ctx as *const DatabaseState).as_ref().unwrap_unchecked() };
     state.track_rollback();
+}
+
+pub fn uninstall_update_hooks(db: *mut sqlite::sqlite3, state: &Rc<DatabaseState>) {
+    if state.core_extension_has_update_hooks.take() {
+        check_previous("update", state, db.update_hook(None, null_mut()));
+        check_previous("commit", state, db.commit_hook(None, null_mut()));
+        check_previous("rollback", state, db.rollback_hook(None, null_mut()));
+    }
 }
 
 fn check_previous(desc: &'static str, expected: &Rc<DatabaseState>, previous: *const c_void) {

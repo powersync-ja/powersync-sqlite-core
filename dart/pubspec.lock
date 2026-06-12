@@ -237,10 +237,10 @@ packages:
     dependency: transitive
     description:
       name: native_toolchain_c
-      sha256: "89e83885ba09da5fdf2cdacc8002a712ca238c28b7f717910b34bcd27b0d03ac"
+      sha256: "8aaead321425bd3f03bd5894aa27c8ea6993eab95531da7e59f5d39c6e5708ec"
       url: "https://pub.dev"
     source: hosted
-    version: "0.17.4"
+    version: "0.18.0"
   node_preamble:
     dependency: transitive
     description:
@@ -364,11 +364,12 @@ packages:
   sqlite3:
     dependency: "direct main"
     description:
-      name: sqlite3
-      sha256: c6cfe9b1cc159c9eb8ba174b533a60b5126f9db8c6e34efb127d2bc04bc45034
-      url: "https://pub.dev"
-    source: hosted
-    version: "3.1.4"
+      path: sqlite3
+      ref: main
+      resolved-ref: "97268a5b32cf6313dd670e6fa57ae88d38a6564b"
+      url: "https://github.com/simolus3/sqlite3.dart.git"
+    source: git
+    version: "3.3.2"
   sqlite3_test:
     dependency: "direct dev"
     description:
@@ -514,4 +515,4 @@ packages:
     source: hosted
     version: "3.1.3"
 sdks:
-  dart: ">=3.9.999 <4.0.0"
+  dart: ">=3.10.0 <4.0.0"
