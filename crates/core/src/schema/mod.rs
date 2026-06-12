@@ -23,7 +23,7 @@ use crate::{
     schema::raw_table::{InferredTableStructure, generate_raw_table_trigger},
     state::DatabaseState,
     sync::RawTableWithCachedStatements,
-    utils::{SqlBuffer, WriteType},
+    utils::{SqlBuffer, WriteType, verify_in_transaction},
     views::table_columns_to_json_object,
 };
 
@@ -92,11 +92,8 @@ fn raw_table_migration(
     args: &[*mut sqlite::value],
 ) -> Result<(), PowerSyncError> {
     let db = context.db_handle();
-    if db.get_autocommit() {
-        return Err(PowerSyncError::argument_error(
-            "powersync_raw_table_migrate must be called within a transaction",
-        ));
-    }
+    verify_in_transaction(db)?;
+
     let context = unsafe { DatabaseState::from_context(&context) };
     let action = RawTableMigration::from_args(args)?;
 
@@ -159,7 +156,7 @@ fn raw_table_migration(
                 // Generate an INSERT INTO ps_untyped with a SELECT source transforming existing
                 // rows into JSON objects.
                 let mut buffer = SqlBuffer::new();
-                let fragment = table_columns_to_json_object(&local_table_name, &as_schema_table)?;
+                let fragment = table_columns_to_json_object(local_table_name, &as_schema_table)?;
                 buffer.push_str("INSERT INTO ps_untyped (type, id, data) SELECT ?, id, ");
                 buffer.push_str(&fragment);
                 buffer.push_str(" FROM ");

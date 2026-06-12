@@ -333,15 +333,7 @@ END''',
         };
       }
 
-      setUp(() => db.execute('SELECT powersync_init();'));
-
-      test('requires a transaction', () {
-        expect(
-          () => db.execute(
-              'SELECT powersync_raw_table_migrate(?, ?)', ['create', syncName]),
-          throwsA(isA<SqliteException>()),
-        );
-      });
+      setUp(() => db.executeInTx('SELECT powersync_init();'));
 
       group('create', () {
         void createUntypedItem(String id, Object? json) {
@@ -355,17 +347,15 @@ END''',
           createUntypedItem('foo', {'hello': 'world'});
           createUntypedItem('bar', {'hello': 'again'});
 
-          db.execute('SELECT powersync_replace_schema(?)', [
+          db.executeInTx('SELECT powersync_replace_schema(?)', [
             json.encode(singleRawTableSchema(
                 {'name': syncName, 'table_name': 'greetings'})),
           ]);
           db.execute(
               'CREATE TABLE greetings (id TEXT PRIMARY KEY, hello TEXT) STRICT;');
 
-          db.execute('BEGIN');
-          db.execute(
+          db.executeInTx(
               'SELECT powersync_raw_table_migrate(?, ?)', ['create', syncName]);
-          db.execute('COMMIT');
           expect(db.select('select * from ps_untyped'), isEmpty);
           expect(db.select('select * from greetings'), [
             {'id': 'foo', 'hello': 'world'},
@@ -377,7 +367,7 @@ END''',
           createUntypedItem('foo', {'hello': 'world'});
           createUntypedItem('bar', {'hello': 'again'});
 
-          db.execute('SELECT powersync_replace_schema(?)', [
+          db.executeInTx('SELECT powersync_replace_schema(?)', [
             json.encode(singleRawTableSchema({
               'name': syncName,
               'put': {
@@ -393,15 +383,26 @@ END''',
           db.execute(
               'CREATE TABLE greetings (id TEXT PRIMARY KEY, hello TEXT) STRICT;');
 
-          db.execute('BEGIN');
-          db.execute(
+          db.executeInTx(
               'SELECT powersync_raw_table_migrate(?, ?)', ['create', syncName]);
-          db.execute('COMMIT');
           expect(db.select('select * from ps_untyped'), isEmpty);
           expect(db.select('select * from greetings'), [
             {'id': 'foo', 'hello': 'world'},
             {'id': 'bar', 'hello': 'again'},
           ]);
+        });
+
+        test('errors when table is not in schema', () {
+          db.executeInTx('SELECT powersync_replace_schema(?)', [
+            json.encode(singleRawTableSchema(
+                {'name': syncName, 'table_name': 'greetings'})),
+          ]);
+
+          expect(
+            () => db.executeInTx('SELECT powersync_raw_table_migrate(?, ?)',
+                ['create', 'unknown_table']),
+            throwsA(isA<SqliteException>()),
+          );
         });
       });
 
@@ -417,28 +418,26 @@ END''',
             'INSERT INTO greetings (id, hello, local) VALUES (?, ?, uuid())',
             ['id_1', 'second'],
           )
-          ..execute('BEGIN')
-          ..execute('SELECT powersync_raw_table_migrate(?, ?)', [
+          ..executeInTx('SELECT powersync_raw_table_migrate(?, ?)', [
             'drop',
             json.encode({
               'name': syncName,
               'table_name': 'greetings',
               'synced_columns': ['hello']
             })
-          ])
-          ..execute('COMMIT');
-
+          ]);
         expect(db.select('select * from ps_untyped'), [
           {'type': 'synced_table', 'id': 'id_0', 'data': '{"hello":"first"}'},
           {'type': 'synced_table', 'id': 'id_1', 'data': '{"hello":"second"}'},
         ]);
+        expect(db.select('select * from greetings'), isEmpty);
       });
 
       test('crud triggers are not invoked during migration', () {
         final tableJson =
             json.encode({'name': syncName, 'table_name': 'greetings'});
 
-        db.execute('SELECT powersync_replace_schema(?)', [
+        db.executeInTx('SELECT powersync_replace_schema(?)', [
           json.encode(singleRawTableSchema(
               {'name': syncName, 'table_name': 'greetings'})),
         ]);

@@ -40,6 +40,8 @@ void main() {
           'SELECT powersync_clear(?)', 'powersync_clear', [0]);
       expectErrorOutsideOfTransaction(
           'SELECT powersync_trigger_resync(TRUE)', 'powersync_trigger_resync');
+      expectErrorOutsideOfTransaction('SELECT powersync_raw_table_migrate(?,?)',
+          'powersync_raw_table_migrate', ['create', 'a']);
     });
 
     test('contain inner SQLite descriptions', () {
