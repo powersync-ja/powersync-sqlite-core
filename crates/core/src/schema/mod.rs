@@ -92,6 +92,11 @@ fn raw_table_migration(
     args: &[*mut sqlite::value],
 ) -> Result<(), PowerSyncError> {
     let db = context.db_handle();
+    if db.get_autocommit() {
+        return Err(PowerSyncError::argument_error(
+            "powersync_raw_table_migrate must be called within a transaction",
+        ));
+    }
     let context = unsafe { DatabaseState::from_context(&context) };
     let action = RawTableMigration::from_args(args)?;
 
