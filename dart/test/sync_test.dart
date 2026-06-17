@@ -74,8 +74,9 @@ void _syncTests<T>({
 
   setUp(() async {
     db = openTestDatabase(vfs: vfs)
-      ..select('select powersync_init();')
-      ..select('select powersync_replace_schema(?)', [json.encode(testSchema)])
+      ..executeInTx('select powersync_init();')
+      ..executeInTx(
+          'select powersync_replace_schema(?)', [json.encode(testSchema)])
       ..execute('update ps_kv set value = ?2 where key = ?1',
           ['client_id', 'test-test-test-test']);
 
@@ -378,7 +379,7 @@ void _syncTests<T>({
     expect(db.select('SELECT priority FROM ps_sync_state').single,
         {'priority': 2147483647});
 
-    db.execute('SELECT powersync_clear(0)');
+    db.executeInTx('SELECT powersync_clear(0)');
     expect(db.select('SELECT * FROM ps_sync_state'), hasLength(0));
   });
 
@@ -394,8 +395,9 @@ void _syncTests<T>({
     invokeControl('stop', null);
 
     // Soft clear
-    db.execute('SELECT powersync_clear(2)');
-    db.select('select powersync_replace_schema(?)', [json.encode(testSchema)]);
+    db.executeInTx('SELECT powersync_clear(2)');
+    db.executeInTx(
+        'select powersync_replace_schema(?)', [json.encode(testSchema)]);
     expect(db.select('SELECT * FROM items'), hasLength(0));
     expect(
         db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"), isEmpty);
@@ -424,7 +426,7 @@ void _syncTests<T>({
       invokeControl('start', null);
 
       expect(
-        () => db.select('SELECT powersync_trigger_resync(1)'),
+        () => db.executeInTx('SELECT powersync_trigger_resync(1)'),
         throwsA(
           isSqliteException(
             3091,
@@ -443,7 +445,7 @@ void _syncTests<T>({
       invokeControl('stop', null);
 
       db.execute('delete from ps_data__items');
-      db.execute('select powersync_trigger_resync(0)');
+      db.executeInTx('select powersync_trigger_resync(0)');
 
       final instructions = invokeControl('start', null);
       expect(
@@ -476,7 +478,7 @@ void _syncTests<T>({
       pushCheckpointComplete();
       invokeControl('stop', null);
 
-      db.execute('select powersync_trigger_resync(1)');
+      db.executeInTx('select powersync_trigger_resync(1)');
       final [row] = db.select('select powersync_offline_sync_status()');
       expect(json.decode(row.columnAt(0)),
           containsPair('priority_status', isEmpty));
@@ -1002,8 +1004,8 @@ void _syncTests<T>({
         final fileName = d.path('test.db');
 
         db = openTestDatabase(fileName: fileName)
-          ..select('select powersync_init();')
-          ..select(
+          ..executeInTx('select powersync_init();')
+          ..executeInTx(
               'select powersync_replace_schema(?)', [json.encode(testSchema)])
           ..execute('update ps_kv set value = ?2 where key = ?1',
               ['client_id', 'test-test-test-test']);
@@ -1503,11 +1505,12 @@ END;
 
     test('clear', () {
       setupRawTables();
-      db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
       db.execute('INSERT INTO users (id, name) VALUES (uuid(), ?)', ['test']);
 
       expect(db.select('SELECT * FROM users'), hasLength(1));
-      db.execute('SELECT powersync_clear(0)');
+      db.executeInTx('SELECT powersync_clear(0)');
       expect(db.select('SELECT * FROM users'), hasLength(0));
     });
 
@@ -1636,7 +1639,7 @@ CREATE TRIGGER users_ref_delete
     addTearDown(() => sqlite3.unregisterVirtualFileSystem(vfs));
 
     db = openTestDatabase(vfs: vfs, fileName: '/test.db')
-      ..select('select powersync_init();');
+      ..executeInTx('select powersync_init();');
     invokeControl('start', null);
     expect(vfs.openFiles, isPositive);
     db.close();

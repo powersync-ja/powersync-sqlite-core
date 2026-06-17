@@ -22,7 +22,7 @@ use serde_json::value::RawValue;
 use sqlite::{ResultCode, Value};
 
 use crate::sync::BucketPriority;
-use crate::utils::JsonString;
+use crate::utils::{JsonString, verify_in_transaction};
 
 /// Payload provided by SDKs when requesting a sync iteration.
 #[derive(Deserialize)]
@@ -206,7 +206,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
     ) -> () {
         let result = (|| -> Result<(), PowerSyncError> {
             let db = ctx.db_handle();
-            debug_assert!(!db.get_autocommit());
+            verify_in_transaction(db, "powersync_control")?;
 
             let state = unsafe { DatabaseState::from_context(&ctx) };
             let args = sqlite::args!(argc, argv);

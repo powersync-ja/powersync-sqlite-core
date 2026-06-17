@@ -125,7 +125,7 @@ impl PowerSyncError {
         match self.inner.as_ref() {
             Sqlite(desc) => desc.code,
             ArgumentError { .. } => ResultCode::CONSTRAINT_DATATYPE,
-            StateError { .. } => ResultCode::MISUSE,
+            StateError { .. } | MustBeCalledInTransaction { .. } => ResultCode::MISUSE,
             MissingClientId
             | SyncProtocolError { .. }
             | DownMigrationDidNotUpdateVersion { .. }
@@ -193,7 +193,7 @@ impl From<ResultCode> for PowerSyncError {
 
 /// A structured enumeration of possible errors that can occur in the core extension.
 #[derive(Error, Debug)]
-enum RawPowerSyncError {
+pub enum RawPowerSyncError {
     /// An internal call to SQLite made by the core extension has failed. We store the original
     /// result code and an optional context describing what the core extension was trying to do when
     /// the error occurred.
@@ -248,10 +248,12 @@ enum RawPowerSyncError {
         libversion_number: c_int,
         libversion: &'static str,
     },
+    #[error("{function_name} may only be called in transactions.")]
+    MustBeCalledInTransaction { function_name: &'static str },
 }
 
 #[derive(Debug)]
-struct SqliteError {
+pub struct SqliteError {
     code: ResultCode,
     errstr: Option<String>,
     context: Option<Cow<'static, str>>,

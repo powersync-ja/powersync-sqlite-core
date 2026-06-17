@@ -3,13 +3,30 @@ mod sql_buffer;
 use core::{cmp::Ordering, fmt::Display, hash::Hash};
 
 use alloc::{boxed::Box, string::String};
-use powersync_sqlite_nostd::{ColumnType, ManagedStmt};
+use powersync_sqlite_nostd::{ColumnType, Connection, ManagedStmt, sqlite3};
 use serde::Serialize;
 use serde_json::value::RawValue;
 pub use sql_buffer::{InsertIntoCrud, SqlBuffer, WriteType};
 
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, RawPowerSyncError};
 use uuid::Uuid;
+
+#[cold]
+fn must_be_in_tx_error(function_name: &'static str) -> PowerSyncError {
+    return RawPowerSyncError::MustBeCalledInTransaction { function_name }.into();
+}
+
+#[inline]
+pub fn verify_in_transaction(
+    db: *mut sqlite3,
+    function_name: &'static str,
+) -> Result<(), PowerSyncError> {
+    if db.get_autocommit() {
+        return Err(must_be_in_tx_error(function_name));
+    }
+
+    Ok(())
+}
 
 /// Calls [read] to read a column if it's not null, otherwise returns [None].
 #[inline]

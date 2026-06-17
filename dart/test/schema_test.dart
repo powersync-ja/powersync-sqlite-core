@@ -4,6 +4,7 @@ import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
+import 'utils/test_utils.dart';
 
 void main() {
   late CommonDatabase db;
@@ -16,24 +17,28 @@ void main() {
     test('Schema versioning', () {
       // Test that powersync_replace_schema() is a no-op when the schema is not
       // modified.
-      db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
 
       final [versionBefore] = db.select('PRAGMA schema_version');
-      db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
       final [versionAfter] = db.select('PRAGMA schema_version');
 
       // No change
       expect(versionAfter['schema_version'],
           equals(versionBefore['schema_version']));
 
-      db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema2)]);
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(schema2)]);
       final [versionAfter2] = db.select('PRAGMA schema_version');
 
       // Updated
       expect(versionAfter2['schema_version'],
           greaterThan(versionAfter['schema_version'] as int));
 
-      db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema3)]);
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(schema3)]);
       final [versionAfter3] = db.select('PRAGMA schema_version');
 
       // Updated again (index)
@@ -70,7 +75,8 @@ void main() {
 
       test('from synced to local', () {
         // Start with synced table, and sync row
-        db.execute('SELECT powersync_replace_schema(?)', [json.encode(synced)]);
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(synced)]);
         db.execute(
           'INSERT INTO ps_data__users (id, data) VALUES (?, ?)',
           [
@@ -80,7 +86,8 @@ void main() {
         );
 
         // Migrate to local table.
-        db.execute('SELECT powersync_replace_schema(?)', [json.encode(local)]);
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(local)]);
 
         // The synced table should not exist anymore.
         expect(() => db.select('SELECT * FROM ps_data__users'),
@@ -98,13 +105,15 @@ void main() {
 
       test('from local to synced', () {
         // Start with local table, and local row
-        db.execute('SELECT powersync_replace_schema(?)', [json.encode(local)]);
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(local)]);
         db.execute(
             'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['local']);
 
         // Migrate to synced table. Because the previous local write would never
         // get uploaded, this clears local data.
-        db.execute('SELECT powersync_replace_schema(?)', [json.encode(synced)]);
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(synced)]);
         expect(db.select('SELECT * FROM users'), isEmpty);
 
         // The local table should not exist anymore.
@@ -137,7 +146,7 @@ void main() {
       }
 
       test('enabling', () {
-        db.execute('SELECT powersync_replace_schema(?)',
+        db.executeInTx('SELECT powersync_replace_schema(?)',
             [json.encode(createSchema(false))]);
         expect(
           db.select("select * from sqlite_schema where type = 'trigger' "
@@ -146,7 +155,7 @@ void main() {
           hasLength(1),
         );
 
-        db.execute('SELECT powersync_replace_schema(?)',
+        db.executeInTx('SELECT powersync_replace_schema(?)',
             [json.encode(createSchema(true))]);
         expect(
           db.select("select * from sqlite_schema where type = 'trigger' "
@@ -158,10 +167,12 @@ void main() {
 
       test('unchanged', () {
         final schema = createSchema(true);
-        db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
 
         final [versionBefore] = db.select('PRAGMA schema_version');
-        db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
         final [versionAfter] = db.select('PRAGMA schema_version');
 
         expect(versionAfter['schema_version'],
@@ -169,7 +180,7 @@ void main() {
       });
 
       test('disabling', () {
-        db.execute('SELECT powersync_replace_schema(?)',
+        db.executeInTx('SELECT powersync_replace_schema(?)',
             [json.encode(createSchema(true))]);
         expect(
           db.select("select * from sqlite_schema where type = 'trigger' "
@@ -178,7 +189,7 @@ void main() {
           hasLength(2),
         );
 
-        db.execute('SELECT powersync_replace_schema(?)',
+        db.executeInTx('SELECT powersync_replace_schema(?)',
             [json.encode(createSchema(false))]);
         expect(
           db.select("select * from sqlite_schema where type = 'trigger' "
@@ -190,7 +201,7 @@ void main() {
     });
 
     test('raw tables', () {
-      db.execute('SELECT powersync_replace_schema(?)', [
+      db.executeInTx('SELECT powersync_replace_schema(?)', [
         json.encode({
           'raw_tables': [
             {

@@ -17,7 +17,7 @@ void main() {
       db.execute('CREATE TABLE IF NOT EXISTS ps_migration(foo TEXT)');
 
       expect(
-        () => db.execute('SELECT powersync_init()'),
+        () => db.executeInTx('SELECT powersync_init()'),
         throwsA(isSqliteException(
           1,
           'powersync_init: internal SQLite call returned ERROR: no such column: id',
@@ -27,7 +27,7 @@ void main() {
 
     test('missing client id', () {
       db
-        ..execute('SELECT powersync_init()')
+        ..executeInTx('SELECT powersync_init()')
         ..execute('DELETE FROM ps_kv;');
 
       expect(
@@ -40,7 +40,7 @@ void main() {
     });
 
     group('sync protocol', () {
-      setUp(() => db.execute('SELECT powersync_init()'));
+      setUp(() => db.executeInTx('SELECT powersync_init()'));
 
       test('invalid json', () {
         const stmt = 'SELECT powersync_control(?,?)';

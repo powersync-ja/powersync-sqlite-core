@@ -72,10 +72,10 @@ void main() {
           {'name': 'items', 'columns': columns}
         ]
       };
-      db.select('select powersync_init()');
+      db.executeInTx('select powersync_init()');
 
       // 1. Test schema initialization
-      db.select(
+      db.executeInTx(
           'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
 
       var columnNames = columns.map((c) => c['name']).join(', ');
@@ -141,10 +141,10 @@ void main() {
           {'name': 'items', 'columns': columns, 'local_only': true}
         ]
       };
-      db.select('select powersync_init()');
+      db.executeInTx('select powersync_init()');
 
       // 1. Test schema initialization
-      db.select(
+      db.executeInTx(
           'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
 
       var columnNames = columns.map((c) => c['name']).join(', ');
@@ -181,10 +181,10 @@ void main() {
           {'name': 'items', 'columns': columns, 'insert_only': true}
         ]
       };
-      db.select('select powersync_init()');
+      db.executeInTx('select powersync_init()');
 
       // 1. Test schema initialization
-      db.select(
+      db.executeInTx(
           'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
 
       var columnNames = columns.map((c) => c['name']).join(', ');
@@ -226,7 +226,7 @@ void main() {
 
     group('crud vtab', () {
       setUp(() {
-        db.select('select powersync_init()');
+        db.executeInTx('select powersync_init()');
       });
 
       group('simple', () {
@@ -382,8 +382,8 @@ void main() {
           ]
         };
 
-        db.select('select powersync_init()');
-        db.select(
+        db.executeInTx('select powersync_init()');
+        db.executeInTx(
             'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
       }
 
@@ -524,8 +524,8 @@ void main() {
           ]
         };
 
-        db.select('select powersync_init()');
-        db.select(
+        db.executeInTx('select powersync_init()');
+        db.executeInTx(
             'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
       }
 
@@ -616,7 +616,7 @@ void main() {
 
     test('includes empty updates by default', () {
       db
-        ..execute('select powersync_replace_schema(?)', [
+        ..executeInTx('select powersync_replace_schema(?)', [
           json.encode({
             'tables': [
               {
@@ -638,7 +638,7 @@ void main() {
 
     test('can ignore empty updates', () {
       db
-        ..execute('select powersync_replace_schema(?)', [
+        ..executeInTx('select powersync_replace_schema(?)', [
           json.encode({
             'tables': [
               {
@@ -661,7 +661,7 @@ void main() {
 
     test('preserves values in text column', () {
       db
-        ..execute('select powersync_replace_schema(?)', [
+        ..executeInTx('select powersync_replace_schema(?)', [
           json.encode({
             'tables': [
               {
@@ -687,7 +687,7 @@ void main() {
 
     test('preserves mismatched type', () {
       db
-        ..execute('select powersync_replace_schema(?)', [
+        ..executeInTx('select powersync_replace_schema(?)', [
           json.encode({
             'tables': [
               {
@@ -715,7 +715,7 @@ void main() {
     group('insert only', () {
       test('smoke test', () {
         db
-          ..execute('select powersync_replace_schema(?)', [
+          ..executeInTx('select powersync_replace_schema(?)', [
             json.encode({
               'tables': [
                 {
@@ -745,7 +745,7 @@ void main() {
 
       test('has no effect on local-only tables', () {
         db
-          ..execute('select powersync_replace_schema(?)', [
+          ..executeInTx('select powersync_replace_schema(?)', [
             json.encode({
               'tables': [
                 {
@@ -779,7 +779,7 @@ void main() {
     group('raw tables', () {
       void createRawTableTriggers(Object table,
           {bool insert = true, bool update = true, bool delete = true}) {
-        db.execute('SELECT powersync_init()');
+        db.executeInTx('SELECT powersync_init()');
 
         if (insert) {
           db.execute('SELECT powersync_create_raw_table_crud_trigger(?, ?, ?)',
@@ -954,7 +954,7 @@ void main() {
 
         createRawTableTriggers(rawTableDescription(
             {'table_name': 'users', 'ignore_empty_update': true}));
-        db.execute('select powersync_replace_schema(?)', [
+        db.executeInTx('select powersync_replace_schema(?)', [
           json.encode({
             'tables': [],
             'raw_tables': [
@@ -963,7 +963,7 @@ void main() {
           })
         ]);
 
-        db.execute('SELECT powersync_clear(2)');
+        db.executeInTx('SELECT powersync_clear(2)');
         expect(db.select('SELECT * FROM ps_crud'), isEmpty);
       });
     });

@@ -4,14 +4,16 @@ import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
+import 'utils/test_utils.dart';
 
 void main() {
   late CommonDatabase db;
 
   setUp(() async {
     db = openTestDatabase()
-      ..select('select powersync_init();')
-      ..select('select powersync_replace_schema(?)', [json.encode(_schema)]);
+      ..executeInTx('select powersync_init();')
+      ..executeInTx(
+          'select powersync_replace_schema(?)', [json.encode(_schema)]);
   });
 
   test('can fix JS key encoding', () {
