@@ -47,7 +47,7 @@ void testFilesystemOperations(
   setUp(() {
     // Optional: set a custom cache size - it affects the number of filesystem operations.
     // db.execute('PRAGMA cache_size=-50000');
-    db.execute('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+    db.executeInTx('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
     // Generate dummy data
     // We can replace this with actual similated download operations later
     db.execute('''

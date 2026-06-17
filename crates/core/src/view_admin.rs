@@ -10,12 +10,12 @@ use powersync_sqlite_nostd as sqlite;
 use powersync_sqlite_nostd::{Connection, Context};
 use sqlite::{ResultCode, Value};
 
+use crate::create_sqlite_text_fn;
 use crate::error::{PSResult, PowerSyncError};
 use crate::migrations::{LATEST_VERSION, powersync_migrate};
 use crate::schema::inspection::ExistingView;
 use crate::state::DatabaseState;
-use crate::utils::SqlBuffer;
-use crate::{create_auto_tx_function, create_sqlite_text_fn};
+use crate::utils::{SqlBuffer, verify_in_transaction};
 
 // Used in old down migrations, do not remove.
 extern "C" fn powersync_drop_view(
@@ -35,6 +35,8 @@ fn powersync_init_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
+    let db = ctx.db_handle();
+    verify_in_transaction(db)?;
     powersync_migrate(ctx, LATEST_VERSION)?;
 
     // Register the powersync_internal_close vtab to implement a "pre-close hook".
@@ -45,23 +47,24 @@ fn powersync_init_impl(
     Ok(String::from(""))
 }
 
-create_auto_tx_function!(powersync_init_tx, powersync_init_impl);
-create_sqlite_text_fn!(powersync_init, powersync_init_tx, "powersync_init");
+create_sqlite_text_fn!(powersync_init, powersync_init_impl, "powersync_init");
 
 fn powersync_test_migration_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
+    let db = ctx.db_handle();
+    verify_in_transaction(db)?;
+
     let target_version = args[0].int();
     powersync_migrate(ctx, target_version)?;
 
     Ok(String::from(""))
 }
 
-create_auto_tx_function!(powersync_test_migration_tx, powersync_test_migration_impl);
 create_sqlite_text_fn!(
     powersync_test_migration,
-    powersync_test_migration_tx,
+    powersync_test_migration_impl,
     "powersync_test_migration"
 );
 
@@ -70,6 +73,7 @@ fn powersync_clear_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
+    verify_in_transaction(local_db)?;
     let state = unsafe { DatabaseState::from_context(&ctx) };
 
     let flags = PowerSyncClearFlags(args[0].int());
@@ -176,6 +180,8 @@ fn powersync_trigger_resync_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
+    verify_in_transaction(local_db)?;
+
     let state = unsafe { DatabaseState::from_context(&ctx) };
     trigger_resync(local_db, state)?;
 
@@ -187,10 +193,9 @@ fn powersync_trigger_resync_impl(
     Ok(Default::default())
 }
 
-create_auto_tx_function!(powersync_trigger_resync_tx, powersync_trigger_resync_impl);
 create_sqlite_text_fn!(
     powersync_trigger_resync,
-    powersync_trigger_resync_tx,
+    powersync_trigger_resync_impl,
     "powersync_trigger_resync"
 );
 
@@ -210,8 +215,7 @@ impl PowerSyncClearFlags {
     }
 }
 
-create_auto_tx_function!(powersync_clear_tx, powersync_clear_impl);
-create_sqlite_text_fn!(powersync_clear, powersync_clear_tx, "powersync_clear");
+create_sqlite_text_fn!(powersync_clear, powersync_clear_impl, "powersync_clear");
 
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     // This entire module is just making it easier to edit sqlite_master using queries.

@@ -25,8 +25,9 @@ void main() {
 
   setUp(() async {
     db = openTestDatabase(vfs: vfs)
-      ..select('select powersync_init();')
-      ..select('select powersync_replace_schema(?)', [json.encode(testSchema)])
+      ..executeInTx('select powersync_init();')
+      ..executeInTx(
+          'select powersync_replace_schema(?)', [json.encode(testSchema)])
       ..execute('update ps_kv set value = ?2 where key = ?1',
           ['client_id', 'test-test-test-test']);
   });
@@ -654,14 +655,14 @@ void main() {
       }),
     );
     expect(db.select('select * from ps_stream_subscriptions'), isNotEmpty);
-    db.execute('select powersync_clear(0);');
+    db.executeInTx('select powersync_clear(0);');
     expect(db.select('select * from ps_stream_subscriptions'), isEmpty);
   });
 
   syncTest('can migrate from old timestamps', (async) {
     // Migrate ps_sync_state to text-based date values and stream subscriptions
     // to timestamps with second precision.
-    db.execute('SELECT powersync_test_migration(?)', [12]);
+    db.executeInTx('SELECT powersync_test_migration(?)', [12]);
 
     // Mark as synced
     db
@@ -682,7 +683,7 @@ void main() {
         ],
       );
 
-    db.execute('SELECT powersync_test_migration(?)', [13]);
+    db.executeInTx('SELECT powersync_test_migration(?)', [13]);
 
     final [statusRow] = db.select('SELECT powersync_offline_sync_status()');
     expect(

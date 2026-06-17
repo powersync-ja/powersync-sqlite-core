@@ -13,17 +13,17 @@ use powersync_sqlite_nostd as sqlite;
 use powersync_sqlite_nostd::Context;
 use sqlite::{Connection, ResultCode, Value};
 
+use crate::create_sqlite_text_fn;
 use crate::error::{PSResult, PowerSyncError};
 use crate::ext::ExtendedDatabase;
 use crate::schema::inspection::{ExistingTable, ExistingView};
 use crate::schema::table_info::Index;
 use crate::state::DatabaseState;
-use crate::utils::SqlBuffer;
+use crate::utils::{SqlBuffer, verify_in_transaction};
 use crate::views::{
     powersync_trigger_delete_sql, powersync_trigger_insert_sql, powersync_trigger_update_sql,
     powersync_view_sql,
 };
-use crate::{create_auto_tx_function, create_sqlite_text_fn};
 
 use super::Schema;
 
@@ -265,12 +265,13 @@ fn powersync_replace_schema_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
+    let db = ctx.db_handle();
+    verify_in_transaction(db)?;
+
     let schema = args[0].text();
     let state = unsafe { DatabaseState::from_context(&ctx) };
     let parsed_schema =
         serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::as_argument_error)?;
-
-    let db = ctx.db_handle();
 
     // language=SQLite
     db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
@@ -283,10 +284,9 @@ fn powersync_replace_schema_impl(
     Ok(String::from(""))
 }
 
-create_auto_tx_function!(powersync_replace_schema_tx, powersync_replace_schema_impl);
 create_sqlite_text_fn!(
     powersync_replace_schema,
-    powersync_replace_schema_tx,
+    powersync_replace_schema_impl,
     "powersync_replace_schema"
 );
 

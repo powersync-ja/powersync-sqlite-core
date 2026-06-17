@@ -4,13 +4,14 @@ import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
 import 'utils/native_test_utils.dart';
+import 'utils/test_utils.dart';
 
 void main() {
   late CommonDatabase db;
 
   setUp(() async {
     db = openTestDatabase()
-      ..select('select powersync_init()')
+      ..executeInTx('select powersync_init()')
       ..execute('CREATE TABLE foo (bar INTEGER);')
       ..select("SELECT powersync_update_hooks('install')");
   });

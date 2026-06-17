@@ -41,7 +41,7 @@ void main() {
     /// Get this test passing before any others below, since it tests the
     /// finalState fixture, which is an input in other tests.
     test('create database from scratch', () async {
-      db.select('select powersync_init()');
+      db.executeInTx('select powersync_init()');
       final schema = '${getSchema(db)}\n${getMigrations(db)}';
       final expected = fixtures.finalState.trim();
       if (expected != schema) {
@@ -60,7 +60,7 @@ void main() {
       /// This tests with just the base tables
       test('migrate from $startState', () async {
         db.execute(fixtures.expectedState[startState]!);
-        db.select('select powersync_init()');
+        db.executeInTx('select powersync_init()');
         final schema = '${getSchema(db)}\n${getMigrations(db)}';
         expect(schema, equals(fixtures.finalState.trim()));
       });
@@ -69,7 +69,7 @@ void main() {
       test('migrate from $startState with data1', () async {
         db.execute(fixtures.expectedState[startState]!);
         db.execute(fixtures.data1[startState]!);
-        db.select('select powersync_init()');
+        db.executeInTx('select powersync_init()');
         final data = getData(db);
         expect(data, equals(fixtures.finalData1.trim()));
       });
@@ -82,7 +82,7 @@ void main() {
       /// This tests with just the base tables
       test('migrate down to $endState', () async {
         db.execute(fixtures.finalState);
-        db.select('select powersync_test_migration(?)', [endState]);
+        db.executeInTx('select powersync_test_migration(?)', [endState]);
         final schema = '${getSchema(db)}\n${getMigrations(db)}';
         expect(schema, equals(fixtures.expectedState[endState]!.trim()));
       });
@@ -91,7 +91,7 @@ void main() {
       test('migrate down to $endState with data1', () async {
         db.execute(fixtures.finalState);
         db.execute(fixtures.data1[fixtures.databaseVersion]!);
-        db.select('select powersync_test_migration(?)', [endState]);
+        db.executeInTx('select powersync_test_migration(?)', [endState]);
         final data = getData(db);
         expect(data, equals(fixtures.dataDown1[endState]!.trim()));
       });
@@ -110,8 +110,8 @@ void main() {
           }
         ]
       };
-      db.select('select powersync_init()');
-      db.select(
+      db.executeInTx('select powersync_init()');
+      db.executeInTx(
           'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
 
       final schema = getSchema(db);
@@ -134,8 +134,8 @@ void main() {
           }
         ]
       };
-      db.select('select powersync_init()');
-      db.select(
+      db.executeInTx('select powersync_init()');
+      db.executeInTx(
           'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
 
       final schema = getSchema(db);
@@ -149,7 +149,7 @@ void main() {
     test('schema 5 -> 4', () async {
       db.execute(fixtures.expectedState[5]!);
       db.execute(fixtures.schema5);
-      db.select('select powersync_test_migration(4)');
+      db.executeInTx('select powersync_test_migration(4)');
 
       final schema = getSchema(db);
       // Note that this schema contains no views - those are deleted during the migration
@@ -165,7 +165,7 @@ void main() {
     test('schema 5 -> 3', () async {
       db.execute(fixtures.expectedState[5]!);
       db.execute(fixtures.schema5);
-      db.select('select powersync_test_migration(3)');
+      db.executeInTx('select powersync_test_migration(3)');
 
       final schema = getSchema(db);
       // Note that this schema contains no views - those are deleted during the migration
@@ -191,14 +191,14 @@ void main() {
           }
         ]
       };
-      db.select('select powersync_init()');
-      db.select(
+      db.executeInTx('select powersync_init()');
+      db.executeInTx(
           'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
 
-      db.select('select powersync_test_migration(5)');
+      db.executeInTx('select powersync_test_migration(5)');
       db.execute(fix035.dataBroken);
 
-      db.select('select powersync_init()');
+      db.executeInTx('select powersync_init()');
       final data = getData(db);
       expect(data, equals(fix035.dataMigrated.trim()));
 
@@ -245,8 +245,8 @@ end''');
           }
         ]
       };
-      db.select('select powersync_init()');
-      db.select(
+      db.executeInTx('select powersync_init()');
+      db.executeInTx(
           'select powersync_replace_schema(?)', [jsonEncode(tableSchema)]);
 
       final schema = getSchema(db);
@@ -274,7 +274,7 @@ end''';
         );
       }
 
-      db.execute('SELECT powersync_test_migration(8);');
+      db.executeInTx('SELECT powersync_test_migration(8);');
 
       expect(db.select('SELECT * FROM ps_sync_state ORDER BY priority'), [
         {

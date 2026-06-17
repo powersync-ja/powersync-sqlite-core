@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
@@ -12,12 +14,40 @@ void main() {
       db = openTestDatabase();
     });
 
+    test('not in transaction', () {
+      void expectErrorOutsideOfTransaction(String sql, String functionName,
+          [List<Object?> args = const []]) {
+        expect(
+          () => db.execute(sql, args),
+          throwsA(isSqliteException(
+            21,
+            '$functionName: This function may only be called in transactions.',
+          )),
+        );
+      }
+
+      expectErrorOutsideOfTransaction(
+          'SELECT powersync_init()', 'powersync_init');
+      db.executeInTx('SELECT powersync_init()');
+
+      expectErrorOutsideOfTransaction('SELECT powersync_control(?, ?)',
+          'powersync_control', ['STOP', null]);
+      expectErrorOutsideOfTransaction('SELECT powersync_replace_schema(?)',
+          'powersync_replace_schema', [json.encode({})]);
+      expectErrorOutsideOfTransaction('SELECT powersync_test_migration(?)',
+          'powersync_test_migration', [123]);
+      expectErrorOutsideOfTransaction(
+          'SELECT powersync_clear(?)', 'powersync_clear', [0]);
+      expectErrorOutsideOfTransaction(
+          'SELECT powersync_trigger_resync(TRUE)', 'powersync_trigger_resync');
+    });
+
     test('contain inner SQLite descriptions', () {
       // Create a wrong migrations table for the core extension to trip over.
       db.execute('CREATE TABLE IF NOT EXISTS ps_migration(foo TEXT)');
 
       expect(
-        () => db.execute('SELECT powersync_init()'),
+        () => db.executeInTx('SELECT powersync_init()'),
         throwsA(isSqliteException(
           1,
           'powersync_init: internal SQLite call returned ERROR: no such column: id',
@@ -27,7 +57,7 @@ void main() {
 
     test('missing client id', () {
       db
-        ..execute('SELECT powersync_init()')
+        ..executeInTx('SELECT powersync_init()')
         ..execute('DELETE FROM ps_kv;');
 
       expect(
@@ -40,7 +70,7 @@ void main() {
     });
 
     group('sync protocol', () {
-      setUp(() => db.execute('SELECT powersync_init()'));
+      setUp(() => db.executeInTx('SELECT powersync_init()'));
 
       test('invalid json', () {
         const stmt = 'SELECT powersync_control(?,?)';

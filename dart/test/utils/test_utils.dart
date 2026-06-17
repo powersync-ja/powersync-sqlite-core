@@ -76,3 +76,16 @@ const testSchema = {
     }
   ]
 };
+
+extension TransactionUtils on CommonDatabase {
+  void executeInTx(String sql, [List<Object?> args = const []]) {
+    execute('BEGIN');
+    try {
+      execute(sql, args);
+      execute('COMMIT');
+    } on Object {
+      execute('ROLLBACK');
+      rethrow;
+    }
+  }
+}
