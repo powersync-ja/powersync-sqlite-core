@@ -248,8 +248,8 @@ pub enum RawPowerSyncError {
         libversion_number: c_int,
         libversion: &'static str,
     },
-    #[error("{function_name} may only be called in transactions.")]
-    MustBeCalledInTransaction { function_name: &'static str },
+    #[error("This function may only be called in transactions.")]
+    MustBeCalledInTransaction,
 }
 
 #[derive(Debug)]

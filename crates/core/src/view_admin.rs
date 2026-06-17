@@ -36,7 +36,7 @@ fn powersync_init_impl(
     _args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let db = ctx.db_handle();
-    verify_in_transaction(db, "powersync_init")?;
+    verify_in_transaction(db)?;
     powersync_migrate(ctx, LATEST_VERSION)?;
 
     // Register the powersync_internal_close vtab to implement a "pre-close hook".
@@ -54,7 +54,7 @@ fn powersync_test_migration_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let db = ctx.db_handle();
-    verify_in_transaction(db, "powersync_test_migration")?;
+    verify_in_transaction(db)?;
 
     let target_version = args[0].int();
     powersync_migrate(ctx, target_version)?;
@@ -73,7 +73,7 @@ fn powersync_clear_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
-    verify_in_transaction(local_db, "powersync_clear")?;
+    verify_in_transaction(local_db)?;
     let state = unsafe { DatabaseState::from_context(&ctx) };
 
     let flags = PowerSyncClearFlags(args[0].int());
@@ -180,7 +180,7 @@ fn powersync_trigger_resync_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let local_db = ctx.db_handle();
-    verify_in_transaction(local_db, "powersync_trigger_resync")?;
+    verify_in_transaction(local_db)?;
 
     let state = unsafe { DatabaseState::from_context(&ctx) };
     trigger_resync(local_db, state)?;

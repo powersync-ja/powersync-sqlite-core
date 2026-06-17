@@ -206,7 +206,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
     ) -> () {
         let result = (|| -> Result<(), PowerSyncError> {
             let db = ctx.db_handle();
-            verify_in_transaction(db, "powersync_control")?;
+            verify_in_transaction(db)?;
 
             let state = unsafe { DatabaseState::from_context(&ctx) };
             let args = sqlite::args!(argc, argv);

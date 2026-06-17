@@ -12,17 +12,14 @@ use crate::error::{PowerSyncError, RawPowerSyncError};
 use uuid::Uuid;
 
 #[cold]
-fn must_be_in_tx_error(function_name: &'static str) -> PowerSyncError {
-    return RawPowerSyncError::MustBeCalledInTransaction { function_name }.into();
+fn must_be_in_tx_error() -> PowerSyncError {
+    return RawPowerSyncError::MustBeCalledInTransaction.into();
 }
 
 #[inline]
-pub fn verify_in_transaction(
-    db: *mut sqlite3,
-    function_name: &'static str,
-) -> Result<(), PowerSyncError> {
+pub fn verify_in_transaction(db: *mut sqlite3) -> Result<(), PowerSyncError> {
     if db.get_autocommit() {
-        return Err(must_be_in_tx_error(function_name));
+        return Err(must_be_in_tx_error());
     }
 
     Ok(())

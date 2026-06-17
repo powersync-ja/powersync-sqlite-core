@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqlite3/common.dart';
 import 'package:test/test.dart';
 
@@ -10,6 +12,34 @@ void main() {
 
     setUp(() async {
       db = openTestDatabase();
+    });
+
+    test('not in transaction', () {
+      void expectErrorOutsideOfTransaction(String sql, String functionName,
+          [List<Object?> args = const []]) {
+        expect(
+          () => db.execute(sql, args),
+          throwsA(isSqliteException(
+            21,
+            '$functionName: This function may only be called in transactions.',
+          )),
+        );
+      }
+
+      expectErrorOutsideOfTransaction(
+          'SELECT powersync_init()', 'powersync_init');
+      db.executeInTx('SELECT powersync_init()');
+
+      expectErrorOutsideOfTransaction('SELECT powersync_control(?, ?)',
+          'powersync_control', ['STOP', null]);
+      expectErrorOutsideOfTransaction('SELECT powersync_replace_schema(?)',
+          'powersync_replace_schema', [json.encode({})]);
+      expectErrorOutsideOfTransaction('SELECT powersync_test_migration(?)',
+          'powersync_test_migration', [123]);
+      expectErrorOutsideOfTransaction(
+          'SELECT powersync_clear(?)', 'powersync_clear', [0]);
+      expectErrorOutsideOfTransaction(
+          'SELECT powersync_trigger_resync(TRUE)', 'powersync_trigger_resync');
     });
 
     test('contain inner SQLite descriptions', () {

@@ -266,7 +266,7 @@ fn powersync_replace_schema_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let db = ctx.db_handle();
-    verify_in_transaction(db, "powersync_replace_schema")?;
+    verify_in_transaction(db)?;
 
     let schema = args[0].text();
     let state = unsafe { DatabaseState::from_context(&ctx) };
