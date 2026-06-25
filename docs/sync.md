@@ -37,6 +37,19 @@ The following commands are supported:
     If a new subscription is created, or when a subscription without a TTL has been removed, the client will ask to
     restart the connection.
 
+When uploads request a write checkpoint, SDKs should call
+`powersync_next_checkpoint_request_id()` inside a transaction to allocate the id to pass to the
+request-checkpoint API.
+
+`powersync_probe_local_target_op(op_id)` is only for compatibility when a new SDK is used with an
+older PowerSync service that does not yet support client-created checkpoint requests. In that mode,
+call it after the service-side request is made. Pass `NULL` to probe the current internal `$local`
+bucket target op without updating it, or pass an integer to update that target op. In both cases it
+returns the value from before the call, or `NULL` if no value existed. Updating to a positive,
+non-sentinel target op also stores it as `last_requested_checkpoint_request_id` to support migrating
+to client-created checkpoint requests. `0` and sentinel values such as max op id are not stored as
+requested checkpoint ids.
+
 `powersync_control` returns a JSON-encoded array of instructions for the client:
 
 ```typescript
@@ -68,6 +81,8 @@ interface UpdateSyncStatus {
   connecting: boolean,
   priority_status: [],
   downloading: null | DownloadProgress,
+  streams: [],
+  last_synced_checkpoint_request_id: null | number,
 }
 
 // Instructs SDKs to refresh credentials from the backend connector.

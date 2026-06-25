@@ -4,12 +4,12 @@ use core::ffi::{c_int, c_void};
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
 use crate::constants::SUBTYPE_JSON;
-use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
 use crate::sync::diagnostics::{DiagnosticOptions, DiagnosticsEvent};
 use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
+use crate::{create_sqlite_int_fn, create_sqlite_optional_int_fn, create_sqlite_text_fn};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -324,6 +324,28 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         Some(DatabaseState::destroy_rc),
     )?;
 
+    db.create_function_v2(
+        "powersync_probe_local_target_op",
+        1,
+        sqlite::UTF8 | sqlite::DIRECTONLY,
+        Some(Rc::into_raw(state.clone()) as *mut c_void),
+        Some(powersync_probe_local_target_op),
+        None,
+        None,
+        Some(DatabaseState::destroy_rc),
+    )?;
+
+    db.create_function_v2(
+        "powersync_next_checkpoint_request_id",
+        0,
+        sqlite::UTF8 | sqlite::DIRECTONLY,
+        Some(Rc::into_raw(state) as *mut c_void),
+        Some(powersync_next_checkpoint_request_id),
+        None,
+        None,
+        Some(DatabaseState::destroy_rc),
+    )?;
+
     Ok(())
 }
 
@@ -340,8 +362,65 @@ fn powersync_offline_sync_status_impl(
     Ok(serialized)
 }
 
+fn powersync_probe_local_target_op_impl(
+    ctx: *mut sqlite::context,
+    args: &[*mut sqlite::value],
+) -> Result<Option<i64>, PowerSyncError> {
+    if args.len() != 1 {
+        return Err(PowerSyncError::argument_error(
+            "powersync_probe_local_target_op takes one argument",
+        ));
+    }
+
+    let arg = args[0];
+    let new_target_op = match arg.value_type() {
+        ColumnType::Null => None,
+        ColumnType::Integer => Some(arg.int64()),
+        _ => {
+            return Err(PowerSyncError::argument_error(
+                "target op must be an integer or null",
+            ));
+        }
+    };
+
+    let db = ctx.db_handle();
+    let db_state = unsafe { DatabaseState::from_context(&ctx) };
+    let adapter = db_state.storage_adapter(db)?;
+    adapter.probe_local_target_op(new_target_op)
+}
+
+fn powersync_next_checkpoint_request_id_impl(
+    ctx: *mut sqlite::context,
+    args: &[*mut sqlite::value],
+) -> Result<i64, PowerSyncError> {
+    if !args.is_empty() {
+        return Err(PowerSyncError::argument_error(
+            "powersync_next_checkpoint_request_id does not take arguments",
+        ));
+    }
+
+    let db = ctx.db_handle();
+    verify_in_transaction(db)?;
+
+    let db_state = unsafe { DatabaseState::from_context(&ctx) };
+    let adapter = db_state.storage_adapter(db)?;
+    adapter.next_checkpoint_request_id()
+}
+
 create_sqlite_text_fn!(
     powersync_offline_sync_status,
     powersync_offline_sync_status_impl,
     "powersync_offline_sync_status"
+);
+
+create_sqlite_optional_int_fn!(
+    powersync_probe_local_target_op,
+    powersync_probe_local_target_op_impl,
+    "powersync_probe_local_target_op"
+);
+
+create_sqlite_int_fn!(
+    powersync_next_checkpoint_request_id,
+    powersync_next_checkpoint_request_id_impl,
+    "powersync_next_checkpoint_request_id"
 );

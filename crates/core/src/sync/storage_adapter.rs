@@ -26,6 +26,9 @@ use super::{
     bucket_priority::BucketPriority, interface::BucketRequest, streaming_sync::OwnedCheckpoint,
 };
 
+const LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_requested_checkpoint_request_id";
+const LAST_SYNCED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_synced_checkpoint_request_id";
+
 /// An adapter for storing sync state.
 ///
 /// This is used to encapsulate some SQL queries used for the sync implementation, making the code
@@ -112,6 +115,9 @@ impl StorageAdapter {
             items
         };
 
+        let last_synced_checkpoint_request_id =
+            self.read_i64_kv(LAST_SYNCED_CHECKPOINT_REQUEST_ID_KEY)?;
+
         let mut streams = Vec::new();
         self.iterate_local_subscriptions(|sub| {
             streams.push(ActiveStreamSubscription::from_local(&sub));
@@ -123,6 +129,7 @@ impl StorageAdapter {
             priority_status: priority_items,
             downloading: None,
             streams,
+            last_synced_checkpoint_request_id,
         })
     }
 
@@ -511,6 +518,105 @@ WHERE bucket = ?1",
         } else {
             None
         })
+    }
+
+    /// Probes and optionally updates the local bucket target op for older services where the SDK
+    /// cannot create checkpoint requests explicitly.
+    ///
+    /// The target op can also be used internally as a sentinel value such as max op id while local
+    /// writes are pending, so it must not be interpreted as a checkpoint request id.
+    ///
+    /// When the target op is a positive, non-sentinel checkpoint request id, it also updates
+    /// `last_requested_checkpoint_request_id` so clients can migrate from the legacy target-op
+    /// flow to client-created checkpoint requests. `0` and sentinel values such as max op id must
+    /// not update the last requested id.
+    ///
+    /// Returns the target op value from before this call. When `target_op` is `None`, this only
+    /// reads the current value.
+    pub fn probe_local_target_op(
+        &self,
+        target_op: Option<i64>,
+    ) -> Result<Option<i64>, PowerSyncError> {
+        let previous_target_op = self.local_state()?.map(|state| state.target_op);
+
+        let Some(target_op) = target_op else {
+            return Ok(previous_target_op);
+        };
+
+        if target_op < 0 {
+            return Err(PowerSyncError::argument_error(
+                "target op must be a non-negative integer",
+            ));
+        }
+
+        let stmt = self.db.prepare_v2(
+            "INSERT INTO ps_buckets(name, pending_delete, last_op, target_op)
+VALUES('$local', 1, 0, ?1)
+ON CONFLICT(name) DO UPDATE SET target_op = excluded.target_op",
+        )?;
+        stmt.bind_int64(1, target_op)?;
+        stmt.exec()?;
+
+        if target_op > 0 && target_op != i64::MAX {
+            self.write_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY, target_op)?;
+        }
+
+        Ok(previous_target_op)
+    }
+
+    /// Persists the checkpoint request id returned in a fully applied checkpoint.
+    pub fn persist_last_synced_checkpoint_request_id(
+        &self,
+        request_id: i64,
+    ) -> Result<(), PowerSyncError> {
+        self.write_i64_kv(LAST_SYNCED_CHECKPOINT_REQUEST_ID_KEY, request_id)
+    }
+
+    /// Increments, persists and returns the next client-created checkpoint request id.
+    pub fn next_checkpoint_request_id(&self) -> Result<i64, PowerSyncError> {
+        let statement = self.db.prepare_v2(
+            "INSERT INTO ps_kv(key, value)
+VALUES(?1, 1)
+ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1
+RETURNING value",
+        )?;
+        statement.bind_text(
+            1,
+            LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY,
+            sqlite::Destructor::STATIC,
+        )?;
+
+        if statement.step()? == ResultCode::ROW {
+            Ok(statement.column_int64(0))
+        } else {
+            Err(PowerSyncError::unknown_internal())
+        }
+    }
+
+    fn read_i64_kv(&self, key: &'static str) -> Result<Option<i64>, PowerSyncError> {
+        let statement = self
+            .db
+            .prepare_v2("SELECT value FROM ps_kv WHERE key = ?1")
+            .into_db_result(self.db)?;
+        statement.bind_text(1, key, sqlite::Destructor::STATIC)?;
+
+        Ok(if statement.step()? == ResultCode::ROW {
+            Some(statement.column_int64(0))
+        } else {
+            None
+        })
+    }
+
+    fn write_i64_kv(&self, key: &'static str, value: i64) -> Result<(), PowerSyncError> {
+        let stmt = self.db.prepare_v2(
+            "INSERT INTO ps_kv(key, value)
+VALUES(?1, ?2)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value ",
+        )?;
+        stmt.bind_text(1, key, sqlite::Destructor::STATIC)?;
+        stmt.bind_int64(2, value)?;
+        stmt.exec()?;
+        Ok(())
     }
 }
 

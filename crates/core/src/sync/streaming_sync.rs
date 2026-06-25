@@ -363,7 +363,9 @@ impl StreamingSyncIteration {
                             line: "Validated and applied checkpoint".into(),
                         });
                         event.instructions.push(Instruction::FlushFileSystem {});
+
                         SyncStateMachineTransition::SyncLocalChangesApplied {
+                            synced_checkpoint_request_id: target.write_checkpoint,
                             partial: None,
                             timestamp,
                         }
@@ -400,6 +402,7 @@ impl StreamingSyncIteration {
                     }
                     SyncLocalResult::ChangesApplied { timestamp } => {
                         SyncStateMachineTransition::SyncLocalChangesApplied {
+                            synced_checkpoint_request_id: target.checkpoint.write_checkpoint,
                             partial: Some(priority),
                             timestamp,
                         }
@@ -497,7 +500,11 @@ impl StreamingSyncIteration {
             } => {
                 self.validated_but_not_applied = Some(validated_but_not_applied);
             }
-            SyncStateMachineTransition::SyncLocalChangesApplied { partial, timestamp } => {
+            SyncStateMachineTransition::SyncLocalChangesApplied {
+                synced_checkpoint_request_id,
+                partial,
+                timestamp,
+            } => {
                 if let Some(priority) = partial {
                     self.status.update(
                         |status| {
@@ -506,7 +513,7 @@ impl StreamingSyncIteration {
                         &mut event.instructions,
                     );
                 } else {
-                    self.handle_checkpoint_applied(event, timestamp);
+                    self.handle_checkpoint_applied(event, timestamp, synced_checkpoint_request_id);
                 }
             }
             SyncStateMachineTransition::Empty => {}
@@ -647,7 +654,7 @@ impl StreamingSyncIteration {
                     line: "Applied pending checkpoint after completed upload".into(),
                 });
 
-                self.handle_checkpoint_applied(event, timestamp);
+                self.handle_checkpoint_applied(event, timestamp, checkpoint.write_checkpoint);
             }
             _ => {
                 event.instructions.push(Instruction::LogLine {
@@ -871,6 +878,14 @@ impl StreamingSyncIteration {
                     }
                 }
             }
+
+            // This is restored into the sync status when initializing a new client.
+            if priority.is_none() {
+                if let Some(write_checkpoint) = target.write_checkpoint {
+                    self.adapter
+                        .persist_last_synced_checkpoint_request_id(write_checkpoint)?;
+                }
+            }
         }
 
         Ok(result)
@@ -931,11 +946,16 @@ impl StreamingSyncIteration {
         })
     }
 
-    fn handle_checkpoint_applied(&mut self, event: &mut ActiveEvent, timestamp: TimestampMicros) {
+    fn handle_checkpoint_applied(
+        &mut self,
+        event: &mut ActiveEvent,
+        timestamp: TimestampMicros,
+        synced_checkpoint_request_id: Option<i64>,
+    ) {
         event.instructions.push(Instruction::DidCompleteSync {});
 
         self.status.update(
-            |status| status.applied_checkpoint(timestamp),
+            |status| status.applied_checkpoint(timestamp, synced_checkpoint_request_id),
             &mut event.instructions,
         );
     }
@@ -1113,6 +1133,7 @@ enum SyncStateMachineTransition<'a> {
         validated_but_not_applied: OwnedCheckpoint,
     },
     SyncLocalChangesApplied {
+        synced_checkpoint_request_id: Option<i64>,
         partial: Option<BucketPriority>,
         timestamp: TimestampMicros,
     },

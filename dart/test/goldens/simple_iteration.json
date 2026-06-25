@@ -10,7 +10,8 @@
             "connecting": true,
             "priority_status": [],
             "downloading": null,
-            "streams": []
+            "streams": [],
+            "last_synced_checkpoint_request_id": null
           }
         }
       },
@@ -65,7 +66,8 @@
                 }
               }
             },
-            "streams": []
+            "streams": [],
+            "last_synced_checkpoint_request_id": null
           }
         }
       }
@@ -115,7 +117,8 @@
                 }
               }
             },
-            "streams": []
+            "streams": [],
+            "last_synced_checkpoint_request_id": null
           }
         }
       }
@@ -154,7 +157,8 @@
               }
             ],
             "downloading": null,
-            "streams": []
+            "streams": [],
+            "last_synced_checkpoint_request_id": null
           }
         }
       }

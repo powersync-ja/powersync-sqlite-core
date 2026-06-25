@@ -4,12 +4,12 @@ import 'dart:typed_data';
 
 import 'package:bson/bson.dart';
 import 'package:file/local.dart';
+import 'package:path/path.dart';
 import 'package:sqlite3/common.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:sqlite3_test/sqlite3_test.dart';
 import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
-import 'package:path/path.dart';
 
 import 'utils/native_test_utils.dart';
 import 'utils/test_utils.dart';
@@ -133,6 +133,32 @@ void _syncTests<T>({
 
   List<Object?> pushCheckpointComplete({int? priority, String lastOpId = '1'}) {
     return syncLine(checkpointComplete(priority: priority, lastOpId: lastOpId));
+  }
+
+  Object? lastRequestedCheckpointRequestId() {
+    final rows = db.select(
+        "SELECT value FROM ps_kv WHERE key = 'last_requested_checkpoint_request_id'");
+    return rows.isEmpty ? null : rows.single.columnAt(0);
+  }
+
+  int nextCheckpointRequestId() {
+    db.execute('begin');
+
+    try {
+      final [row] = db.select('SELECT powersync_next_checkpoint_request_id()');
+      db.execute('commit');
+      return row.columnAt(0) as int;
+    } catch (e) {
+      db.execute('rollback');
+      rethrow;
+    }
+  }
+
+  Object? probeLocalTargetOp([int? opId]) {
+    final [row] = db.select('SELECT powersync_probe_local_target_op(?)', [
+      opId,
+    ]);
+    return row.columnAt(0);
   }
 
   ResultSet fetchRows() {
@@ -318,7 +344,7 @@ void _syncTests<T>({
   syncTest('remembers sync state', (controller) {
     invokeControl('start', null);
 
-    pushCheckpoint(buckets: priorityBuckets);
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
     pushCheckpointComplete();
 
     controller.elapse(Duration(minutes: 10));
@@ -331,26 +357,28 @@ void _syncTests<T>({
       instructions,
       contains(
         containsPair(
-          'UpdateSyncStatus',
-          containsPair(
-            'status',
+            'UpdateSyncStatus',
             containsPair(
-              'priority_status',
-              [
-                {
-                  'priority': 2,
-                  'last_synced_at': timestamp(),
-                  'has_synced': true
-                },
-                {
-                  'priority': 2147483647,
-                  'last_synced_at': timestamp(plusMinutes: -10),
-                  'has_synced': true
-                },
-              ],
-            ),
-          ),
-        ),
+              'status',
+              allOf(
+                containsPair('last_synced_checkpoint_request_id', 1),
+                containsPair(
+                  'priority_status',
+                  [
+                    {
+                      'priority': 2,
+                      'last_synced_at': timestamp(),
+                      'has_synced': true
+                    },
+                    {
+                      'priority': 2147483647,
+                      'last_synced_at': timestamp(plusMinutes: -10),
+                      'has_synced': true
+                    },
+                  ],
+                ),
+              ),
+            )),
       ),
     );
 
@@ -358,6 +386,7 @@ void _syncTests<T>({
     expect(json.decode(row[0]), {
       'connected': false,
       'connecting': false,
+      'last_synced_checkpoint_request_id': 1,
       'priority_status': [
         {'priority': 2, 'last_synced_at': timestamp(), 'has_synced': true},
         {
@@ -369,6 +398,106 @@ void _syncTests<T>({
       'downloading': null,
       'streams': [],
     });
+  });
+
+  syncTest('allocates requested checkpoint request ids', (_) {
+    expect(nextCheckpointRequestId(), 1);
+    expect(lastRequestedCheckpointRequestId(), 1);
+
+    expect(nextCheckpointRequestId(), 2);
+    expect(lastRequestedCheckpointRequestId(), 2);
+  });
+
+  syncTest('probes and updates local target op with checkpoint request id', (_) {
+    expect(probeLocalTargetOp(), isNull);
+    expect(probeLocalTargetOp(1), isNull);
+    expect(lastRequestedCheckpointRequestId(), 1);
+    expect(probeLocalTargetOp(), 1);
+    expect(probeLocalTargetOp(2), 1);
+    expect(lastRequestedCheckpointRequestId(), 2);
+    expect(probeLocalTargetOp(), 2);
+
+    invokeControl('start', null);
+
+    expect(db.select(r"SELECT target_op FROM ps_buckets WHERE name = '$local'"),
+        [
+          {'target_op': 2}
+        ]);
+  });
+
+  syncTest('does not store non-request target ops as checkpoint request id', (_) {
+    expect(probeLocalTargetOp(0), isNull);
+    expect(lastRequestedCheckpointRequestId(), isNull);
+
+    expect(probeLocalTargetOp(9223372036854775807), 0);
+    expect(lastRequestedCheckpointRequestId(), isNull);
+    expect(probeLocalTargetOp(), 9223372036854775807);
+  });
+
+  syncTest('does not persist placeholder checkpoint request id', (_) {
+    db.execute("insert into items (id, col) values ('local', 'data');");
+
+    invokeControl('start', null);
+
+    expect(lastRequestedCheckpointRequestId(), isNull);
+  });
+
+  syncTest(
+    'does not mark checkpoint request id as synced for partial checkpoint',
+    (_) {
+      invokeControl('start', null);
+
+      pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+      final instructions = pushCheckpointComplete(priority: 2);
+
+      expect(
+        instructions,
+        contains(
+          containsPair(
+            'UpdateSyncStatus',
+            containsPair(
+              'status',
+              containsPair('last_synced_checkpoint_request_id', null),
+            ),
+          ),
+        ),
+      );
+
+      final [row] = db.select('select powersync_offline_sync_status();');
+      expect(
+        json.decode(row[0]),
+        containsPair('last_synced_checkpoint_request_id', null),
+      );
+    },
+  );
+
+  syncTest('keeps synced checkpoint request id across normal checkpoints', (_) {
+    invokeControl('start', null);
+
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+    pushCheckpointComplete();
+
+    pushCheckpoint(buckets: priorityBuckets);
+    final instructions = pushCheckpointComplete();
+
+    expect(
+      instructions,
+      contains(
+        containsPair(
+          'UpdateSyncStatus',
+          containsPair(
+            'status',
+            containsPair('last_synced_checkpoint_request_id', 1),
+          ),
+        ),
+      ),
+    );
+
+    final [row] = db.select('select powersync_offline_sync_status();');
+    expect(
+      json.decode(row[0]),
+      containsPair('last_synced_checkpoint_request_id', 1),
+    );
   });
 
   test('clearing database clears sync status', () {
@@ -816,7 +945,7 @@ void _syncTests<T>({
       ]);
 
       // Now complete the upload process.
-      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      probeLocalTargetOp(1);
       invokeControl('completed_upload', null);
 
       // This should apply the pending write checkpoint.
@@ -832,8 +961,9 @@ void _syncTests<T>({
 
       // Complete upload process
       db.execute('DELETE FROM ps_crud');
-      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      probeLocalTargetOp(1);
       expect(invokeControl('completed_upload', null), isEmpty);
+      expect(lastRequestedCheckpointRequestId(), 1);
 
       // Sync afterwards containing data and write checkpoint.
       pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
@@ -861,7 +991,7 @@ void _syncTests<T>({
       ]);
 
       // Now the upload is complete and requests a write checkpoint
-      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      probeLocalTargetOp(1);
       expect(invokeControl('completed_upload', null), isEmpty);
 
       // Which triggers a new iteration
@@ -898,7 +1028,7 @@ void _syncTests<T>({
       db.execute("insert into items (id, col) values ('local2', 'data2');");
 
       // Now the upload is complete and requests a write checkpoint
-      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      probeLocalTargetOp(1);
       expect(invokeControl('completed_upload', null), [
         containsPair('LogLine', {
           'severity': 'WARNING',
