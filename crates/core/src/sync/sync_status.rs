@@ -53,8 +53,8 @@ pub struct DownloadSyncStatus {
     /// received), information about how far the download has progressed.
     pub downloading: Option<SyncDownloadProgress>,
     pub streams: Vec<ActiveStreamSubscription>,
-    /// The last fully applied checkpoint request id acknowledged by the sync stream.
-    pub last_synced_checkpoint_request_id: Option<i64>,
+    /// The latest checkpoint request id whose full checkpoint has been applied locally.
+    pub last_applied_checkpoint_request_id: Option<i64>,
 }
 
 impl DownloadSyncStatus {
@@ -122,12 +122,12 @@ impl DownloadSyncStatus {
     pub fn applied_checkpoint(
         &mut self,
         now: TimestampMicros,
-        synced_checkpoint_request_id: Option<i64>,
+        applied_checkpoint_request_id: Option<i64>,
     ) {
         self.downloading = None;
         self.priority_status.clear();
-        if let Some(request_id) = synced_checkpoint_request_id {
-            self.last_synced_checkpoint_request_id = Some(request_id);
+        if let Some(request_id) = applied_checkpoint_request_id {
+            self.last_applied_checkpoint_request_id = Some(request_id);
         }
 
         self.priority_status.push(SyncPriorityStatus {
@@ -146,7 +146,7 @@ impl Default for DownloadSyncStatus {
             downloading: None,
             priority_status: Vec::new(),
             streams: Vec::new(),
-            last_synced_checkpoint_request_id: None,
+            last_applied_checkpoint_request_id: None,
         }
     }
 }
@@ -197,8 +197,8 @@ impl Serialize for DownloadSyncStatus {
         serializer.serialize_field("downloading", &self.downloading)?;
         serializer.serialize_field("streams", &SerializeStreamsWithProgress(self))?;
         serializer.serialize_field(
-            "last_synced_checkpoint_request_id",
-            &self.last_synced_checkpoint_request_id,
+            "last_applied_checkpoint_request_id",
+            &self.last_applied_checkpoint_request_id,
         )?;
 
         serializer.end()

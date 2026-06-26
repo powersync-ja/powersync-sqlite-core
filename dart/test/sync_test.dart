@@ -361,7 +361,7 @@ void _syncTests<T>({
             containsPair(
               'status',
               allOf(
-                containsPair('last_synced_checkpoint_request_id', 1),
+                containsPair('last_applied_checkpoint_request_id', 1),
                 containsPair(
                   'priority_status',
                   [
@@ -386,7 +386,7 @@ void _syncTests<T>({
     expect(json.decode(row[0]), {
       'connected': false,
       'connecting': false,
-      'last_synced_checkpoint_request_id': 1,
+      'last_applied_checkpoint_request_id': 1,
       'priority_status': [
         {'priority': 2, 'last_synced_at': timestamp(), 'has_synced': true},
         {
@@ -459,7 +459,7 @@ void _syncTests<T>({
             'UpdateSyncStatus',
             containsPair(
               'status',
-              containsPair('last_synced_checkpoint_request_id', null),
+              containsPair('last_applied_checkpoint_request_id', null),
             ),
           ),
         ),
@@ -468,7 +468,7 @@ void _syncTests<T>({
       final [row] = db.select('select powersync_offline_sync_status();');
       expect(
         json.decode(row[0]),
-        containsPair('last_synced_checkpoint_request_id', null),
+        containsPair('last_applied_checkpoint_request_id', null),
       );
     },
   );
@@ -489,7 +489,7 @@ void _syncTests<T>({
           'UpdateSyncStatus',
           containsPair(
             'status',
-            containsPair('last_synced_checkpoint_request_id', 1),
+            containsPair('last_applied_checkpoint_request_id', 1),
           ),
         ),
       ),
@@ -498,7 +498,7 @@ void _syncTests<T>({
     final [row] = db.select('select powersync_offline_sync_status();');
     expect(
       json.decode(row[0]),
-      containsPair('last_synced_checkpoint_request_id', 1),
+      containsPair('last_applied_checkpoint_request_id', 1),
     );
 
     expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),

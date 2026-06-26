@@ -109,7 +109,7 @@ VALUES(1, '$local', 5, 6, 7, 0, 0, 1, 0, 0, 0);
       expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), containsAll([
         {'key': 'last_seen_checkpoint_request_id', 'value': 6},
         {'key': 'last_requested_checkpoint_request_id', 'value': 7},
-        {'key': 'last_synced_checkpoint_request_id', 'value': 5},
+        {'key': 'last_applied_checkpoint_request_id', 'value': 5},
         {'key': 'local_target_op', 'value': 7},
       ]));
     });
@@ -126,12 +126,12 @@ VALUES(1, '$local', 5, 6, 9223372036854775807, 0, 0, 1, 0, 0, 0);
 
       db.executeInTx('select powersync_init()');
 
-      // last_applied_op becomes the synced checkpoint id, but it must not seed the requested
+      // last_applied_op becomes the applied checkpoint id, but it must not seed the requested
       // checkpoint counter. The sentinel target is preserved for blocking, but is not concrete
       // enough to become last_requested_checkpoint_request_id.
       expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
         {'key': 'last_seen_checkpoint_request_id', 'value': 6},
-        {'key': 'last_synced_checkpoint_request_id', 'value': 5},
+        {'key': 'last_applied_checkpoint_request_id', 'value': 5},
         {'key': 'local_target_op', 'value': 9223372036854775807},
       ]);
     });
@@ -159,7 +159,7 @@ VALUES(1, '$local', 0, 0, 9223372036854775807, 0, 0, 1, 0, 0, 0);
 INSERT INTO ps_kv(key, value) VALUES
   ('last_requested_checkpoint_request_id', 7),
   ('last_seen_checkpoint_request_id', 6),
-  ('last_synced_checkpoint_request_id', 5),
+  ('last_applied_checkpoint_request_id', 5),
   ('local_target_op', 7);
 ''');
 

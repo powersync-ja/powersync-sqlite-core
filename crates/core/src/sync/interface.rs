@@ -388,6 +388,11 @@ fn powersync_probe_local_target_op_impl(
         };
 
     let db = ctx.db_handle();
+
+    if new_target_op.is_some() {
+        verify_in_transaction(db)?;
+    }
+
     let db_state = unsafe { DatabaseState::from_context(&ctx) };
     let adapter = db_state.storage_adapter(db)?;
     adapter.probe_local_target_op(new_target_op)

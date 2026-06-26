@@ -28,7 +28,7 @@ use super::{
 
 const LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_requested_checkpoint_request_id";
 const LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY: &str = "last_seen_checkpoint_request_id";
-const LAST_SYNCED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_synced_checkpoint_request_id";
+const LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_applied_checkpoint_request_id";
 
 // Tracks the local target used to block applying downloaded rows while local writes are
 // outstanding. When present, this is normally either the max-op sentinel for pending local writes or
@@ -121,8 +121,8 @@ impl StorageAdapter {
             items
         };
 
-        let last_synced_checkpoint_request_id =
-            self.read_i64_kv(LAST_SYNCED_CHECKPOINT_REQUEST_ID_KEY)?;
+        let last_applied_checkpoint_request_id =
+            self.read_i64_kv(LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY)?;
 
         let mut streams = Vec::new();
         self.iterate_local_subscriptions(|sub| {
@@ -135,7 +135,7 @@ impl StorageAdapter {
             priority_status: priority_items,
             downloading: None,
             streams,
-            last_synced_checkpoint_request_id,
+            last_applied_checkpoint_request_id,
         })
     }
 
@@ -545,8 +545,6 @@ WHERE bucket = ?1",
             return Ok(previous_target_op);
         };
 
-        // Set the new target op
-        
         if target_op < 0 {
             return Err(PowerSyncError::argument_error(
                 "target op must be a non-negative integer",
@@ -579,16 +577,15 @@ WHERE bucket = ?1",
     }
 
     /// Persists the checkpoint request id that was applied locally.
-    pub fn persist_last_synced_checkpoint_request_id(
+    pub fn persist_last_applied_checkpoint_request_id(
         &self,
         request_id: i64,
     ) -> Result<(), PowerSyncError> {
-        self.write_i64_kv(LAST_SYNCED_CHECKPOINT_REQUEST_ID_KEY, request_id)
+        self.write_i64_kv(LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY, request_id)
     }
 
     /// Increments, persists and returns the next client-created checkpoint request id.
     pub fn next_checkpoint_request_id(&self) -> Result<i64, PowerSyncError> {
-        // Wonder, should this be a sequence instead
         let statement = self.db.prepare_v2(
             "INSERT INTO ps_kv(key, value)
 VALUES(?1, 1)
@@ -626,7 +623,7 @@ RETURNING value",
         let stmt = self.db.prepare_v2(
             "INSERT INTO ps_kv(key, value)
 VALUES(?1, ?2)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value ",
+ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         )?;
         stmt.bind_text(1, key, sqlite::Destructor::STATIC)?;
         stmt.bind_int64(2, value)?;

@@ -464,36 +464,33 @@ DROP TABLE ps_sync_state_old;
         // Move the legacy `$local` checkpoint bookkeeping into ps_kv.
         //
         // In older databases, `$local.last_applied_op` represented the latest legacy write
-        // checkpoint that was actually applied, so it becomes the last synced checkpoint request.
+        // checkpoint that was actually applied, so it becomes the last applied checkpoint request.
         // `$local.last_op` represented the latest legacy write checkpoint seen in the sync stream,
         // so it becomes the last seen checkpoint request.
         //
         // `$local.target_op` can either be a concrete checkpoint request id or a sentinel such as
         // i64::MAX while local writes are pending. Store it separately as `local_target_op`, but
         // only treat concrete values as requested checkpoint ids. We intentionally don't seed
-        // `last_requested_checkpoint_request_id` from `$local.last_applied_op` because that is a
-        // synced value, not necessarily the current requested target.
+        // `last_requested_checkpoint_request_id` from `$local.last_applied_op` because that is an
+        // applied value, not necessarily the current requested target.
         //
-        // When the target op is not concrete and there is no existing requested checkpoint id,
-        // `last_requested_checkpoint_request_id` remains undefined. That migration path is
-        // ambiguous: a new client-created request would start at 1, or another value lower than
-        // the service's legacy counter. SDKs should detect the undefined value, create one old
-        // write checkpoint, persist that returned concrete target through
-        // `powersync_probe_local_target_op`, and only then start creating checkpoint requests.
+        // An absent local target can safely start client-created checkpoint requests from 1. The
+        // ambiguous case is an existing max-op local target without a concrete requested id:
+        // pending local writes may already be associated with legacy service-created write
+        // checkpoints, so SDKs should bridge once through the legacy endpoint before starting
+        // client-created checkpoint requests.
         let up = "\
 INSERT INTO ps_kv(key, value)
-SELECT 'last_synced_checkpoint_request_id', last_applied_op
+SELECT 'last_applied_checkpoint_request_id', last_applied_op
   FROM ps_buckets
  WHERE name = '$local'
-   AND last_applied_op > 0
-   AND last_applied_op != 9223372036854775807;
+   AND last_applied_op > 0;
 
 INSERT INTO ps_kv(key, value)
 SELECT 'last_seen_checkpoint_request_id', last_op
   FROM ps_buckets
  WHERE name = '$local'
-   AND last_op > 0
-   AND last_op != 9223372036854775807;
+   AND last_op > 0;
 
 INSERT INTO ps_kv(key, value)
 SELECT 'last_requested_checkpoint_request_id', target_op
@@ -514,7 +511,7 @@ SELECT 'local_target_op', target_op
         // can keep using their target-op based blocking behavior. In that model, `$local.last_op`
         // tracked the latest seen legacy write checkpoint and was compared with `$local.target_op`
         // to decide whether downloaded changes could be applied. The `$local.last_applied_op`
-        // value represented the synced checkpoint that had actually been applied locally.
+        // value represented the checkpoint that had actually been applied locally.
         // `$local.pending_delete = 1` marked this as a synthetic local-only bucket instead of a
         // normal service bucket. Restore each old progress column from its matching ps_kv key.
         // The 0 defaults cover a local target that exists before any checkpoint has been seen or
@@ -523,11 +520,11 @@ SELECT 'local_target_op', target_op
         // track.
         const DOWN_STATEMENTS: &[&str] = &[
             "INSERT INTO ps_buckets(name, pending_delete, last_op, last_applied_op, target_op)
-SELECT '$local', 1, seen, synced, target
+SELECT '$local', 1, seen, applied, target
   FROM (
     SELECT
       IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'last_seen_checkpoint_request_id'), 0) AS seen,
-      IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'last_synced_checkpoint_request_id'), 0) AS synced,
+      IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'last_applied_checkpoint_request_id'), 0) AS applied,
       (SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'local_target_op') AS target
   )
  WHERE EXISTS (

@@ -58,7 +58,7 @@ checkpoint requests. Passing `0` clears the local target, and sentinel values su
 not stored as requested checkpoint ids.
 
 Database migration v14 moves legacy `$local` checkpoint state into `ps_kv`: `$local.last_applied_op`
-becomes `last_synced_checkpoint_request_id`, `$local.last_op` becomes the internal
+becomes `last_applied_checkpoint_request_id`, `$local.last_op` becomes the internal
 `last_seen_checkpoint_request_id`, a concrete `$local.target_op` advances the request counter, and
 `$local.target_op` is stored as `local_target_op`. Downgrading restores a `$local` row only when
 `local_target_op` exists, so older SDKs can keep using target-op based blocking without inventing a
@@ -108,7 +108,7 @@ interface UpdateSyncStatus {
   priority_status: [],
   downloading: null | DownloadProgress,
   streams: [],
-  last_synced_checkpoint_request_id: null | number,
+  last_applied_checkpoint_request_id: null | number,
 }
 
 // Instructs SDKs to refresh credentials from the backend connector.

@@ -8,7 +8,7 @@ At a high level:
 
 - `local_target_op` replaces `$local.target_op` as the local write apply gate.
 - `last_seen_checkpoint_request_id` replaces `$local.last_op`.
-- `last_synced_checkpoint_request_id` replaces `$local.last_applied_op`.
+- `last_applied_checkpoint_request_id` replaces `$local.last_applied_op`.
 - `last_requested_checkpoint_request_id` tracks the latest concrete checkpoint request id known to
   the client.
 
@@ -192,11 +192,11 @@ on completed_upload:
 ```
 
 After a full checkpoint applies, core stores the applied checkpoint request id as
-`last_synced_checkpoint_request_id` and emits it in sync status.
+`last_applied_checkpoint_request_id` and emits it in sync status.
 
 ```text
 after full checkpoint apply:
-    ps_kv['last_synced_checkpoint_request_id'] = checkpoint.write_checkpoint
+    ps_kv['last_applied_checkpoint_request_id'] = checkpoint.write_checkpoint
 ```
 
 ## Explicit checkpoint requests
@@ -206,14 +206,14 @@ the local database has caught up to the service. This creates a checkpoint reque
 connected sync client and returns a `CheckpointRequest`.
 
 This explicit API does not update `local_target_op`: it is a wait marker, not a local upload gate.
-The returned object waits until sync status reports `last_synced_checkpoint_request_id >= requestId`.
+The returned object waits until sync status reports `last_applied_checkpoint_request_id >= requestId`.
 
 ```text
-isSynced = status.lastSyncedCheckpointRequestId >= requestId
+isSynced = status.lastAppliedCheckpointRequestId >= requestId
 
 waitForSync() {
     for status in syncStatusUpdates {
-        return when status.lastSyncedCheckpointRequestId >= requestId
+        return when status.lastAppliedCheckpointRequestId >= requestId
         throw if status reports a sync error
     }
 }
@@ -233,14 +233,14 @@ request could not be delivered to the service or observed in the sync stream.
   client request counter.
 - `last_seen_checkpoint_request_id`: The latest full checkpoint `write_checkpoint` observed and
   validated from the sync stream.
-- `last_synced_checkpoint_request_id`: The latest full checkpoint `write_checkpoint` that has been
+- `last_applied_checkpoint_request_id`: The latest full checkpoint `write_checkpoint` that has been
   applied locally. SDKs expose this in sync status and use it to resolve `CheckpointRequest` waits.
 
 ## Migration from `$local`
 
 Migration v14 moves the old `$local` bucket state into `ps_kv`:
 
-- `$local.last_applied_op` becomes `last_synced_checkpoint_request_id`.
+- `$local.last_applied_op` becomes `last_applied_checkpoint_request_id`.
 - `$local.last_op` becomes `last_seen_checkpoint_request_id`.
 - A concrete `$local.target_op` becomes `last_requested_checkpoint_request_id`.
 - Any positive `$local.target_op`, including `MAX_OP_ID`, becomes `local_target_op`.
@@ -262,7 +262,7 @@ checkpoint requests.
 The down migration rebuilds a `$local` row only when `local_target_op` exists, using:
 
 - `last_seen_checkpoint_request_id` as `$local.last_op`
-- `last_synced_checkpoint_request_id` as `$local.last_applied_op`
+- `last_applied_checkpoint_request_id` as `$local.last_applied_op`
 - `local_target_op` as `$local.target_op`
 
 This keeps older SDKs able to use the historic target-op gate after a downgrade without inventing a

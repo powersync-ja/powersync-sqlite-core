@@ -11,7 +11,7 @@
             "priority_status": [],
             "downloading": null,
             "streams": [],
-            "last_synced_checkpoint_request_id": null
+            "last_applied_checkpoint_request_id": null
           }
         }
       },
@@ -67,7 +67,7 @@
               }
             },
             "streams": [],
-            "last_synced_checkpoint_request_id": null
+            "last_applied_checkpoint_request_id": null
           }
         }
       }
@@ -118,7 +118,7 @@
               }
             },
             "streams": [],
-            "last_synced_checkpoint_request_id": null
+            "last_applied_checkpoint_request_id": null
           }
         }
       }
@@ -158,7 +158,7 @@
             ],
             "downloading": null,
             "streams": [],
-            "last_synced_checkpoint_request_id": null
+            "last_applied_checkpoint_request_id": null
           }
         }
       }

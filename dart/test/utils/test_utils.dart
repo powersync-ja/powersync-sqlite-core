@@ -26,13 +26,11 @@ Object stream(String name, bool isDefault, {List<Object> errors = const []}) {
 Object checkpointComplete({
   int? priority,
   String lastOpId = '1',
-  String? writeCheckpoint,
 }) {
   return {
     priority == null ? 'checkpoint_complete' : 'partial_checkpoint_complete': {
       'last_op_id': lastOpId,
       if (priority != null) 'priority': priority,
-      if (writeCheckpoint != null) 'write_checkpoint': writeCheckpoint,
     },
   };
 }
