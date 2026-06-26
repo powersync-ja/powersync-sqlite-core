@@ -64,12 +64,17 @@ becomes `last_synced_checkpoint_request_id`, `$local.last_op` becomes the intern
 `local_target_op` exists, so older SDKs can keep using target-op based blocking without inventing a
 synthetic local bucket when there was no local target state.
 
-If the migrated target op is not concrete, for example max op id while local writes are pending,
-`last_requested_checkpoint_request_id` may be undefined. SDKs must detect that before calling
-`powersync_next_checkpoint_request_id()`, since that function would allocate `1` or another value
-lower than the legacy service-side counter. In that ambiguous state, create one old-style write
-checkpoint first, store the returned concrete id with `powersync_probe_local_target_op(id)`, and
-then switch to client-created checkpoint requests.
+If `local_target_op` is absent after migration, there is no local write gate waiting for a
+checkpoint. In that case, SDKs can start client-created checkpoint requests normally, even when
+`last_requested_checkpoint_request_id` is undefined and the first allocated id is `1`.
+
+The ambiguous case is a migrated `local_target_op` of max op id with no
+`last_requested_checkpoint_request_id`: local writes are pending, but there is no concrete request
+id to wait for yet. The max-op sentinel may also cover earlier pending uploads that were already
+associated with legacy service-created write checkpoints, so restarting the client-created counter
+from `1` could create a target lower than those existing associations. In that state, create one
+old-style write checkpoint first, store the returned concrete id with
+`powersync_probe_local_target_op(id)`, and then switch to client-created checkpoint requests.
 
 `powersync_control` returns a JSON-encoded array of instructions for the client:
 
