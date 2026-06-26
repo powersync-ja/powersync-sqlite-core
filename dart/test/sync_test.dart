@@ -154,7 +154,7 @@ void _syncTests<T>({
     }
   }
 
-  Object? probeLocalTargetOp([int? opId]) {
+  Object? probeLocalTargetOp([Object? opId]) {
     final [row] = db.select('SELECT powersync_probe_local_target_op(?)', [
       opId,
     ]);
@@ -418,18 +418,20 @@ void _syncTests<T>({
     expect(probeLocalTargetOp(), 2);
 
     invokeControl('start', null);
+  });
 
-    expect(db.select(r"SELECT target_op FROM ps_buckets WHERE name = '$local'"),
-        [
-          {'target_op': 2}
-        ]);
+  syncTest('accepts text checkpoint request ids for local target op', (_) {
+    expect(probeLocalTargetOp('1'), isNull);
+    expect(lastRequestedCheckpointRequestId(), 1);
+    expect(probeLocalTargetOp(), 1);
   });
 
   syncTest('does not store non-request target ops as checkpoint request id', (_) {
     expect(probeLocalTargetOp(0), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
+    expect(probeLocalTargetOp(), isNull);
 
-    expect(probeLocalTargetOp(9223372036854775807), 0);
+    expect(probeLocalTargetOp(9223372036854775807), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
     expect(probeLocalTargetOp(), 9223372036854775807);
   });
@@ -498,6 +500,9 @@ void _syncTests<T>({
       json.decode(row[0]),
       containsPair('last_synced_checkpoint_request_id', 1),
     );
+
+    expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
+        isEmpty);
   });
 
   test('clearing database clears sync status', () {

@@ -27,7 +27,13 @@ use super::{
 };
 
 const LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_requested_checkpoint_request_id";
+const LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY: &str = "last_seen_checkpoint_request_id";
 const LAST_SYNCED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_synced_checkpoint_request_id";
+
+// Tracks the local target used to block applying downloaded rows while local writes are
+// outstanding. When present, this is normally either the max-op sentinel for pending local writes or
+// a concrete checkpoint request id also stored in LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY.
+const LOCAL_TARGET_OP_KEY: &str = "local_target_op";
 
 /// An adapter for storing sync state.
 ///
@@ -267,10 +273,8 @@ WHERE bucket = ?1",
             }
         }
 
-        if let (None, Some(write_checkpoint)) = (&priority, &checkpoint.write_checkpoint) {
-            update_bucket.bind_int64(1, *write_checkpoint)?;
-            update_bucket.bind_text(2, "$local", sqlite::Destructor::STATIC)?;
-            update_bucket.exec()?;
+        if let (None, Some(checkpoint_request_id)) = (&priority, &checkpoint.write_checkpoint) {
+            self.persist_last_seen_checkpoint_request_id(*checkpoint_request_id)?;
         }
 
         #[derive(Serialize)]
@@ -507,29 +511,26 @@ WHERE bucket = ?1",
     }
 
     pub fn local_state(&self) -> Result<Option<LocalState>, PowerSyncError> {
-        let stmt = self
-            .db
-            .prepare_v2("SELECT target_op FROM ps_buckets WHERE name = ?")?;
-        stmt.bind_text(1, "$local", sqlite::Destructor::STATIC)?;
-
-        Ok(if stmt.step()? == ResultCode::ROW {
-            let target_op = stmt.column_int64(0);
-            Some(LocalState { target_op })
-        } else {
-            None
-        })
+        Ok(self
+            .read_i64_kv(LOCAL_TARGET_OP_KEY)?
+            .map(|target_op| LocalState { target_op }))
     }
 
-    /// Probes and optionally updates the local bucket target op for older services where the SDK
-    /// cannot create checkpoint requests explicitly.
+    /// Probes and optionally updates the local target op used to block applying downloaded rows
+    /// while local writes are outstanding.
+    ///
+    /// In the write-checkpoint flow, callers allocate a checkpoint request id, post it to the
+    /// service, and then update this from the max-op sentinel to the concrete checkpoint request id
+    /// once the request succeeds. This is also used for older services where the SDK cannot create
+    /// checkpoint requests explicitly.
     ///
     /// The target op can also be used internally as a sentinel value such as max op id while local
-    /// writes are pending, so it must not be interpreted as a checkpoint request id.
+    /// writes are pending, so it must not always be interpreted as a checkpoint request id.
     ///
     /// When the target op is a positive, non-sentinel checkpoint request id, it also updates
     /// `last_requested_checkpoint_request_id` so clients can migrate from the legacy target-op
-    /// flow to client-created checkpoint requests. `0` and sentinel values such as max op id must
-    /// not update the last requested id.
+    /// flow to client-created checkpoint requests. `0` clears the local target, and sentinel
+    /// values such as max op id must not update the last requested id.
     ///
     /// Returns the target op value from before this call. When `target_op` is `None`, this only
     /// reads the current value.
@@ -539,32 +540,45 @@ WHERE bucket = ?1",
     ) -> Result<Option<i64>, PowerSyncError> {
         let previous_target_op = self.local_state()?.map(|state| state.target_op);
 
+        // Return the previous op if no new target_op has been provided
         let Some(target_op) = target_op else {
             return Ok(previous_target_op);
         };
 
+        // Set the new target op
+        
         if target_op < 0 {
             return Err(PowerSyncError::argument_error(
                 "target op must be a non-negative integer",
             ));
         }
 
-        let stmt = self.db.prepare_v2(
-            "INSERT INTO ps_buckets(name, pending_delete, last_op, target_op)
-VALUES('$local', 1, 0, ?1)
-ON CONFLICT(name) DO UPDATE SET target_op = excluded.target_op",
-        )?;
-        stmt.bind_int64(1, target_op)?;
-        stmt.exec()?;
+        if target_op == 0 {
+            self.delete_kv(LOCAL_TARGET_OP_KEY)?;
+            return Ok(previous_target_op);
+        }
 
-        if target_op > 0 && target_op != i64::MAX {
+        self.write_i64_kv(LOCAL_TARGET_OP_KEY, target_op)?;
+
+        if target_op != i64::MAX {
             self.write_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY, target_op)?;
         }
 
         Ok(previous_target_op)
     }
 
-    /// Persists the checkpoint request id returned in a fully applied checkpoint.
+    /// Persists the checkpoint request id observed in a complete sync checkpoint.
+    ///
+    /// This replaces the legacy `$local.last_op` bookkeeping used to decide whether downloaded
+    /// data can be applied after local uploads complete.
+    pub fn persist_last_seen_checkpoint_request_id(
+        &self,
+        request_id: i64,
+    ) -> Result<(), PowerSyncError> {
+        self.write_i64_kv(LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY, request_id)
+    }
+
+    /// Persists the checkpoint request id that was applied locally.
     pub fn persist_last_synced_checkpoint_request_id(
         &self,
         request_id: i64,
@@ -574,6 +588,7 @@ ON CONFLICT(name) DO UPDATE SET target_op = excluded.target_op",
 
     /// Increments, persists and returns the next client-created checkpoint request id.
     pub fn next_checkpoint_request_id(&self) -> Result<i64, PowerSyncError> {
+        // Wonder, should this be a sequence instead
         let statement = self.db.prepare_v2(
             "INSERT INTO ps_kv(key, value)
 VALUES(?1, 1)
@@ -615,6 +630,13 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value ",
         )?;
         stmt.bind_text(1, key, sqlite::Destructor::STATIC)?;
         stmt.bind_int64(2, value)?;
+        stmt.exec()?;
+        Ok(())
+    }
+
+    fn delete_kv(&self, key: &'static str) -> Result<(), PowerSyncError> {
+        let stmt = self.db.prepare_v2("DELETE FROM ps_kv WHERE key = ?1")?;
+        stmt.bind_text(1, key, sqlite::Destructor::STATIC)?;
         stmt.exec()?;
         Ok(())
     }

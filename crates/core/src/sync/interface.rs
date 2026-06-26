@@ -373,15 +373,19 @@ fn powersync_probe_local_target_op_impl(
     }
 
     let arg = args[0];
-    let new_target_op = match arg.value_type() {
-        ColumnType::Null => None,
-        ColumnType::Integer => Some(arg.int64()),
-        _ => {
-            return Err(PowerSyncError::argument_error(
-                "target op must be an integer or null",
-            ));
-        }
-    };
+    let new_target_op =
+        match arg.value_type() {
+            ColumnType::Null => None,
+            ColumnType::Integer => Some(arg.int64()),
+            ColumnType::Text => Some(arg.text().parse::<i64>().map_err(|_| {
+                PowerSyncError::argument_error("target op must be an integer string")
+            })?),
+            _ => {
+                return Err(PowerSyncError::argument_error(
+                    "target op must be an integer, integer string, or null",
+                ));
+            }
+        };
 
     let db = ctx.db_handle();
     let db_state = unsafe { DatabaseState::from_context(&ctx) };

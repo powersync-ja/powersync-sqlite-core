@@ -247,7 +247,9 @@ impl SimpleCrudTransactionMode {
 
     fn record_local_write(&mut self, db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         if !self.had_writes {
-            db.exec_safe(formatcp!("INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID})"))?;
+            db.exec_safe(formatcp!(
+                "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('local_target_op', {MAX_OP_ID})"
+            ))?;
             self.had_writes = true;
         }
 
