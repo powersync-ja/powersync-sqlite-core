@@ -16,6 +16,7 @@ mod sync_status;
 
 pub use bucket_priority::BucketPriority;
 pub use checksum::Checksum;
+pub use sync_local::RawTableWithCachedStatements;
 
 use crate::state::DatabaseState;
 pub use streaming_sync::SyncClient;

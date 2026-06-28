@@ -433,13 +433,21 @@ struct ParsedSchemaTable<'a> {
     raw: Option<RawTableWithCachedStatements<'a>>,
 }
 
-struct RawTableWithCachedStatements<'a> {
+pub struct RawTableWithCachedStatements<'a> {
     definition: &'a RawTable,
     cached_put: Option<PreparedPendingStatement>,
     cached_delete: Option<PreparedPendingStatement>,
 }
 
 impl<'a> RawTableWithCachedStatements<'a> {
+    pub fn new(definition: &'a RawTable) -> Self {
+        Self {
+            definition,
+            cached_put: None,
+            cached_delete: None,
+        }
+    }
+
     fn prepare_lazily(
         db: *mut sqlite::sqlite3,
         slot: &mut Option<PreparedPendingStatement>,
@@ -454,7 +462,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
         })
     }
 
-    fn put_statement(
+    pub fn put_statement(
         &'_ mut self,
         db: *mut sqlite::sqlite3,
         schema_version: usize,
@@ -494,16 +502,12 @@ impl<'a> ParsedSchemaTable<'a> {
 
     pub fn raw(definition: &'a RawTable) -> Self {
         Self {
-            raw: Some(RawTableWithCachedStatements {
-                definition,
-                cached_put: None,
-                cached_delete: None,
-            }),
+            raw: Some(RawTableWithCachedStatements::new(definition)),
         }
     }
 }
 
-struct PreparedPendingStatement {
+pub struct PreparedPendingStatement {
     stmt: ManagedStmt,
     definition: Rc<PendingStatement>,
 }
