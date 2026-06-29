@@ -249,7 +249,7 @@ void main() {
           });
         });
 
-        test('updates local bucket and updated rows', () {
+        test('updates local target op and updated rows', () {
           db.execute(
               'INSERT INTO powersync_crud (op, id, type, data) VALUES (?, ?, ?, ?)',
               [
@@ -262,12 +262,17 @@ void main() {
           expect(db.select('SELECT * FROM ps_updated_rows'), [
             {'row_type': 'users', 'row_id': 'foo'}
           ]);
-          expect(db.select('SELECT * FROM ps_buckets'), [
-            allOf(
-              containsPair('name', r'$local'),
-              containsPair('target_op', 9223372036854775807),
-            )
-          ]);
+          expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
+              isEmpty);
+          expect(
+              db.select(
+                  "SELECT key, value FROM ps_kv WHERE key = 'local_target_op'"),
+              [
+                {
+                  'key': 'local_target_op',
+                  'value': 9223372036854775807,
+                }
+              ]);
         });
 
         test('does not require data', () {

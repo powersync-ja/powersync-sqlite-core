@@ -53,6 +53,8 @@ pub struct DownloadSyncStatus {
     /// received), information about how far the download has progressed.
     pub downloading: Option<SyncDownloadProgress>,
     pub streams: Vec<ActiveStreamSubscription>,
+    /// The latest checkpoint request id whose full checkpoint has been applied locally.
+    pub last_applied_checkpoint_request_id: Option<i64>,
 }
 
 impl DownloadSyncStatus {
@@ -117,9 +119,16 @@ impl DownloadSyncStatus {
         self.debug_assert_priority_status_is_sorted();
     }
 
-    pub fn applied_checkpoint(&mut self, now: TimestampMicros) {
+    pub fn applied_checkpoint(
+        &mut self,
+        now: TimestampMicros,
+        applied_checkpoint_request_id: Option<i64>,
+    ) {
         self.downloading = None;
         self.priority_status.clear();
+        if let Some(request_id) = applied_checkpoint_request_id {
+            self.last_applied_checkpoint_request_id = Some(request_id);
+        }
 
         self.priority_status.push(SyncPriorityStatus {
             priority: BucketPriority::SENTINEL,
@@ -137,6 +146,7 @@ impl Default for DownloadSyncStatus {
             downloading: None,
             priority_status: Vec::new(),
             streams: Vec::new(),
+            last_applied_checkpoint_request_id: None,
         }
     }
 }
@@ -180,12 +190,16 @@ impl Serialize for DownloadSyncStatus {
             }
         }
 
-        let mut serializer = serializer.serialize_struct("DownloadSyncStatus", 4)?;
+        let mut serializer = serializer.serialize_struct("DownloadSyncStatus", 6)?;
         serializer.serialize_field("connected", &self.connected)?;
         serializer.serialize_field("connecting", &self.connecting)?;
         serializer.serialize_field("priority_status", &self.priority_status)?;
         serializer.serialize_field("downloading", &self.downloading)?;
         serializer.serialize_field("streams", &SerializeStreamsWithProgress(self))?;
+        serializer.serialize_field(
+            "last_applied_checkpoint_request_id",
+            &self.last_applied_checkpoint_request_id,
+        )?;
 
         serializer.end()
     }

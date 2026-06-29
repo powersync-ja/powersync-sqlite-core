@@ -23,7 +23,10 @@ Object stream(String name, bool isDefault, {List<Object> errors = const []}) {
 }
 
 /// Creates a `checkpoint_complete` or `partial_checkpoint_complete` line.
-Object checkpointComplete({int? priority, String lastOpId = '1'}) {
+Object checkpointComplete({
+  int? priority,
+  String lastOpId = '1',
+}) {
   return {
     priority == null ? 'checkpoint_complete' : 'partial_checkpoint_complete': {
       'last_op_id': lastOpId,

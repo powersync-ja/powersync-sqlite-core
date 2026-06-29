@@ -37,6 +37,45 @@ The following commands are supported:
     If a new subscription is created, or when a subscription without a TTL has been removed, the client will ask to
     restart the connection.
 
+When uploads request a write checkpoint, SDKs should call
+`powersync_next_checkpoint_request_id()` inside a transaction to allocate the id to pass to the
+request-checkpoint API. In checkpoint-request mode, the SDK should first allocate the id, then post
+that id to the service, and then call `powersync_probe_local_target_op(id)` with the same id once
+the service accepts the request. This sets the local target op to the request op, replacing the
+pending-write sentinel with the concrete checkpoint request id that the sync stream can satisfy.
+`powersync_next_checkpoint_request_id()` only advances the request counter; it does not update the
+local target op used to block applying downloaded rows.
+
+`powersync_probe_local_target_op(op_id)` reads and optionally updates the internal local target op.
+The same function is used for compatibility when a new SDK is used with an older PowerSync service
+that does not yet support client-created checkpoint requests; after the service-side write
+checkpoint request returns a concrete id, call `powersync_probe_local_target_op(id)` with that id.
+Pass `NULL` to probe the current internal `$local` target op from `ps_kv` without updating it, or
+pass an integer or integer string to update that target op. In both cases it returns the value from
+before the call, or `NULL` if no value existed. Updating to a positive, non-sentinel target op also
+stores it as `last_requested_checkpoint_request_id` to support migrating to client-created
+checkpoint requests. Passing `0` clears the local target, and sentinel values such as max op id are
+not stored as requested checkpoint ids.
+
+Database migration v14 moves legacy `$local` checkpoint state into `ps_kv`: `$local.last_applied_op`
+becomes `last_applied_checkpoint_request_id`, `$local.last_op` becomes the internal
+`last_seen_checkpoint_request_id`, a concrete `$local.target_op` advances the request counter, and
+`$local.target_op` is stored as `local_target_op`. Downgrading restores a `$local` row only when
+`local_target_op` exists, so older SDKs can keep using target-op based blocking without inventing a
+synthetic local bucket when there was no local target state.
+
+If `local_target_op` is absent after migration, there is no local write gate waiting for a
+checkpoint. In that case, SDKs can start client-created checkpoint requests normally, even when
+`last_requested_checkpoint_request_id` is undefined and the first allocated id is `1`.
+
+The ambiguous case is a migrated `local_target_op` of max op id with no
+`last_requested_checkpoint_request_id`: local writes are pending, but there is no concrete request
+id to wait for yet. The max-op sentinel may also cover earlier pending uploads that were already
+associated with legacy service-created write checkpoints, so restarting the client-created counter
+from `1` could create a target lower than those existing associations. In that state, create one
+old-style write checkpoint first, store the returned concrete id with
+`powersync_probe_local_target_op(id)`, and then switch to client-created checkpoint requests.
+
 `powersync_control` returns a JSON-encoded array of instructions for the client:
 
 ```typescript
@@ -68,6 +107,8 @@ interface UpdateSyncStatus {
   connecting: boolean,
   priority_status: [],
   downloading: null | DownloadProgress,
+  streams: [],
+  last_applied_checkpoint_request_id: null | number,
 }
 
 // Instructs SDKs to refresh credentials from the backend connector.

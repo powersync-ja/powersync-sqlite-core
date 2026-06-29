@@ -67,7 +67,11 @@ impl<'a> SyncOperation<'a> {
         if needs_check {
             // language=SQLite
             let statement = self.db.prepare_v2(
-                "SELECT 1 FROM ps_buckets WHERE target_op > last_op AND name = '$local'",
+                "SELECT 1
+FROM ps_kv AS target
+LEFT JOIN ps_kv AS seen ON seen.key = 'last_seen_checkpoint_request_id'
+WHERE target.key = 'local_target_op'
+  AND CAST(target.value AS INTEGER) > COALESCE(CAST(seen.value AS INTEGER), 0)",
             )?;
 
             if statement.step()? == ResultCode::ROW {
