@@ -311,14 +311,13 @@ jobs:
             * [ ] Cocoapod released
 
             SQLite + powersync bundles:
-            * [ ] react-native-quick-sqlite: 
             * [ ] wa-sqlite build: 
             * [ ] sql.js dev adapter: 
 
             User-facing SDK updates:
             * [ ] powersync.dart (see instructions in [this file](https://github.com/powersync-ja/powersync.dart/blob/main/packages/powersync_core/lib/src/database/core_version.dart)):
-            * [ ] powersync-js (directly update node, op-sqlite and capacitor packages; upgrade dependencies on rnqs, wa-sqlite and sql-js in packages and demos):
+            * [ ] powersync-js (directly update node, react-native and capacitor packages; upgrade dependencies on wa-sqlite and sql-js in packages and demos):
             * [ ] kotlin (update in `libs.versions.toml`):
             * [ ] swift (update in `Package.swift`):
-            * [ ] native (update in `Cargo.toml``):
+            * [ ] native (update in `Cargo.toml`):
             * [ ] dotnet (update `Tools/Setup/Setup.cs`)
