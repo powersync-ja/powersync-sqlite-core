@@ -70,9 +70,11 @@ checkpoint ids.
 Database migration v14 moves legacy `$local` checkpoint state into `ps_kv`: `$local.last_applied_op`
 becomes `last_applied_checkpoint_request_id`, `$local.last_op` becomes the internal
 `last_seen_checkpoint_request_id`, a concrete `$local.target_op` advances the request counter, and
-`$local.target_op` is stored as `local_target_op`. Downgrading restores a `$local` row only when
-`local_target_op` exists, so older SDKs can keep using target-op based blocking without inventing a
-synthetic local bucket when there was no local target state.
+`$local.target_op` is stored as `local_target_op`. The migration then drops `ps_buckets.target_op`
+so older SDKs fail hard if they try to keep using the migrated database directly. Downgrading
+restores the column, and restores a `$local` row only when `local_target_op` exists, so older SDKs
+can keep using target-op based blocking without inventing a synthetic local bucket when there was no
+local target state.
 
 If `local_target_op` is absent after migration, there is no local write gate waiting for a
 checkpoint. In that case, SDKs can start client-created checkpoint requests normally, even when

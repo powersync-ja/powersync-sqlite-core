@@ -112,6 +112,17 @@ VALUES(1, '$local', 5, 6, 7, 0, 0, 1, 0, 0, 0);
         {'key': 'last_applied_checkpoint_request_id', 'value': 5},
         {'key': 'local_target_op', 'value': 7},
       ]));
+      expect(
+        db
+            .select("PRAGMA table_info('ps_buckets')")
+            .map((row) => row['name']),
+        isNot(contains('target_op')),
+      );
+      expect(
+        () => db.execute(
+            r"UPDATE ps_buckets SET target_op = 8 WHERE name = '$local'"),
+        throwsA(isA<SqliteException>()),
+      );
     });
 
     test('does not migrate last applied op as requested checkpoint id',
@@ -130,8 +141,8 @@ VALUES(1, '$local', 5, 6, 9223372036854775807, 0, 0, 1, 0, 0, 0);
       // checkpoint counter. The sentinel target is preserved for blocking, but is not concrete
       // enough to become last_requested_checkpoint_request_id.
       expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
-        {'key': 'last_seen_checkpoint_request_id', 'value': 6},
         {'key': 'last_applied_checkpoint_request_id', 'value': 5},
+        {'key': 'last_seen_checkpoint_request_id', 'value': 6},
         {'key': 'local_target_op', 'value': 9223372036854775807},
       ]);
     });

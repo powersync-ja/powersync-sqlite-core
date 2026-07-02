@@ -504,6 +504,8 @@ SELECT 'local_target_op', target_op
   FROM ps_buckets
  WHERE name = '$local'
    AND target_op > 0;
+
+ALTER TABLE ps_buckets DROP COLUMN target_op;
 ";
         local_db.exec_safe(up).into_db_result(local_db)?;
 
@@ -519,6 +521,47 @@ SELECT 'local_target_op', target_op
         // implementation also didn't have a `$local` bucket unless there was local target state to
         // track.
         const DOWN_STATEMENTS: &[&str] = &[
+            "ALTER TABLE ps_buckets RENAME TO ps_buckets_14",
+            "DROP INDEX ps_buckets_name",
+            "CREATE TABLE ps_buckets(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  last_applied_op INTEGER NOT NULL DEFAULT 0,
+  last_op INTEGER NOT NULL DEFAULT 0,
+  target_op INTEGER NOT NULL DEFAULT 0,
+  add_checksum INTEGER NOT NULL DEFAULT 0,
+  op_checksum INTEGER NOT NULL DEFAULT 0,
+  pending_delete INTEGER NOT NULL DEFAULT 0
+) STRICT",
+            "CREATE UNIQUE INDEX ps_buckets_name ON ps_buckets (name)",
+            "ALTER TABLE ps_buckets ADD COLUMN count_at_last INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE ps_buckets ADD COLUMN count_since_last INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE ps_buckets ADD COLUMN downloaded_size INTEGER NOT NULL DEFAULT 0",
+            "INSERT INTO ps_buckets(
+  id,
+  name,
+  last_applied_op,
+  last_op,
+  add_checksum,
+  op_checksum,
+  pending_delete,
+  count_at_last,
+  count_since_last,
+  downloaded_size
+)
+SELECT
+  id,
+  name,
+  last_applied_op,
+  last_op,
+  add_checksum,
+  op_checksum,
+  pending_delete,
+  count_at_last,
+  count_since_last,
+  downloaded_size
+FROM ps_buckets_14",
+            "DROP TABLE ps_buckets_14",
             "INSERT INTO ps_buckets(name, pending_delete, last_op, last_applied_op, target_op)
 SELECT '$local', 1, seen, applied, target
   FROM (

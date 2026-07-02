@@ -264,6 +264,10 @@ Migration v14 moves the old `$local` bucket state into `ps_kv`:
 - A concrete `$local.target_op` becomes `last_requested_checkpoint_request_id`.
 - Any positive `$local.target_op`, including `MAX_OP_ID`, becomes `local_target_op`.
 
+After copying this state, the migration drops `ps_buckets.target_op`. This intentionally makes older
+SDKs fail with a hard SQLite error if they try to keep using a migrated database without first
+downgrading.
+
 An absent `local_target_op` is safe: there is no local write gate waiting for a checkpoint, so an
 SDK can start client-created checkpoint requests from `1`. The sync stream will only report that
 request id after the service has accepted and reached it.
@@ -278,7 +282,8 @@ gate too early. In that state, the SDK should create one legacy write checkpoint
 concrete id with `powersync_control('local_target_op', id)`, and then switch to client-created
 checkpoint requests.
 
-The down migration rebuilds a `$local` row only when `local_target_op` exists, using:
+The down migration restores `ps_buckets.target_op` and rebuilds a `$local` row only when
+`local_target_op` exists, using:
 
 - `last_seen_checkpoint_request_id` as `$local.last_op`
 - `last_applied_checkpoint_request_id` as `$local.last_applied_op`
