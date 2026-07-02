@@ -970,15 +970,17 @@ impl StreamingSyncIteration {
         applied_checkpoint_request_id: Option<i64>,
     ) -> Result<(), PowerSyncError> {
         if let Some(request_id) = applied_checkpoint_request_id {
-            // Persisted so it can be restored into sync status when initializing a new client.
             self.adapter
                 .persist_last_applied_checkpoint_request_id(request_id)?;
+            event
+                .instructions
+                .push(Instruction::CheckpointRequestApplied { request_id });
         }
 
         event.instructions.push(Instruction::DidCompleteSync {});
 
         self.status.update(
-            |status| status.applied_checkpoint(timestamp, applied_checkpoint_request_id),
+            |status| status.applied_checkpoint(timestamp),
             &mut event.instructions,
         );
 

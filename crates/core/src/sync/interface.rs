@@ -151,6 +151,8 @@ pub enum Instruction {
     },
     /// Return a newly allocated checkpoint request id to the SDK.
     CheckpointRequestId { request_id: i64 },
+    /// Notify the SDK that a checkpoint request id has been applied locally.
+    CheckpointRequestApplied { request_id: i64 },
     /// Return the local target op value observed before an optional update.
     LocalTargetOp { target_op: Option<i64> },
     // These are defined like this because deserializers in Kotlin can't support either an

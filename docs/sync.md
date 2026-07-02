@@ -96,6 +96,7 @@ type Instruction = { LogLine: LogLine }
    | { EstablishSyncStream: EstablishSyncStream }
    | { FetchCredentials: FetchCredentials }
    | { CheckpointRequestId: { request_id: number } }
+   | { CheckpointRequestApplied: { request_id: number } }
    | { LocalTargetOp: { target_op: null | number } }
    // Close a connection previously started after EstablishSyncStream
    | { CloseSyncStream: { hide_disconnect: boolean } }
@@ -128,7 +129,12 @@ interface UpdateSyncStatus {
   priority_status: [],
   downloading: null | DownloadProgress,
   streams: [],
-  last_applied_checkpoint_request_id: null | number,
+}
+
+// Emitted when a full checkpoint with a write_checkpoint has been applied locally.
+// SDKs can use this to resolve pending CheckpointRequest waiters.
+interface CheckpointRequestApplied {
+  request_id: number,
 }
 
 // Instructs SDKs to refresh credentials from the backend connector.

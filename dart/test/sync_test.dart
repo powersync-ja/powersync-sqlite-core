@@ -65,8 +65,7 @@ void _syncTests<T>({
 
   bool establishesSyncStream(List<Object?> instructions) {
     return instructions.any((instruction) =>
-        instruction is Map &&
-        instruction.containsKey('EstablishSyncStream'));
+        instruction is Map && instruction.containsKey('EstablishSyncStream'));
   }
 
   List<Object?> invokeControl(String operation, Object? data) {
@@ -154,6 +153,12 @@ void _syncTests<T>({
   Object? lastRequestedCheckpointRequestId() {
     final rows = db.select(
         "SELECT value FROM ps_kv WHERE key = 'last_requested_checkpoint_request_id'");
+    return rows.isEmpty ? null : rows.single.columnAt(0);
+  }
+
+  Object? lastAppliedCheckpointRequestId() {
+    final rows = db.select(
+        "SELECT value FROM ps_kv WHERE key = 'last_applied_checkpoint_request_id'");
     return rows.isEmpty ? null : rows.single.columnAt(0);
   }
 
@@ -363,7 +368,15 @@ void _syncTests<T>({
     invokeControl('start', null);
 
     pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
-    pushCheckpointComplete();
+    expect(
+      pushCheckpointComplete(),
+      contains(
+        containsPair(
+          'CheckpointRequestApplied',
+          {'request_id': 1},
+        ),
+      ),
+    );
 
     controller.elapse(Duration(minutes: 10));
     pushCheckpoint(buckets: priorityBuckets);
@@ -378,23 +391,20 @@ void _syncTests<T>({
             'UpdateSyncStatus',
             containsPair(
               'status',
-              allOf(
-                containsPair('last_applied_checkpoint_request_id', 1),
-                containsPair(
-                  'priority_status',
-                  [
-                    {
-                      'priority': 2,
-                      'last_synced_at': timestamp(),
-                      'has_synced': true
-                    },
-                    {
-                      'priority': 2147483647,
-                      'last_synced_at': timestamp(plusMinutes: -10),
-                      'has_synced': true
-                    },
-                  ],
-                ),
+              containsPair(
+                'priority_status',
+                [
+                  {
+                    'priority': 2,
+                    'last_synced_at': timestamp(),
+                    'has_synced': true
+                  },
+                  {
+                    'priority': 2147483647,
+                    'last_synced_at': timestamp(plusMinutes: -10),
+                    'has_synced': true
+                  },
+                ],
               ),
             )),
       ),
@@ -404,7 +414,6 @@ void _syncTests<T>({
     expect(json.decode(row[0]), {
       'connected': false,
       'connecting': false,
-      'last_applied_checkpoint_request_id': 1,
       'priority_status': [
         {'priority': 2, 'last_synced_at': timestamp(), 'has_synced': true},
         {
@@ -448,7 +457,8 @@ void _syncTests<T>({
     expect(lastRequestedCheckpointRequestId(), 101);
   });
 
-  syncTest('requires checkpoint request state before allocating checkpoint ids', (_) {
+  syncTest('requires checkpoint request state before allocating checkpoint ids',
+      (_) {
     invokeControlRaw('start', null);
 
     expect(
@@ -478,7 +488,8 @@ void _syncTests<T>({
     expect(probeLocalTargetOp(), 1);
   });
 
-  syncTest('does not store non-request target ops as checkpoint request id', (_) {
+  syncTest('does not store non-request target ops as checkpoint request id',
+      (_) {
     expect(probeLocalTargetOp(0), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
     expect(probeLocalTargetOp(), isNull);
@@ -491,13 +502,13 @@ void _syncTests<T>({
   syncTest('does not persist placeholder checkpoint request id', (_) {
     db.execute("insert into items (id, col) values ('local', 'data');");
 
-    invokeControl('start', null);
+    invokeControlRaw('start', null);
 
     expect(lastRequestedCheckpointRequestId(), isNull);
   });
 
   syncTest(
-    'does not mark checkpoint request id as synced for partial checkpoint',
+    'does not emit applied checkpoint request id for partial checkpoint',
     (_) {
       invokeControl('start', null);
 
@@ -506,55 +517,51 @@ void _syncTests<T>({
 
       expect(
         instructions,
-        contains(
-          containsPair(
-            'UpdateSyncStatus',
-            containsPair(
-              'status',
-              containsPair('last_applied_checkpoint_request_id', null),
-            ),
-          ),
-        ),
+        isNot(contains(containsPair('CheckpointRequestApplied', anything))),
       );
+      expect(lastAppliedCheckpointRequestId(), isNull);
 
       final [row] = db.select('select powersync_offline_sync_status();');
       expect(
         json.decode(row[0]),
-        containsPair('last_applied_checkpoint_request_id', null),
+        isNot(containsPair('last_applied_checkpoint_request_id', anything)),
       );
     },
   );
 
-  syncTest('keeps synced checkpoint request id across normal checkpoints', (_) {
+  syncTest('emits applied checkpoint request id for full checkpoint', (_) {
     invokeControl('start', null);
 
     pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
-    pushCheckpointComplete();
+    final appliedInstructions = pushCheckpointComplete();
+
+    expect(
+      appliedInstructions,
+      contains(
+        containsPair(
+          'CheckpointRequestApplied',
+          {'request_id': 1},
+        ),
+      ),
+    );
+    expect(lastAppliedCheckpointRequestId(), 1);
 
     pushCheckpoint(buckets: priorityBuckets);
     final instructions = pushCheckpointComplete();
 
     expect(
       instructions,
-      contains(
-        containsPair(
-          'UpdateSyncStatus',
-          containsPair(
-            'status',
-            containsPair('last_applied_checkpoint_request_id', 1),
-          ),
-        ),
-      ),
+      isNot(contains(containsPair('CheckpointRequestApplied', anything))),
     );
 
     final [row] = db.select('select powersync_offline_sync_status();');
     expect(
       json.decode(row[0]),
-      containsPair('last_applied_checkpoint_request_id', 1),
+      isNot(containsPair('last_applied_checkpoint_request_id', anything)),
     );
 
-    expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
-        isEmpty);
+    expect(
+        db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"), isEmpty);
   });
 
   test('clearing database clears sync status', () {
@@ -591,15 +598,18 @@ void _syncTests<T>({
     final request = invokeControl('start', null);
     expect(
       request,
-      contains(containsPair(
-        'EstablishSyncStream',
-        {
-          // Should request state from before clear
-          'request': containsPair('buckets', [
-            {'name': 'a', 'after': '1'}
-          ]),
-        },
-      )),
+      contains(
+        containsPair(
+          'EstablishSyncStream',
+          containsPair(
+            // Should request state from before clear
+            'request',
+            containsPair('buckets', [
+              {'name': 'a', 'after': '1'}
+            ]),
+          ),
+        ),
+      ),
     );
 
     pushCheckpoint(buckets: [bucketDescription('a', count: 1)]);

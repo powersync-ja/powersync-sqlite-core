@@ -211,11 +211,12 @@ on completed_upload:
 ```
 
 After a full checkpoint applies, core stores the applied checkpoint request id as
-`last_applied_checkpoint_request_id` and emits it in sync status.
+`last_applied_checkpoint_request_id` and emits a `CheckpointRequestApplied` instruction.
 
 ```text
 after full checkpoint apply:
     ps_kv['last_applied_checkpoint_request_id'] = checkpoint.write_checkpoint
+    emit CheckpointRequestApplied { request_id: checkpoint.write_checkpoint }
 ```
 
 ## Explicit checkpoint requests
@@ -225,15 +226,14 @@ the local database has caught up to the service. This creates a checkpoint reque
 connected sync client and returns a `CheckpointRequest`.
 
 This explicit API does not update `local_target_op`: it is a wait marker, not a local upload gate.
-The returned object waits until sync status reports `last_applied_checkpoint_request_id >= requestId`.
+The returned object waits until core emits `CheckpointRequestApplied` for an id greater than or
+equal to the requested id.
 
 ```text
-isSynced = status.lastAppliedCheckpointRequestId >= requestId
-
 waitForSync() {
-    for status in syncStatusUpdates {
-        return when status.lastAppliedCheckpointRequestId >= requestId
-        throw if status reports a sync error
+    for instruction in syncInstructions {
+        return when instruction.CheckpointRequestApplied.request_id >= requestId
+        throw if sync status reports a sync error
     }
 }
 ```
@@ -253,7 +253,8 @@ request could not be delivered to the service or observed in the sync stream.
 - `last_seen_checkpoint_request_id`: The latest full checkpoint `write_checkpoint` observed and
   validated from the sync stream.
 - `last_applied_checkpoint_request_id`: The latest full checkpoint `write_checkpoint` that has been
-  applied locally. SDKs expose this in sync status and use it to resolve `CheckpointRequest` waits.
+  applied locally. Core persists this for migration/downgrade state; SDKs should use
+  `CheckpointRequestApplied` instructions to resolve `CheckpointRequest` waits.
 
 ## Migration from `$local`
 

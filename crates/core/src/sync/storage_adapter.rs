@@ -121,9 +121,6 @@ impl StorageAdapter {
             items
         };
 
-        let last_applied_checkpoint_request_id =
-            self.read_i64_kv(LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY)?;
-
         let mut streams = Vec::new();
         self.iterate_local_subscriptions(|sub| {
             streams.push(ActiveStreamSubscription::from_local(&sub));
@@ -135,7 +132,6 @@ impl StorageAdapter {
             priority_status: priority_items,
             downloading: None,
             streams,
-            last_applied_checkpoint_request_id,
         })
     }
 

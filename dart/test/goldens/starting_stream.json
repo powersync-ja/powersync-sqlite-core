@@ -14,8 +14,7 @@
             "connecting": true,
             "priority_status": [],
             "downloading": null,
-            "streams": [],
-            "last_applied_checkpoint_request_id": null
+            "streams": []
           }
         }
       },
