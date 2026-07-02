@@ -468,18 +468,34 @@ DROP TABLE ps_sync_state_old;
         // `$local.last_op` represented the latest legacy write checkpoint seen in the sync stream,
         // so it becomes the last seen checkpoint request.
         //
-        // `$local.target_op` can either be a concrete checkpoint request id or a sentinel such as
-        // i64::MAX while local writes are pending. Store it separately as `local_target_op`, but
-        // only treat concrete values as requested checkpoint ids. We intentionally don't seed
-        // `last_requested_checkpoint_request_id` from `$local.last_applied_op` because that is an
-        // applied value, not necessarily the current requested target.
+        // `$local.target_op` can either be a concrete legacy write checkpoint id or a sentinel such
+        // as i64::MAX while local writes are pending. Store it separately as `local_target_op`.
+        // Seeding `last_requested_checkpoint_request_id` from a concrete target would be possible,
+        // but should be redundant because SDKs reconcile the request counter with service state on
+        // connect before advancing it through `next_checkpoint_request_id`.
         //
         // An absent local target can safely start client-created checkpoint requests from 1. The
         // ambiguous case is an existing max-op local target without a concrete requested id:
         // pending local writes may already be associated with legacy service-created write
         // checkpoints, so SDKs should bridge once through the legacy endpoint before starting
         // client-created checkpoint requests.
+        //
+        // This migration can also run on a database that was previously on version 14 and then
+        // downgraded: the down migration rebuilds the `$local` row from ps_kv but keeps the ps_kv
+        // keys around, and an older SDK may have advanced `$local` since. Clear the keys first so
+        // the `$local` row is the source of truth and the inserts below can't conflict.
+        //
+        // After copying, the `$local` row is deleted: version 14 tracks this state exclusively in
+        // ps_kv, so ps_buckets only contains real sync buckets. The down migration recreates the
+        // row from ps_kv when needed.
         let up = "\
+DELETE FROM ps_kv
+ WHERE key IN (
+   'last_applied_checkpoint_request_id',
+   'last_seen_checkpoint_request_id',
+   'local_target_op'
+ );
+
 INSERT INTO ps_kv(key, value)
 SELECT 'last_applied_checkpoint_request_id', last_applied_op
   FROM ps_buckets
@@ -493,17 +509,12 @@ SELECT 'last_seen_checkpoint_request_id', last_op
    AND last_op > 0;
 
 INSERT INTO ps_kv(key, value)
-SELECT 'last_requested_checkpoint_request_id', target_op
-  FROM ps_buckets
- WHERE name = '$local'
-   AND target_op > 0
-   AND target_op != 9223372036854775807;
-
-INSERT INTO ps_kv(key, value)
 SELECT 'local_target_op', target_op
   FROM ps_buckets
  WHERE name = '$local'
    AND target_op > 0;
+
+DELETE FROM ps_buckets WHERE name = '$local';
 
 ALTER TABLE ps_buckets DROP COLUMN target_op;
 ";

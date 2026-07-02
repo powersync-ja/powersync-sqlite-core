@@ -250,6 +250,14 @@ void main() {
         });
 
         test('updates local target op and updated rows', () {
+          // Stale high-water marks (e.g. migrated legacy write checkpoints) must be cleared by a
+          // local write, so they can't open the apply gate for a smaller new target id.
+          db.execute('''
+INSERT INTO ps_kv(key, value) VALUES
+  ('last_seen_checkpoint_request_id', 6),
+  ('last_applied_checkpoint_request_id', 5);
+''');
+
           db.execute(
               'INSERT INTO powersync_crud (op, id, type, data) VALUES (?, ?, ?, ?)',
               [
@@ -266,7 +274,7 @@ void main() {
               isEmpty);
           expect(
               db.select(
-                  "SELECT key, value FROM ps_kv WHERE key = 'local_target_op'"),
+                  "SELECT key, value FROM ps_kv WHERE key LIKE '%checkpoint_request_id' OR key = 'local_target_op'"),
               [
                 {
                   'key': 'local_target_op',

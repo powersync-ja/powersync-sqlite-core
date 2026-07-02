@@ -523,13 +523,15 @@ WHERE bucket = ?1",
     /// The target op can also be used internally as a sentinel value such as max op id while local
     /// writes are pending, so it must not always be interpreted as a checkpoint request id.
     ///
-    /// When the target op is a positive, non-sentinel checkpoint request id, it also updates
-    /// `last_requested_checkpoint_request_id` so clients can migrate from the legacy target-op
-    /// flow to client-created checkpoint requests. `0` clears the local target, and sentinel
-    /// values such as max op id must not update the last requested id.
+    /// This only updates the apply gate. It does not allocate, seed or overwrite
+    /// `last_requested_checkpoint_request_id`, which is managed by `seed_checkpoint_request_id` and
+    /// `next_checkpoint_request_id`.
     ///
     /// Returns the target op value from before this call. When `target_op` is `None`, this only
     /// reads the current value.
+    ///
+    /// Negative values are rejected when parsing the `powersync_control` payload, before this is
+    /// called.
     pub fn probe_local_target_op(
         &self,
         target_op: Option<i64>,
@@ -540,24 +542,12 @@ WHERE bucket = ?1",
             return Ok(previous_target_op);
         };
 
-        if target_op < 0 {
-            return Err(PowerSyncError::argument_error(
-                "target op must be a non-negative integer",
-            ));
-        }
-
         if target_op == 0 {
             self.delete_kv(LOCAL_TARGET_OP_KEY)?;
             return Ok(previous_target_op);
         }
 
         self.write_i64_kv(LOCAL_TARGET_OP_KEY, target_op)?;
-
-        // Concrete target ops also seed the request counter for clients migrating from legacy
-        // service-created write checkpoints to client-created checkpoint requests.
-        if target_op != i64::MAX {
-            self.write_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY, target_op)?;
-        }
 
         Ok(previous_target_op)
     }

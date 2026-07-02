@@ -247,8 +247,15 @@ impl SimpleCrudTransactionMode {
 
     fn record_local_write(&mut self, db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         if !self.had_writes {
+            // Also clear the seen/applied high-water marks: checkpoint request ids observed before
+            // this write can't acknowledge it, and they may come from an incompatible id namespace
+            // (legacy write checkpoints migrated by v14, or state from before a counter restart).
+            // Keeping them around could open the apply gate for a newly allocated target id that
+            // compares below a stale seen value. The legacy `$local` bookkeeping had the same
+            // behavior by resetting the entire row on local writes.
             db.exec_safe(formatcp!(
-                "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('local_target_op', {MAX_OP_ID})"
+                "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('local_target_op', {MAX_OP_ID});
+DELETE FROM ps_kv WHERE key IN ('last_seen_checkpoint_request_id', 'last_applied_checkpoint_request_id')"
             ))?;
             self.had_writes = true;
         }
