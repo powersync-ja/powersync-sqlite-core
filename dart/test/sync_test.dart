@@ -63,13 +63,29 @@ void _syncTests<T>({
     return jsonDecode(row.columnAt(0));
   }
 
+  bool establishesSyncStream(List<Object?> instructions) {
+    return instructions.any((instruction) =>
+        instruction is Map &&
+        instruction.containsKey('EstablishSyncStream'));
+  }
+
   List<Object?> invokeControl(String operation, Object? data) {
+    List<Object?> result;
     if (matcher.enabled) {
       // Trace through golden matcher
-      return matcher.invoke(operation, data);
+      result = matcher.invoke(operation, data);
     } else {
-      return invokeControlRaw(operation, data);
+      result = invokeControlRaw(operation, data);
     }
+
+    if (operation == 'start' && establishesSyncStream(result)) {
+      final seedResult = matcher.enabled
+          ? matcher.invoke('seed_checkpoint_request_id', null)
+          : invokeControlRaw('seed_checkpoint_request_id', null);
+      return [...result, ...seedResult];
+    }
+
+    return result;
   }
 
   setUp(() async {
@@ -141,24 +157,23 @@ void _syncTests<T>({
     return rows.isEmpty ? null : rows.single.columnAt(0);
   }
 
-  int nextCheckpointRequestId() {
-    db.execute('begin');
+  Object? streamLastCheckpointRequestId(List<Object?> instructions) {
+    final instruction = instructions.whereType<Map>().firstWhere(
+        (instruction) => instruction.containsKey('EstablishSyncStream'));
+    final establish = instruction['EstablishSyncStream'] as Map;
+    return establish['last_checkpoint_request_id'];
+  }
 
-    try {
-      final [row] = db.select('SELECT powersync_next_checkpoint_request_id()');
-      db.execute('commit');
-      return row.columnAt(0) as int;
-    } catch (e) {
-      db.execute('rollback');
-      rethrow;
-    }
+  int nextCheckpointRequestId() {
+    final [instruction] = invokeControl('next_checkpoint_request_id', null);
+    final data = (instruction as Map)['CheckpointRequestId'] as Map;
+    return data['request_id'] as int;
   }
 
   Object? probeLocalTargetOp([Object? opId]) {
-    final [row] = db.select('SELECT powersync_probe_local_target_op(?)', [
-      opId,
-    ]);
-    return row.columnAt(0);
+    final [instruction] = invokeControl('local_target_op', opId);
+    final data = (instruction as Map)['LocalTargetOp'] as Map;
+    return data['target_op'];
   }
 
   ResultSet fetchRows() {
@@ -206,12 +221,15 @@ void _syncTests<T>({
   });
 
   syncTest('app_metadata is passed to EstablishSyncStream request', (_) {
-    final startInstructions = invokeControlRaw(
-      'start',
-      json.encode({
-        'app_metadata': {'key1': 'value1', 'key2': 'value2'}
-      }),
-    );
+    final startInstructions = [
+      ...invokeControlRaw(
+        'start',
+        json.encode({
+          'app_metadata': {'key1': 'value1', 'key2': 'value2'}
+        }),
+      ),
+      ...invokeControlRaw('seed_checkpoint_request_id', null),
+    ];
 
     expect(
       startInstructions,
@@ -401,6 +419,8 @@ void _syncTests<T>({
   });
 
   syncTest('allocates requested checkpoint request ids', (_) {
+    invokeControl('start', null);
+
     expect(nextCheckpointRequestId(), 1);
     expect(lastRequestedCheckpointRequestId(), 1);
 
@@ -408,16 +428,48 @@ void _syncTests<T>({
     expect(lastRequestedCheckpointRequestId(), 2);
   });
 
-  syncTest('probes and updates local target op with checkpoint request id', (_) {
+  syncTest('seeds requested checkpoint request ids from service state', (_) {
+    final startInstructions = invokeControlRaw('start', null);
+    expect(streamLastCheckpointRequestId(startInstructions), isNull);
+    invokeControlRaw('seed_checkpoint_request_id', 41);
+
+    expect(nextCheckpointRequestId(), 42);
+    expect(lastRequestedCheckpointRequestId(), 42);
+
+    final restartInstructions = invokeControlRaw('start', null);
+    expect(
+      restartInstructions,
+      contains(containsPair('EstablishSyncStream', anything)),
+    );
+    expect(streamLastCheckpointRequestId(restartInstructions), 42);
+    expect(invokeControlRaw('seed_checkpoint_request_id', 100), isEmpty);
+
+    expect(nextCheckpointRequestId(), 101);
+    expect(lastRequestedCheckpointRequestId(), 101);
+  });
+
+  syncTest('requires checkpoint request state before allocating checkpoint ids', (_) {
+    invokeControlRaw('start', null);
+
+    expect(
+      () => invokeControlRaw('next_checkpoint_request_id', null),
+      throwsA(isSqliteException(
+        21,
+        contains('Checkpoint request state has not been seeded'),
+      )),
+    );
+    expect(probeLocalTargetOp(), isNull);
+  });
+
+  syncTest('probes and updates local target op without sync iteration', (_) {
     expect(probeLocalTargetOp(), isNull);
     expect(probeLocalTargetOp(1), isNull);
     expect(lastRequestedCheckpointRequestId(), 1);
     expect(probeLocalTargetOp(), 1);
+
     expect(probeLocalTargetOp(2), 1);
     expect(lastRequestedCheckpointRequestId(), 2);
     expect(probeLocalTargetOp(), 2);
-
-    invokeControl('start', null);
   });
 
   syncTest('accepts text checkpoint request ids for local target op', (_) {

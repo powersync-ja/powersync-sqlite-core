@@ -95,27 +95,43 @@ impl SyncClient {
             SyncControlRequest::SyncEvent(sync_event) => {
                 let mut active = ActiveEvent::new(sync_event);
 
-                let ClientState::IterationActive(handle) = &mut self.state else {
-                    return Err(PowerSyncError::state_error("No iteration is active"));
+                let run_result = {
+                    let ClientState::IterationActive(handle) = &mut self.state else {
+                        return Err(PowerSyncError::state_error("No iteration is active"));
+                    };
+
+                    handle.run(&mut active)
                 };
 
-                match handle.run(&mut active) {
+                match run_result {
                     Err(e) => {
                         self.state = ClientState::Idle;
                         return Err(e);
                     }
-                    Ok(done) => {
-                        if done {
-                            self.state = ClientState::Idle;
-                        }
+                    Ok(true) => {
+                        self.state = ClientState::Idle;
                     }
-                };
+                    Ok(false) => {}
+                }
 
                 if let Some(recoverable) = active.recoverable_error.take() {
                     Err(recoverable)
                 } else {
                     Ok(active.instructions)
                 }
+            }
+            SyncControlRequest::NextCheckpointRequestId => {
+                if !self.has_sync_iteration() {
+                    return Err(PowerSyncError::state_error("No iteration is active"));
+                }
+                if !self.adapter.has_checkpoint_request_id()? {
+                    return Err(PowerSyncError::state_error(
+                        "Checkpoint request state has not been seeded",
+                    ));
+                }
+
+                let request_id = self.adapter.next_checkpoint_request_id()?;
+                Ok(alloc::vec![Instruction::CheckpointRequestId { request_id }])
             }
             SyncControlRequest::StopSyncStream => self.state.tear_down(),
         }
@@ -200,18 +216,18 @@ impl SyncIterationHandle {
         };
         let mut context = Context::from_waker(&waker);
 
-        Ok(
-            if let Poll::Ready(result) = self.future.poll(&mut context) {
-                let close = result?;
+        let done = if let Poll::Ready(result) = self.future.poll(&mut context) {
+            let close = result?;
 
-                active
-                    .instructions
-                    .push(Instruction::CloseSyncStream(close));
-                true
-            } else {
-                false
-            },
-        )
+            active
+                .instructions
+                .push(Instruction::CloseSyncStream(close));
+            true
+        } else {
+            false
+        };
+
+        Ok(done)
     }
 }
 
@@ -557,6 +573,10 @@ impl StreamingSyncIteration {
                         .update(|s| s.disconnect(), &mut event.instructions);
                     break false;
                 }
+                SyncEvent::SeedCheckpointRequestId { request_id } => {
+                    self.adapter.seed_checkpoint_request_id(request_id)?;
+                    continue;
+                }
                 SyncEvent::TextLine { data } => SyncLineWithSource::from_text(data)?,
                 SyncEvent::BinaryLine { data } => SyncLineWithSource::from_binary(data)?,
                 SyncEvent::UploadFinished => {
@@ -897,11 +917,11 @@ impl StreamingSyncIteration {
     /// subscriptions, used to associate [BucketSubscriptionReason::DerivedFromExplicitSubscription].
     async fn prepare_request(&mut self) -> Result<BeforeCheckpoint, PowerSyncError> {
         let event = Self::receive_event().await;
-        let SyncEvent::Initialize = event.event else {
+        if !matches!(&event.event, SyncEvent::Initialize) {
             return Err(PowerSyncError::argument_error(
                 "first event must initialize",
             ));
-        };
+        }
 
         let offline_state = self.adapter.offline_sync_state()?;
         self.status.update(
@@ -933,9 +953,10 @@ impl StreamingSyncIteration {
             app_metadata: self.options.app_metadata.take(),
         };
 
-        event
-            .instructions
-            .push(Instruction::EstablishSyncStream { request });
+        event.instructions.push(Instruction::EstablishSyncStream {
+            request,
+            last_checkpoint_request_id: self.adapter.last_checkpoint_request_id()?,
+        });
         Ok(BeforeCheckpoint {
             local_buckets: local_bucket_names,
             stream_subscriptions: stream_subscriptions,

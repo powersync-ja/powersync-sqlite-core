@@ -540,7 +540,6 @@ WHERE bucket = ?1",
     ) -> Result<Option<i64>, PowerSyncError> {
         let previous_target_op = self.local_state()?.map(|state| state.target_op);
 
-        // Return the previous op if no new target_op has been provided
         let Some(target_op) = target_op else {
             return Ok(previous_target_op);
         };
@@ -558,6 +557,8 @@ WHERE bucket = ?1",
 
         self.write_i64_kv(LOCAL_TARGET_OP_KEY, target_op)?;
 
+        // Concrete target ops also seed the request counter for clients migrating from legacy
+        // service-created write checkpoints to client-created checkpoint requests.
         if target_op != i64::MAX {
             self.write_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY, target_op)?;
         }
@@ -603,6 +604,39 @@ RETURNING value",
         } else {
             Err(PowerSyncError::unknown_internal())
         }
+    }
+
+    /// Returns whether the local checkpoint request counter has been initialized.
+    pub fn has_checkpoint_request_id(&self) -> Result<bool, PowerSyncError> {
+        Ok(self.last_checkpoint_request_id()?.is_some())
+    }
+
+    /// Returns the latest checkpoint request id known locally.
+    pub fn last_checkpoint_request_id(&self) -> Result<Option<i64>, PowerSyncError> {
+        self.read_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY)
+    }
+
+    /// Seeds the local checkpoint request counter from service state without moving it backwards.
+    ///
+    /// A null service value means the service has no record for this client yet. Store zero in
+    /// that case so the first local allocation returns one while still marking the state as seeded.
+    pub fn seed_checkpoint_request_id(
+        &self,
+        request_id: Option<i64>,
+    ) -> Result<(), PowerSyncError> {
+        let stmt = self.db.prepare_v2(
+            "INSERT INTO ps_kv(key, value)
+VALUES(?1, ?2)
+ON CONFLICT(key) DO UPDATE SET value = max(CAST(value AS INTEGER), excluded.value)",
+        )?;
+        stmt.bind_text(
+            1,
+            LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY,
+            sqlite::Destructor::STATIC,
+        )?;
+        stmt.bind_int64(2, request_id.unwrap_or(0))?;
+        stmt.exec()?;
+        Ok(())
     }
 
     fn read_i64_kv(&self, key: &'static str) -> Result<Option<i64>, PowerSyncError> {

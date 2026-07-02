@@ -10,7 +10,7 @@ The function should always be called in a transaction.
 The following commands are supported:
 
 1. `start`: Payload is a JSON-encoded object. This requests the client to start a sync iteration.
-   The payload can either be `null` or an JSON object with:
+   The payload can either be `null` or a JSON object with:
     - An optional `parameters: Record<string, any>` entry, specifying parameters to include in the request
       to the sync service.
     - A `schema: { tables: Table[], raw_tables: RawTable[] }` entry specifying the schema of the database to
@@ -26,36 +26,46 @@ The following commands are supported:
    - The client will emit an instruction to stop the current stream, clients should restart by sending another `start`
      command.
 6. `completed_upload`: Notify the sync implementation that all local changes have been uploaded.
-7. `update_subscriptions`: Notify the sync implementation that subscriptions which are currently active in the app
-   have changed. Depending on the TTL of caches, this may cause it to request a reconnect.
+7. `update_subscriptions`: Payload is a JSON-encoded array of
+   `{name: string, params: Record<string, any>}`. Notify the sync implementation that subscriptions
+   which are currently active in the app have changed. Depending on the TTL of caches, this may
+   cause it to request a reconnect.
 8. `connection`: Notify the sync implementation about the connection being opened (second parameter should be `established`)
    or the HTTP stream closing (second parameter should be `end`).
    This is used to set `connected` to true in the sync status without waiting for the first sync line.
-9. `subscriptions`: Store a new sync steam subscription in the database or remove it.
+9. `subscriptions`: Store a new sync stream subscription in the database or remove it.
    This command can run outside of a sync iteration and does not affect it.
-10. `update_subscriptions`: Second parameter is a JSON-encoded array of `{name: string, params: Record<string, any>}`.
-    If a new subscription is created, or when a subscription without a TTL has been removed, the client will ask to
-    restart the connection.
+10. `next_checkpoint_request_id`: No payload. During an active sync iteration after checkpoint
+    request state exists locally, allocates and returns the next checkpoint request id in a
+    `CheckpointRequestId` instruction.
+11. `local_target_op`: Payload is `null`, an integer, or an integer string. Probes, updates or
+    clears the local target op and returns the previously-observed value in a `LocalTargetOp`
+    result. This command can run outside of a sync iteration and does not affect it.
+12. `seed_checkpoint_request_id`: Payload is `null`, an integer, or an integer string. After
+    receiving `EstablishSyncStream`, SDKs can re-request the client's last checkpoint request state
+    from the service using the provided hint, then seed core with the actual response for
+    reconciliation. `NULL` means the service has no record for the client yet; core stores `0` only
+    when no local seed exists. Integer seeds use `max(local, service)` semantics so the local counter
+    never moves backwards.
 
 When uploads request a write checkpoint, SDKs should call
-`powersync_next_checkpoint_request_id()` inside a transaction to allocate the id to pass to the
-request-checkpoint API. In checkpoint-request mode, the SDK should first allocate the id, then post
-that id to the service, and then call `powersync_probe_local_target_op(id)` with the same id once
-the service accepts the request. This sets the local target op to the request op, replacing the
-pending-write sentinel with the concrete checkpoint request id that the sync stream can satisfy.
-`powersync_next_checkpoint_request_id()` only advances the request counter; it does not update the
+`powersync_control('next_checkpoint_request_id', NULL)` inside a transaction to allocate the id to
+pass to the request-checkpoint API. In checkpoint-request mode, the SDK should first allocate the id,
+then post that id to the service, and then call `powersync_control('local_target_op', id)` with the
+same id once the service accepts the request. This sets the local target op to the request op,
+replacing the pending-write sentinel with the concrete checkpoint request id that the sync stream
+can satisfy. `next_checkpoint_request_id` only advances the request counter; it does not update the
 local target op used to block applying downloaded rows.
 
-`powersync_probe_local_target_op(op_id)` reads and optionally updates the internal local target op.
-The same function is used for compatibility when a new SDK is used with an older PowerSync service
-that does not yet support client-created checkpoint requests; after the service-side write
-checkpoint request returns a concrete id, call `powersync_probe_local_target_op(id)` with that id.
-Pass `NULL` to probe the current internal `$local` target op from `ps_kv` without updating it, or
-pass an integer or integer string to update that target op. In both cases it returns the value from
-before the call, or `NULL` if no value existed. Updating to a positive, non-sentinel target op also
-stores it as `last_requested_checkpoint_request_id` to support migrating to client-created
-checkpoint requests. Passing `0` clears the local target, and sentinel values such as max op id are
-not stored as requested checkpoint ids.
+`powersync_control('local_target_op', op_id)` probes and optionally updates the internal local
+target op. The same command is used for compatibility when a new SDK is used with an older
+PowerSync service that does not yet support client-created checkpoint requests; after the
+service-side write checkpoint request returns a concrete id, call
+`powersync_control('local_target_op', id)` with that id. Passing `NULL` returns the current target
+without changing it, and passing `0` clears the local target. Updating to a positive, non-sentinel
+target op also stores it as `last_requested_checkpoint_request_id` to support migrating to
+client-created checkpoint requests. Sentinel values such as max op id are not stored as requested
+checkpoint ids.
 
 Database migration v14 moves legacy `$local` checkpoint state into `ps_kv`: `$local.last_applied_op`
 becomes `last_applied_checkpoint_request_id`, `$local.last_op` becomes the internal
@@ -74,7 +84,7 @@ id to wait for yet. The max-op sentinel may also cover earlier pending uploads t
 associated with legacy service-created write checkpoints, so restarting the client-created counter
 from `1` could create a target lower than those existing associations. In that state, create one
 old-style write checkpoint first, store the returned concrete id with
-`powersync_probe_local_target_op(id)`, and then switch to client-created checkpoint requests.
+`powersync_control('local_target_op', id)`, and then switch to client-created checkpoint requests.
 
 `powersync_control` returns a JSON-encoded array of instructions for the client:
 
@@ -83,6 +93,8 @@ type Instruction = { LogLine: LogLine }
    | { UpdateSyncStatus: UpdateSyncStatus }
    | { EstablishSyncStream: EstablishSyncStream }
    | { FetchCredentials: FetchCredentials }
+   | { CheckpointRequestId: { request_id: number } }
+   | { LocalTargetOp: { target_op: null | number } }
    // Close a connection previously started after EstablishSyncStream
    | { CloseSyncStream: { hide_disconnect: boolean } }
    // For the Dart web client, flush the (otherwise non-durable) file system.
@@ -97,8 +109,14 @@ interface LogLine {
 }
 
 // Instructs client SDKs to open a connection to the sync service.
+// last_checkpoint_request_id is core's local counter value before this stream request. On connect,
+// SDKs can use it to re-request this client's last checkpoint request state from the service, then
+// call powersync_control('seed_checkpoint_request_id', value) with the actual response for
+// reconciliation. `value` may be null when the service has no checkpoint request state for this
+// client.
 interface EstablishSyncStream {
   request: any // The JSON-encoded StreamingSyncRequest to send to the sync service
+  last_checkpoint_request_id: null | number
 }
 
 // Instructs SDKS to update the downloading state of their SyncStatus.

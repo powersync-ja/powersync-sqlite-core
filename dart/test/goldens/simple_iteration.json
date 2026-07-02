@@ -28,10 +28,16 @@
               "include_defaults": true,
               "subscriptions": []
             }
-          }
+          },
+          "last_checkpoint_request_id": null
         }
       }
     ]
+  },
+  {
+    "operation": "seed_checkpoint_request_id",
+    "data": null,
+    "output": []
   },
   {
     "operation": "line_text",

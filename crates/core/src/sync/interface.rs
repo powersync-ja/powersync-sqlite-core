@@ -4,14 +4,15 @@ use core::ffi::{c_int, c_void};
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
 use crate::constants::SUBTYPE_JSON;
+use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
 use crate::schema::Schema;
 use crate::state::DatabaseState;
 use crate::sync::diagnostics::{DiagnosticOptions, DiagnosticsEvent};
 use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
-use crate::{create_sqlite_int_fn, create_sqlite_optional_int_fn, create_sqlite_text_fn};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::rc::Rc;
 use alloc::{string::String, vec::Vec};
 use powersync_sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
@@ -76,6 +77,8 @@ pub enum SyncControlRequest<'a> {
     StartSyncStream(StartSyncStream),
     /// The client requests to stop the current sync iteration.
     StopSyncStream,
+    /// The client requests a new checkpoint request id.
+    NextCheckpointRequestId,
     /// The client is forwading a sync event to the core extension.
     SyncEvent(SyncEvent<'a>),
 }
@@ -89,6 +92,10 @@ pub enum SyncEvent<'a> {
     ///
     /// In response, we'll stop the current iteration to begin another one with the new token.
     DidRefreshToken,
+    /// Seeds the checkpoint request counter from service state.
+    SeedCheckpointRequestId {
+        request_id: Option<i64>,
+    },
     /// Notifies the sync client that the current CRUD upload (for which the client SDK is
     /// responsible) has finished.
     ///
@@ -128,13 +135,24 @@ pub enum Instruction {
     },
     /// Connect to the sync service using the [StreamingSyncRequest] created by the core extension,
     /// and then forward received lines via [SyncEvent::TextLine] and [SyncEvent::BinaryLine].
-    EstablishSyncStream { request: StreamingSyncRequest },
+    EstablishSyncStream {
+        request: StreamingSyncRequest,
+        /// The latest checkpoint request id known locally before opening this stream.
+        ///
+        /// SDKs can use a missing value as a cue to fetch checkpoint request state from the service
+        /// and report it back with `seed_checkpoint_request_id`.
+        last_checkpoint_request_id: Option<i64>,
+    },
     FetchCredentials {
         /// Whether the credentials currently used have expired.
         ///
         /// If false, this is a pre-fetch.
         did_expire: bool,
     },
+    /// Return a newly allocated checkpoint request id to the SDK.
+    CheckpointRequestId { request_id: i64 },
+    /// Return the local target op value observed before an optional update.
+    LocalTargetOp { target_op: Option<i64> },
     // These are defined like this because deserializers in Kotlin can't support either an
     // object or a literal value
     /// Close the websocket / HTTP stream to the sync service.
@@ -232,6 +250,24 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     }
                 }),
                 "stop" => SyncControlRequest::StopSyncStream,
+                "next_checkpoint_request_id" => SyncControlRequest::NextCheckpointRequestId,
+                "local_target_op" => {
+                    let target_op = parse_optional_i64_payload(
+                        *payload,
+                        "local target op",
+                        "local target op must be an integer, integer string, or null",
+                    )?;
+                    let adapter = state.storage_adapter(db)?;
+                    let target_op = adapter.probe_local_target_op(target_op)?;
+                    let formatted =
+                        serde_json::to_string(&alloc::vec![Instruction::LocalTargetOp {
+                            target_op
+                        },])
+                        .map_err(PowerSyncError::internal)?;
+                    ctx.result_text_transient(&formatted);
+                    ctx.result_subtype(SUBTYPE_JSON);
+                    return Ok(());
+                }
                 "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
                     data: if payload.value_type() == ColumnType::Text {
                         payload.text()
@@ -251,6 +287,15 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     },
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
+                "seed_checkpoint_request_id" => {
+                    SyncControlRequest::SyncEvent(SyncEvent::SeedCheckpointRequestId {
+                        request_id: parse_optional_i64_payload(
+                            *payload,
+                            "checkpoint request id",
+                            "checkpoint request id must be an integer, integer string, or null",
+                        )?,
+                    })
+                }
                 "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
                 "update_subscriptions" => {
                     SyncControlRequest::SyncEvent(SyncEvent::DidUpdateSubscriptions {
@@ -324,28 +369,6 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         Some(DatabaseState::destroy_rc),
     )?;
 
-    db.create_function_v2(
-        "powersync_probe_local_target_op",
-        1,
-        sqlite::UTF8 | sqlite::DIRECTONLY,
-        Some(Rc::into_raw(state.clone()) as *mut c_void),
-        Some(powersync_probe_local_target_op),
-        None,
-        None,
-        Some(DatabaseState::destroy_rc),
-    )?;
-
-    db.create_function_v2(
-        "powersync_next_checkpoint_request_id",
-        0,
-        sqlite::UTF8 | sqlite::DIRECTONLY,
-        Some(Rc::into_raw(state) as *mut c_void),
-        Some(powersync_next_checkpoint_request_id),
-        None,
-        None,
-        Some(DatabaseState::destroy_rc),
-    )?;
-
     Ok(())
 }
 
@@ -362,74 +385,31 @@ fn powersync_offline_sync_status_impl(
     Ok(serialized)
 }
 
-fn powersync_probe_local_target_op_impl(
-    ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<Option<i64>, PowerSyncError> {
-    if args.len() != 1 {
-        return Err(PowerSyncError::argument_error(
-            "powersync_probe_local_target_op takes one argument",
-        ));
-    }
-
-    let arg = args[0];
-    let new_target_op =
-        match arg.value_type() {
-            ColumnType::Null => None,
-            ColumnType::Integer => Some(arg.int64()),
-            ColumnType::Text => Some(arg.text().parse::<i64>().map_err(|_| {
-                PowerSyncError::argument_error("target op must be an integer string")
-            })?),
-            _ => {
-                return Err(PowerSyncError::argument_error(
-                    "target op must be an integer, integer string, or null",
-                ));
-            }
-        };
-
-    let db = ctx.db_handle();
-
-    if new_target_op.is_some() {
-        verify_in_transaction(db)?;
-    }
-
-    let db_state = unsafe { DatabaseState::from_context(&ctx) };
-    let adapter = db_state.storage_adapter(db)?;
-    adapter.probe_local_target_op(new_target_op)
-}
-
-fn powersync_next_checkpoint_request_id_impl(
-    ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<i64, PowerSyncError> {
-    if !args.is_empty() {
-        return Err(PowerSyncError::argument_error(
-            "powersync_next_checkpoint_request_id does not take arguments",
-        ));
-    }
-
-    let db = ctx.db_handle();
-    verify_in_transaction(db)?;
-
-    let db_state = unsafe { DatabaseState::from_context(&ctx) };
-    let adapter = db_state.storage_adapter(db)?;
-    adapter.next_checkpoint_request_id()
-}
-
 create_sqlite_text_fn!(
     powersync_offline_sync_status,
     powersync_offline_sync_status_impl,
     "powersync_offline_sync_status"
 );
 
-create_sqlite_optional_int_fn!(
-    powersync_probe_local_target_op,
-    powersync_probe_local_target_op_impl,
-    "powersync_probe_local_target_op"
-);
+fn parse_optional_i64_payload(
+    payload: *mut sqlite::value,
+    name: &'static str,
+    type_error: &'static str,
+) -> Result<Option<i64>, PowerSyncError> {
+    let value = match payload.value_type() {
+        ColumnType::Null => return Ok(None),
+        ColumnType::Integer => payload.int64(),
+        ColumnType::Text => payload.text().parse::<i64>().map_err(|_| {
+            PowerSyncError::argument_error(format!("{name} must be an integer string"))
+        })?,
+        _ => return Err(PowerSyncError::argument_error(type_error)),
+    };
 
-create_sqlite_int_fn!(
-    powersync_next_checkpoint_request_id,
-    powersync_next_checkpoint_request_id_impl,
-    "powersync_next_checkpoint_request_id"
-);
+    if value < 0 {
+        return Err(PowerSyncError::argument_error(format!(
+            "{name} must be a non-negative integer"
+        )));
+    }
+
+    Ok(Some(value))
+}

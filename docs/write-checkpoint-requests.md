@@ -13,10 +13,11 @@ At a high level:
   the client.
 
 SDKs should not write these keys directly. They update the local target through
-`powersync_probe_local_target_op()`, which is the shared helper for both legacy write checkpoints
-and new client-created checkpoint requests. The newer `powersync_next_checkpoint_request_id()`
-function only allocates a checkpoint request id; after the service accepts that request, the SDK
-uses `powersync_probe_local_target_op(id)` to make the accepted id the local target.
+`powersync_control('local_target_op', value)`, which is the shared helper for both legacy write
+checkpoints and new client-created checkpoint requests. The
+`powersync_control('next_checkpoint_request_id', NULL)` command only allocates a checkpoint request
+id; after the service accepts that request, the SDK uses
+`powersync_control('local_target_op', id)` to make the accepted id the local target.
 
 For the historic `$local` bucket flow, see `historic-write-checkpoints.md`.
 
@@ -47,9 +48,9 @@ transaction {
     deleteUploadedCrud(upTo: lastUploadedId)
 
     if let customCheckpoint, crudQueueIsEmpty {
-        powersync_probe_local_target_op(customCheckpoint)
+        powersync_control('local_target_op', customCheckpoint)
     } else {
-        powersync_probe_local_target_op(MAX_OP_ID)
+        powersync_control('local_target_op', MAX_OP_ID)
     }
 }
 ```
@@ -57,21 +58,25 @@ transaction {
 ## Updating the local target
 
 Once uploads are complete, the sync client updates the local target through
-`powersync_probe_local_target_op()`. It only does this when the current target is still
+`powersync_control('local_target_op', value)`. It only does this when the current target is still
 `MAX_OP_ID`, which avoids overwriting a custom checkpoint that was already stored by
 `complete(writeCheckpoint:)`.
 
 The SDK implementation:
 
-1. Probes the current target with `powersync_probe_local_target_op(NULL)`.
+1. Probes the current target with `powersync_control('local_target_op', NULL)`.
 2. Reads `sqlite_sequence.seq` for `ps_crud`.
 3. Gets a concrete checkpoint id from either the new or legacy service API.
 4. Re-enters a write transaction.
 5. Verifies that `ps_crud` is still empty and that its sequence did not change.
-6. Stores the concrete target with `powersync_probe_local_target_op(opId)`.
+6. Stores the concrete target with `powersync_control('local_target_op', opId)`.
 
 ```text
-if powersync_probe_local_target_op(NULL) == MAX_OP_ID {
+let previousTarget = transaction {
+    powersync_control('local_target_op', NULL).LocalTargetOp.target_op
+}
+
+if previousTarget == MAX_OP_ID {
     let seqBefore = psCrudSequence()
     let checkpointId = await createOrFetchCheckpointId()
 
@@ -80,7 +85,7 @@ if powersync_probe_local_target_op(NULL) == MAX_OP_ID {
             return
         }
 
-        powersync_probe_local_target_op(checkpointId)
+        powersync_control('local_target_op', checkpointId)
     }
 }
 ```
@@ -88,11 +93,11 @@ if powersync_probe_local_target_op(NULL) == MAX_OP_ID {
 In checkpoint-request mode, `getWriteCheckpoint()` calls `requestCheckpoint()`. That allocates an
 id locally, sends it to `/sync/checkpoint-request`, and returns the same id once the service accepts
 the request. Only then does the upload path store that id as `local_target_op` with
-`powersync_probe_local_target_op(id)`.
+`powersync_control('local_target_op', id)`.
 
 ```text
 let requestId = transaction {
-    powersync_next_checkpoint_request_id()
+    powersync_control('next_checkpoint_request_id', NULL).CheckpointRequestId.request_id
 }
 
 POST /sync/checkpoint-request {
@@ -104,15 +109,26 @@ return requestId
 ```
 
 The legacy fallback still calls `/write-checkpoint2.json`; the returned write checkpoint is stored
-through the same `powersync_probe_local_target_op(opId)` helper. This keeps SDK target updates
+through the same `powersync_control('local_target_op', opId)` helper. This keeps SDK target updates
 consistent across both protocols.
 
-## Helper functions
+## Sync control commands
 
-These SQL functions are the SDK-facing API for the new `ps_kv` checkpoint state.
+These `powersync_control` commands are the SDK-facing API for the new `ps_kv` checkpoint state.
 
-`powersync_next_checkpoint_request_id()` must be called inside a transaction. It increments and
-returns `last_requested_checkpoint_request_id` in `ps_kv`.
+`powersync_control('start', payload)` begins a sync iteration and emits `EstablishSyncStream` with a
+`last_checkpoint_request_id` hint. This is core's local `last_requested_checkpoint_request_id` value
+before opening the stream, or `NULL` when no local seed exists. On connect, SDKs can use this hint
+to re-request the client's last checkpoint request state from the service, then call
+`powersync_control('seed_checkpoint_request_id', value)` with the actual response for
+reconciliation. `value` may be `NULL` when the service has no record for the client; core stores `0`
+only when no local seed exists. Integer seeds use `max(local, service)` semantics so the local
+counter never moves backwards. SDKs may also refresh service state when their user/client context
+changes.
+
+`powersync_control('next_checkpoint_request_id', NULL)` must be called inside a transaction during
+an active sync iteration after `last_requested_checkpoint_request_id` exists locally. It increments
+and returns `last_requested_checkpoint_request_id` in a `CheckpointRequestId` instruction.
 
 ```sql
 INSERT INTO ps_kv(key, value)
@@ -121,16 +137,18 @@ ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1
 RETURNING value;
 ```
 
-This function only allocates an id. It does not update `local_target_op`.
+This command only allocates an id. It does not update `local_target_op`.
 
 Note on sequences: SQLite does not have standalone sequences. The sequence-like alternatives are
 either an `AUTOINCREMENT` table backed by SQLite's internal `sqlite_sequence`, or a dedicated
 single-row counter table like the existing `ps_tx` transaction counter. The checkpoint request
 counter currently lives in `ps_kv` because it is also migrated and seeded from legacy/custom
-concrete targets via `powersync_probe_local_target_op()`. If we want stricter structure later, a
-dedicated checkpoint-request counter table would be the closest match to a sequence.
+concrete targets via `powersync_control('local_target_op', value)`. If we want stricter structure
+later, a dedicated checkpoint-request counter table would be the closest match to a sequence.
 
-`powersync_probe_local_target_op(op_id)` reads and optionally updates the local target:
+`powersync_control('local_target_op', op_id)` probes and optionally updates the local target. Like
+`subscriptions`, this command is handled directly by `powersync_control` and can run outside an
+active sync iteration:
 
 - `NULL` returns the current `local_target_op` without changing it.
 - `0` clears `local_target_op`.
@@ -138,7 +156,8 @@ dedicated checkpoint-request counter table would be the closest match to a seque
 - A positive value other than `i64::MAX` also stores `last_requested_checkpoint_request_id`.
 - Negative values and non-integer inputs are rejected.
 
-The function returns the previous target value, or `NULL` if there was no target.
+The command returns the previous target value in a `LocalTargetOp` result, or `NULL` if there was no
+target.
 
 ```text
 previous = ps_kv['local_target_op']
@@ -228,9 +247,9 @@ request could not be delivered to the service or observed in the sync stream.
   pending, a concrete checkpoint request id after upload completion, or absent when there is no
   local write gate.
 - `last_requested_checkpoint_request_id`: The last client-created checkpoint request id allocated
-  by `powersync_next_checkpoint_request_id()`. `powersync_probe_local_target_op()` also writes this
-  key for positive, non-sentinel targets so migrated or legacy-created concrete targets can seed the
-  client request counter.
+  by `powersync_control('next_checkpoint_request_id', NULL)`.
+  `powersync_control('local_target_op', value)` also writes this key for positive, non-sentinel
+  targets so migrated or legacy-created concrete targets can seed the client request counter.
 - `last_seen_checkpoint_request_id`: The latest full checkpoint `write_checkpoint` observed and
   validated from the sync stream.
 - `last_applied_checkpoint_request_id`: The latest full checkpoint `write_checkpoint` that has been
@@ -256,7 +275,7 @@ the gate; it does not prove that no earlier uploads were already associated with
 service-created write checkpoints. Those existing checkpoint ids may be higher than a restarted
 client counter such as `1`, and using a lower target could let an older seen checkpoint satisfy the
 gate too early. In that state, the SDK should create one legacy write checkpoint first, store the
-concrete id with `powersync_probe_local_target_op(id)`, and then switch to client-created
+concrete id with `powersync_control('local_target_op', id)`, and then switch to client-created
 checkpoint requests.
 
 The down migration rebuilds a `$local` row only when `local_target_op` exists, using:

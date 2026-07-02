@@ -301,6 +301,7 @@ INSERT INTO ps_kv(key, value) VALUES
 
         db.execute('begin');
         control('start');
+        control('seed_checkpoint_request_id');
         control(
           'line_text',
           json.encode(checkpoint(lastOpId: 3, buckets: [

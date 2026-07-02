@@ -78,6 +78,7 @@ void main() {
         final control = db.prepare(stmt);
 
         control.execute(['start', null]);
+        control.execute(['seed_checkpoint_request_id', null]);
         expect(
           () => control.execute(['line_text', 'invalid sync line']),
           throwsA(isSqliteException(
