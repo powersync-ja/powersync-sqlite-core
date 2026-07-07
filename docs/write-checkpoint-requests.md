@@ -49,8 +49,7 @@ WHERE key IN ('last_seen_checkpoint_request_id', 'last_applied_checkpoint_reques
 
 Clearing the high-water marks mirrors how the legacy flow reset the whole `$local` row on local
 writes. A checkpoint request id observed before the write cannot acknowledge it, and a stale seen
-value may even come from an incompatible id namespace — a legacy write checkpoint migrated by v14,
-or state from before a request counter restart. If such a value stayed around, a newly allocated
+value may even predate a request counter restart. If such a value stayed around, a newly allocated
 target id could compare below it and open the apply gate before the service acknowledged the write.
 After a local write, only checkpoint request ids observed from that point on count towards the gate.
 
@@ -154,9 +153,16 @@ local hint can restore the service-side value and keep the counter from moving b
 client lost local state but the service still has a record, the service response restores the seed
 locally. If both sides have lost the value, it is acceptable for the counter to restart; this can
 happen after local state is cleared and stale service state expires, or when multiple user ids share
-the same client id. After reconciliation, `value` may be `NULL` when neither side has a record for
-the client; core stores `0` in that case so the state counts as seeded and the first allocation
-returns `1`. SDKs may also refresh service state when their user/client context changes.
+the same client id. SDKs may also refresh service state when their user/client context changes.
+
+Because seeds are stored verbatim, seeding `NULL` (or a low id) while core holds a higher counter
+resets that counter, and previously allocated ids would be handed out again. SDKs must therefore
+never forward a raw service response without reconciling: the recommended pattern is to always post
+an id of at least `1` (the maximum of the local hint and any concrete local target) during
+reconciliation and seed core with the service's response to that request. In practice SDKs never
+need to seed `NULL` at all — when there is no local record, posting a checkpoint request with id
+`1` works and doubles as a probe of the service's checkpoint-request support. Core still accepts a
+`NULL` seed for completeness.
 
 `powersync_control('next_checkpoint_request_id', NULL)` must be called inside a transaction during
 an active sync iteration after `last_requested_checkpoint_request_id` exists locally. It increments
@@ -170,6 +176,14 @@ RETURNING value;
 ```
 
 This command only allocates an id. It does not update `local_target_op`.
+
+Calling it without an active iteration or before seeding raises a state error. This is a normal
+part of the connection lifecycle (for example a `requestCheckpoint` call racing a stream restart),
+not a programming error — SDKs should surface it as a retryable condition.
+
+The increment participates in the caller's transaction. If the transaction rolls back after the id
+was already posted to the service, the same id is allocated and posted again on retry; this is safe
+because the service treats the latest posted id as the effective request state.
 
 Note on sequences: SQLite does not have standalone sequences. The sequence-like alternatives are
 either an `AUTOINCREMENT` table backed by SQLite's internal `sqlite_sequence`, or a dedicated
@@ -298,6 +312,12 @@ greater than or equal to any previously requested id and core emits a fresh
   migration/downgrade state and debugging; SDKs should use `CheckpointRequestApplied` instructions
   to resolve `CheckpointRequest` waits.
 
+`powersync_clear` deletes all of these keys in both clear modes (it removes every `ps_kv` entry
+except `client_id`). This is deliberate and mirrors the legacy behavior of deleting the `$local`
+row: pending CRUD is wiped in the same operation, so no apply gate is needed, and the request
+counter is restored by the connect-time reconciliation described above. If the service has also
+lost its record, the counter restarting is acceptable.
+
 ## Migration from `$local`
 
 Migration v14 moves the old `$local` bucket state into `ps_kv`:
@@ -344,3 +364,18 @@ The down migration restores `ps_buckets.target_op` and rebuilds a `$local` row o
 
 This keeps older SDKs able to use the historic target-op gate after a downgrade without inventing a
 synthetic `$local` bucket when there was no local target state.
+
+Two properties make the restored gate safe rather than a potential stall:
+
+- **Shared id namespace.** Client-created checkpoint request ids and legacy write checkpoint ids
+  are one namespace, compatible in both directions — including values migrated from the historic
+  service-generated write checkpoint scheme. The service reports the checkpoint request ids it
+  accepted as the `write_checkpoint` values older-protocol clients observe, so a restored concrete
+  `$local.target_op` is satisfiable by the next write checkpoint the downgraded SDK sees; it does
+  not wait on an incomparable id sequence.
+- **Downgrade fidelity.** `last_seen_checkpoint_request_id` and
+  `last_applied_checkpoint_request_id` only advance on full checkpoint completions — but so did the
+  legacy `$local.last_op`/`last_applied_op` bookkeeping (partial priority applies never updated
+  `$local`, which is not a real bucket). The rebuilt `$local` row therefore matches exactly what a
+  legacy client would have recorded at the same point in the stream; the down migration cannot lag
+  behind legacy behavior.

@@ -143,8 +143,11 @@ pub enum Instruction {
         request: StreamingSyncRequest,
         /// The latest checkpoint request id known locally before opening this stream.
         ///
-        /// SDKs can use a missing value as a cue to fetch checkpoint request state from the service
-        /// and report it back with `seed_checkpoint_request_id`.
+        /// This is simply the client's current counter state. SDKs use it on every connection
+        /// attempt to re-affirm checkpoint request state with the service, which may have deleted
+        /// its record. The re-affirmation works bidirectionally: it can restore the service-side
+        /// value from this hint or bump the local counter from the service's response, which is
+        /// reported back with `seed_checkpoint_request_id`.
         last_checkpoint_request_id: Option<i64>,
     },
     FetchCredentials {

@@ -611,8 +611,8 @@ void _syncTests<T>({
     expect(lastAppliedCheckpointRequestId(), 5);
 
     // A local write can only be acknowledged by a checkpoint request id observed after it. Stale
-    // seen/applied values (which may come from another id namespace, like migrated legacy write
-    // checkpoints) must not remain to open the apply gate for a smaller new target id.
+    // seen/applied values (which may predate a request counter restart) must not remain to open
+    // the apply gate for a smaller new target id.
     db.execute("insert into items (id, col) values ('local', 'data');");
 
     expect(lastAppliedCheckpointRequestId(), isNull);

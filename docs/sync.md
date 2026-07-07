@@ -47,9 +47,14 @@ The following commands are supported:
     ahead, or restore the service-side value when the service has cleared stale state but core still
     has a local hint. Then seed core with the reconciled value. Core stores the seeded value
     verbatim and does not enforce monotonicity; SDKs own the reconciliation and must not seed a
-    stale value. `NULL` means neither side has a record for the client yet; core stores `0` in that
-    case so the state counts as seeded and the first allocation returns `1`. If both the client and
-    service have lost the value, the counter may restart.
+    stale value. A `NULL` payload is accepted for completeness (core stores `0`, marking the state
+    as seeded so the first allocation returns `1`), but SDKs should not need it in practice:
+    posting a checkpoint request with an id of at least `1` during reconciliation and seeding the
+    service's response covers the no-record case and doubles as a probe of the service's
+    checkpoint-request support. Blindly forwarding a raw `NULL` service response while core holds a
+    counter would reset it, since the store is verbatim (see
+    `docs/write-checkpoint-requests.md`). If both the client and service have lost the value, the
+    counter may restart.
 
 When uploads request a write checkpoint, SDKs should call
 `powersync_control('next_checkpoint_request_id', NULL)` inside a transaction to allocate the id to
@@ -78,7 +83,9 @@ only real sync buckets in `ps_buckets`, and drops `ps_buckets.target_op` so
 older SDKs fail hard if they try to keep using the migrated database directly. Downgrading restores
 the column, and restores a `$local` row only when `local_target_op` exists, so older SDKs can keep
 using target-op based blocking without inventing a synthetic local bucket when there was no local
-target state. Because the down migration keeps the `ps_kv` keys around, the up migration clears
+target state. A restored concrete target remains satisfiable after a downgrade because checkpoint
+request ids and legacy write checkpoint ids share one namespace: the service reports accepted
+checkpoint request ids as the `write_checkpoint` values older-protocol clients observe. Because the down migration keeps the `ps_kv` keys around, the up migration clears
 them before copying, so re-upgrading a downgraded database takes the `$local` row (including any
 progress an older SDK made) as the source of truth instead of failing on the existing keys.
 
@@ -124,11 +131,11 @@ interface LogLine {
 }
 
 // Instructs client SDKs to open a connection to the sync service.
-// last_checkpoint_request_id is core's local counter value before this stream request. On connect,
-// SDKs can use it to re-request this client's last checkpoint request state from the service, then
-// call powersync_control('seed_checkpoint_request_id', value) with the actual response for
-// reconciliation. `value` may be null when the service has no checkpoint request state for this
-// client.
+// last_checkpoint_request_id is the client's current counter state before this stream request.
+// On every connect, SDKs use it to re-affirm checkpoint request state with the service (which may
+// have deleted its record). The re-affirmation is bidirectional: the hint can restore the
+// service-side value, or the service's response can bump the local counter via
+// powersync_control('seed_checkpoint_request_id', response).
 interface EstablishSyncStream {
   request: any // The JSON-encoded StreamingSyncRequest to send to the sync service
   last_checkpoint_request_id: null | number

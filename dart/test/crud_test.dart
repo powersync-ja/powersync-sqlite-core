@@ -250,8 +250,8 @@ void main() {
         });
 
         test('updates local target op and updated rows', () {
-          // Stale high-water marks (e.g. migrated legacy write checkpoints) must be cleared by a
-          // local write, so they can't open the apply gate for a smaller new target id.
+          // Stale high-water marks (e.g. from before a request counter restart) must be cleared
+          // by a local write, so they can't open the apply gate for a smaller new target id.
           db.execute('''
 INSERT INTO ps_kv(key, value) VALUES
   ('last_seen_checkpoint_request_id', 6),
