@@ -85,7 +85,6 @@ fn powersync_clear_impl(
         local_db.exec_safe("DELETE FROM ps_oplog; DELETE FROM ps_buckets")?;
     } else {
         trigger_resync(local_db, state)?;
-        local_db.exec_safe("DELETE FROM ps_buckets WHERE name = '$local'")?;
     }
 
     // language=SQLite
