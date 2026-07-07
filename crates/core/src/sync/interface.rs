@@ -395,9 +395,10 @@ fn parse_optional_i64_payload(
     let value = match payload.value_type() {
         ColumnType::Null => return Ok(None),
         ColumnType::Integer => payload.int64(),
-        ColumnType::Text => payload.text().parse::<i64>().map_err(|_| {
-            PowerSyncError::argument_error(format!("{name} must be an integer string"))
-        })?,
+        ColumnType::Text => payload
+            .text()
+            .parse::<i64>()
+            .map_err(|_| PowerSyncError::argument_error(type_error))?,
         _ => return Err(PowerSyncError::argument_error(type_error)),
     };
 
