@@ -163,7 +163,9 @@ fn trigger_resync(db: *mut sqlite::sqlite3, state: &DatabaseState) -> Result<(),
         }
     }
 
-    db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0 WHERE name != '$local'")
+    // Since migration v14, ps_buckets only contains real sync buckets: the synthetic `$local`
+    // bucket has moved to ps_kv, so no filter is needed here.
+    db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0")
         .into_db_result(db)?;
     Ok(Default::default())
 }

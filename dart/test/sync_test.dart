@@ -468,6 +468,20 @@ void _syncTests<T>({
     invokeControlRaw('seed_checkpoint_request_id', 5);
     expect(lastRequestedCheckpointRequestId(), 5);
     expect(nextCheckpointRequestId(), 6);
+
+    // A NULL seed is stored as 0, restarting the counter. Forwarding a raw NULL service response
+    // while a counter exists resets it - SDKs must reconcile before seeding.
+    invokeControlRaw('seed_checkpoint_request_id', null);
+    expect(lastRequestedCheckpointRequestId(), 0);
+    expect(nextCheckpointRequestId(), 1);
+  });
+
+  syncTest('accepts text checkpoint request ids when seeding', (_) {
+    invokeControlRaw('start', null);
+    invokeControlRaw('seed_checkpoint_request_id', '41');
+
+    expect(lastRequestedCheckpointRequestId(), 41);
+    expect(nextCheckpointRequestId(), 42);
   });
 
   syncTest('requires checkpoint request state before allocating checkpoint ids',

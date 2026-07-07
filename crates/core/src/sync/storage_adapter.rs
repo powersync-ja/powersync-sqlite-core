@@ -528,7 +528,8 @@ WHERE bucket = ?1",
     /// `next_checkpoint_request_id`.
     ///
     /// Returns the target op value from before this call. When `target_op` is `None`, this only
-    /// reads the current value.
+    /// reads the current value. A `target_op` of zero clears the stored target, removing the apply
+    /// gate entirely; any other value overwrites it.
     ///
     /// Negative values are rejected when parsing the `powersync_control` payload, before this is
     /// called.

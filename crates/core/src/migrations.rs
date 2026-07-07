@@ -488,6 +488,9 @@ DROP TABLE ps_sync_state_old;
         // After copying, the `$local` row is deleted: version 14 tracks this state exclusively in
         // ps_kv, so ps_buckets only contains real sync buckets. The down migration recreates the
         // row from ps_kv when needed.
+        //
+        // DROP COLUMN requires SQLite 3.35+; the extension already refuses to load below
+        // MIN_SQLITE_VERSION_NUMBER (3.44), so this is safe in the up path.
         let up = "\
 DELETE FROM ps_kv
  WHERE key IN (
