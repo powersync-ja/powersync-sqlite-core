@@ -45,11 +45,11 @@ The following commands are supported:
     receiving `EstablishSyncStream`, SDKs should reconcile the provided local hint with the service
     checkpoint-request state on every connection attempt. This can bump core when the service is
     ahead, or restore the service-side value when the service has cleared stale state but core still
-    has a local hint. Then seed core with the reconciled value. `NULL` means neither side has a
-    record for the client yet; core stores `0` only when no local seed exists. Integer seeds use
-    `max(local, service)` semantics so the local counter never moves backwards while either side
-    still remembers the value. If both the client and service have lost the value, the counter may
-    restart.
+    has a local hint. Then seed core with the reconciled value. Core stores the seeded value
+    verbatim and does not enforce monotonicity; SDKs own the reconciliation and must not seed a
+    stale value. `NULL` means neither side has a record for the client yet; core stores `0` in that
+    case so the state counts as seeded and the first allocation returns `1`. If both the client and
+    service have lost the value, the counter may restart.
 
 When uploads request a write checkpoint, SDKs should call
 `powersync_control('next_checkpoint_request_id', NULL)` inside a transaction to allocate the id to

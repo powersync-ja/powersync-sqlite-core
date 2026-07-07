@@ -564,6 +564,11 @@ WHERE bucket = ?1",
     }
 
     /// Persists the checkpoint request id that was applied locally.
+    ///
+    /// This is always the id from the last applied checkpoint as sent by the service - a plain
+    /// overwrite with no monotonicity enforced by core. External code owns consistency of these
+    /// ids; waiters should rely on `CheckpointRequestApplied` instructions rather than comparing
+    /// this value across reconnects.
     pub fn persist_last_applied_checkpoint_request_id(
         &self,
         request_id: i64,
@@ -602,7 +607,11 @@ RETURNING value",
         self.read_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY)
     }
 
-    /// Seeds the local checkpoint request counter from service state without moving it backwards.
+    /// Seeds the local checkpoint request counter from service state.
+    ///
+    /// The value is stored verbatim: core does not enforce monotonicity here. SDKs are
+    /// responsible for reconciling their local hint with the service before seeding, and cannot
+    /// allocate new checkpoint request ids until that seeding has completed.
     ///
     /// A null service value means the service has no record for this client yet. Store zero in
     /// that case so the first local allocation returns one while still marking the state as seeded.
@@ -610,19 +619,10 @@ RETURNING value",
         &self,
         request_id: Option<i64>,
     ) -> Result<(), PowerSyncError> {
-        let stmt = self.db.prepare_v2(
-            "INSERT INTO ps_kv(key, value)
-VALUES(?1, ?2)
-ON CONFLICT(key) DO UPDATE SET value = max(CAST(value AS INTEGER), excluded.value)",
-        )?;
-        stmt.bind_text(
-            1,
+        self.write_i64_kv(
             LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY,
-            sqlite::Destructor::STATIC,
-        )?;
-        stmt.bind_int64(2, request_id.unwrap_or(0))?;
-        stmt.exec()?;
-        Ok(())
+            request_id.unwrap_or(0),
+        )
     }
 
     fn read_i64_kv(&self, key: &'static str) -> Result<Option<i64>, PowerSyncError> {

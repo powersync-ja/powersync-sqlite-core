@@ -418,7 +418,9 @@ impl StreamingSyncIteration {
                     }
                     SyncLocalResult::ChangesApplied { timestamp } => {
                         SyncStateMachineTransition::SyncLocalChangesApplied {
-                            applied_checkpoint_request_id: target.checkpoint.write_checkpoint,
+                            // A checkpoint request is only considered applied once the full
+                            // checkpoint has been applied, not for partial completions.
+                            applied_checkpoint_request_id: None,
                             partial: Some(priority),
                             timestamp,
                         }

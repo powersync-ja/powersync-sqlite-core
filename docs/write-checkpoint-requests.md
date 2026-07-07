@@ -146,16 +146,17 @@ After reconciliation, call `powersync_control('seed_checkpoint_request_id', valu
 reconciled value.
 
 `last_requested_checkpoint_request_id` is a best-effort counter seed, not durable application state.
-If either the client or the service still remembers a higher id, the reconciliation response plus
-core's `max(local, service)` seeding keeps the local counter moving forward. If the service has
-cleared stale state but the client still has a local seed, the local hint can restore the
-service-side value and keep the counter from moving backwards. If the client lost local state but
-the service still has a record, the service response restores the seed locally. If both sides have
-lost the value, it is acceptable for the counter to restart; this can happen after local state is
-cleared and stale service state expires, or when multiple user ids share the same client id. After
-reconciliation, `value` may be `NULL` when neither side has a record for the client; core stores `0`
-only when no local seed exists. SDKs may also refresh service state when their user/client context
-changes.
+Core stores whatever value is seeded, without enforcing monotonicity: the SDK owns the
+reconciliation and is expected to seed the effective state accepted by the service. If either the
+client or the service still remembers a higher id, the SDK's reconciliation keeps the local counter
+moving forward. If the service has cleared stale state but the client still has a local seed, the
+local hint can restore the service-side value and keep the counter from moving backwards. If the
+client lost local state but the service still has a record, the service response restores the seed
+locally. If both sides have lost the value, it is acceptable for the counter to restart; this can
+happen after local state is cleared and stale service state expires, or when multiple user ids share
+the same client id. After reconciliation, `value` may be `NULL` when neither side has a record for
+the client; core stores `0` in that case so the state counts as seeded and the first allocation
+returns `1`. SDKs may also refresh service state when their user/client context changes.
 
 `powersync_control('next_checkpoint_request_id', NULL)` must be called inside a transaction during
 an active sync iteration after `last_requested_checkpoint_request_id` exists locally. It increments
