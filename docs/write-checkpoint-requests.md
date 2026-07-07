@@ -273,6 +273,12 @@ waitForSync() {
 The public database method requires an active or connecting sync client, because a disconnected
 request could not be delivered to the service or observed in the sync stream.
 
+Waiters do not need durable applied state across reconnects or app restarts. The connect-time
+counter reconciliation doubles as a re-request: the SDK posts the effective checkpoint request id
+to the service on every connection attempt, so the next checkpoint carries a `write_checkpoint`
+greater than or equal to any previously requested id and core emits a fresh
+`CheckpointRequestApplied` instruction that resolves outstanding waits.
+
 ## `ps_kv` checkpoint state
 
 - `local_target_op`: The current apply gate. It is either `MAX_OP_ID` while local writes are
