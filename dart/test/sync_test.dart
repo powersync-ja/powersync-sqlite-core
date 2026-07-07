@@ -457,6 +457,19 @@ void _syncTests<T>({
     expect(lastRequestedCheckpointRequestId(), 101);
   });
 
+  syncTest('stores seeded checkpoint request ids verbatim', (_) {
+    invokeControlRaw('start', null);
+    invokeControlRaw('seed_checkpoint_request_id', 41);
+    expect(lastRequestedCheckpointRequestId(), 41);
+
+    // Core does not enforce monotonicity when seeding. SDKs own reconciliation and seed the
+    // effective state accepted by the service, which may be below the local counter (e.g. after
+    // switching users).
+    invokeControlRaw('seed_checkpoint_request_id', 5);
+    expect(lastRequestedCheckpointRequestId(), 5);
+    expect(nextCheckpointRequestId(), 6);
+  });
+
   syncTest('requires checkpoint request state before allocating checkpoint ids',
       (_) {
     invokeControlRaw('start', null);

@@ -79,6 +79,10 @@ pub enum SyncControlRequest<'a> {
     StopSyncStream,
     /// The client requests a new checkpoint request id.
     NextCheckpointRequestId,
+    /// The client probes and optionally updates the local target op.
+    ///
+    /// This can run outside of a sync iteration and does not affect it.
+    ProbeLocalTargetOp { target_op: Option<i64> },
     /// The client is forwading a sync event to the core extension.
     SyncEvent(SyncEvent<'a>),
 }
@@ -253,23 +257,13 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                 }),
                 "stop" => SyncControlRequest::StopSyncStream,
                 "next_checkpoint_request_id" => SyncControlRequest::NextCheckpointRequestId,
-                "local_target_op" => {
-                    let target_op = parse_optional_i64_payload(
+                "local_target_op" => SyncControlRequest::ProbeLocalTargetOp {
+                    target_op: parse_optional_i64_payload(
                         *payload,
                         "local target op",
                         "local target op must be an integer, integer string, or null",
-                    )?;
-                    let adapter = state.storage_adapter(db)?;
-                    let target_op = adapter.probe_local_target_op(target_op)?;
-                    let formatted =
-                        serde_json::to_string(&alloc::vec![Instruction::LocalTargetOp {
-                            target_op
-                        },])
-                        .map_err(PowerSyncError::internal)?;
-                    ctx.result_text_transient(&formatted);
-                    ctx.result_subtype(SUBTYPE_JSON);
-                    return Ok(());
-                }
+                    )?,
+                },
                 "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
                     data: if payload.value_type() == ColumnType::Text {
                         payload.text()

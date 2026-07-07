@@ -133,6 +133,10 @@ impl SyncClient {
                 let request_id = self.adapter.next_checkpoint_request_id()?;
                 Ok(alloc::vec![Instruction::CheckpointRequestId { request_id }])
             }
+            SyncControlRequest::ProbeLocalTargetOp { target_op } => {
+                let target_op = self.adapter.probe_local_target_op(target_op)?;
+                Ok(alloc::vec![Instruction::LocalTargetOp { target_op }])
+            }
             SyncControlRequest::StopSyncStream => self.state.tear_down(),
         }
     }
