@@ -984,13 +984,9 @@ impl StreamingSyncIteration {
         timestamp: TimestampMicros,
         applied_checkpoint_request_id: Option<i64>,
     ) {
-        if let Some(request_id) = applied_checkpoint_request_id {
-            event
-                .instructions
-                .push(Instruction::CheckpointRequestApplied { request_id });
-        }
-
-        event.instructions.push(Instruction::DidCompleteSync {});
+        event.instructions.push(Instruction::DidCompleteSync {
+            applied_checkpoint_request_id,
+        });
 
         self.status.update(
             |status| status.applied_checkpoint(timestamp),

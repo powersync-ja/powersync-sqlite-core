@@ -568,8 +568,8 @@ WHERE bucket = ?1",
     ///
     /// This is always the id from the last applied checkpoint as sent by the service - a plain
     /// overwrite with no monotonicity enforced by core. External code owns consistency of these
-    /// ids; waiters should rely on `CheckpointRequestApplied` instructions rather than comparing
-    /// this value across reconnects.
+    /// ids; waiters should rely on `DidCompleteSync.applied_checkpoint_request_id` rather than
+    /// comparing this value across reconnects.
     pub fn persist_last_applied_checkpoint_request_id(
         &self,
         request_id: i64,

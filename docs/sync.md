@@ -93,7 +93,7 @@ progress an older SDK made) as the source of truth instead of failing on the exi
 `next_checkpoint_request_id` to allocate increasing ids for client-created checkpoint requests.
 `last_seen_checkpoint_request_id` and `last_applied_checkpoint_request_id` are high-water marks
 that local writes clear, so only checkpoint request ids observed after a write count towards the
-apply gate. SDKs should use `CheckpointRequestApplied` instructions for explicit checkpoint
+apply gate. SDKs should use `DidCompleteSync.applied_checkpoint_request_id` for explicit checkpoint
 request waits instead of presenting these values as meaningful sync progress.
 
 If `local_target_op` is absent after migration, there is no local write gate waiting for a
@@ -115,15 +115,15 @@ type Instruction = { LogLine: LogLine }
    | { EstablishSyncStream: EstablishSyncStream }
    | { FetchCredentials: FetchCredentials }
    | { CheckpointRequestId: { request_id: number } }
-   | { CheckpointRequestApplied: { request_id: number } }
    | { LocalTargetOp: { target_op: null | number } }
    // Close a connection previously started after EstablishSyncStream
    | { CloseSyncStream: { hide_disconnect: boolean } }
    // For the Dart web client, flush the (otherwise non-durable) file system.
    | { FlushFileSystem: {} }
    // Notify clients that a checkpoint was completed. Clients can clear the
-   // download error state in response to this.
-   | { DidCompleteSync: {} }
+   // download error state in response to this. If a full checkpoint with a
+   // write_checkpoint was applied, applied_checkpoint_request_id is set.
+   | { DidCompleteSync: DidCompleteSync }
 
 interface LogLine {
   severity: 'DEBUG' | 'INFO' | 'WARNING',
@@ -150,10 +150,8 @@ interface UpdateSyncStatus {
   streams: [],
 }
 
-// Emitted when a full checkpoint with a write_checkpoint has been applied locally.
-// SDKs can use this to resolve pending CheckpointRequest waiters.
-interface CheckpointRequestApplied {
-  request_id: number,
+interface DidCompleteSync {
+  applied_checkpoint_request_id?: number,
 }
 
 // Instructs SDKs to refresh credentials from the backend connector.

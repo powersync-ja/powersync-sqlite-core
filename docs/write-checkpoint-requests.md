@@ -16,7 +16,8 @@ At a high level:
 These keys are internal SDK/core state, not user-facing sync progress.
 `last_requested_checkpoint_request_id` is functional allocation state, while
 `last_seen_checkpoint_request_id` and `last_applied_checkpoint_request_id` are mostly diagnostic
-high-water marks. Explicit checkpoint waits should follow `CheckpointRequestApplied` instructions.
+high-water marks. Explicit checkpoint waits should follow
+`DidCompleteSync.applied_checkpoint_request_id`.
 
 SDKs should not write these keys directly. They update the local target through
 `powersync_control('local_target_op', value)`, which is the shared helper for both legacy write
@@ -257,12 +258,12 @@ on completed_upload:
 ```
 
 After a full checkpoint applies, core stores the applied checkpoint request id as
-`last_applied_checkpoint_request_id` and emits a `CheckpointRequestApplied` instruction.
+`last_applied_checkpoint_request_id` and emits it on the `DidCompleteSync` instruction.
 
 ```text
 after full checkpoint apply:
     ps_kv['last_applied_checkpoint_request_id'] = checkpoint.write_checkpoint
-    emit CheckpointRequestApplied { request_id: checkpoint.write_checkpoint }
+    emit DidCompleteSync { applied_checkpoint_request_id: checkpoint.write_checkpoint }
 ```
 
 ## Explicit checkpoint requests
@@ -272,13 +273,13 @@ database has caught up to the service. The SDK creates a checkpoint request id t
 sync client and returns a `CheckpointRequest`-style waiter.
 
 This explicit API does not update `local_target_op`: it is a wait marker, not a local upload gate.
-The returned object waits until core emits `CheckpointRequestApplied` for an id greater than or
-equal to the requested id.
+The returned object waits until core emits `DidCompleteSync` with
+`applied_checkpoint_request_id` greater than or equal to the requested id.
 
 ```text
 waitForSync() {
     for instruction in syncInstructions {
-        return when instruction.CheckpointRequestApplied.request_id >= requestId
+        return when instruction.DidCompleteSync.applied_checkpoint_request_id >= requestId
         throw if sync status reports a sync error
     }
 }
@@ -291,7 +292,7 @@ Waiters do not need durable applied state across reconnects or app restarts. The
 counter reconciliation doubles as a re-request: the SDK posts the effective checkpoint request id
 to the service on every connection attempt, so the next checkpoint carries a `write_checkpoint`
 greater than or equal to any previously requested id and core emits a fresh
-`CheckpointRequestApplied` instruction that resolves outstanding waits.
+`DidCompleteSync.applied_checkpoint_request_id` that resolves outstanding waits.
 
 ## `ps_kv` checkpoint state
 
@@ -309,8 +310,8 @@ greater than or equal to any previously requested id and core emits a fresh
   checkpoint request ids observed after the write can satisfy the apply gate.
 - `last_applied_checkpoint_request_id`: The latest full checkpoint `write_checkpoint` that has been
   applied locally since the last local write, which clears this key. Core persists this for
-  migration/downgrade state and debugging; SDKs should use `CheckpointRequestApplied` instructions
-  to resolve `CheckpointRequest` waits.
+  migration/downgrade state and debugging; SDKs should use
+  `DidCompleteSync.applied_checkpoint_request_id` to resolve `CheckpointRequest` waits.
 
 `powersync_clear` deletes all of these keys in both clear modes (it removes every `ps_kv` entry
 except `client_id`). This is deliberate and mirrors the legacy behavior of deleting the `$local`

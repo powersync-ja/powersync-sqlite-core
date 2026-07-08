@@ -372,8 +372,8 @@ void _syncTests<T>({
       pushCheckpointComplete(),
       contains(
         containsPair(
-          'CheckpointRequestApplied',
-          {'request_id': 1},
+          'DidCompleteSync',
+          {'applied_checkpoint_request_id': 1},
         ),
       ),
     );
@@ -570,7 +570,8 @@ void _syncTests<T>({
 
       expect(
         instructions,
-        isNot(contains(containsPair('CheckpointRequestApplied', anything))),
+        isNot(contains(containsPair('DidCompleteSync',
+            containsPair('applied_checkpoint_request_id', anything)))),
       );
       expect(lastAppliedCheckpointRequestId(), isNull);
 
@@ -592,8 +593,8 @@ void _syncTests<T>({
       appliedInstructions,
       contains(
         containsPair(
-          'CheckpointRequestApplied',
-          {'request_id': 1},
+          'DidCompleteSync',
+          {'applied_checkpoint_request_id': 1},
         ),
       ),
     );
@@ -604,7 +605,7 @@ void _syncTests<T>({
 
     expect(
       instructions,
-      isNot(contains(containsPair('CheckpointRequestApplied', anything))),
+      contains(containsPair('DidCompleteSync', <String, Object?>{})),
     );
 
     final [row] = db.select('select powersync_offline_sync_status();');
