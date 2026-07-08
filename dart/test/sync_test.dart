@@ -402,6 +402,15 @@ void _syncTests<T>({
     final instructions = invokeControl('start', null);
     expect(
       instructions,
+      isNot(contains(containsPair(
+          'UpdateSyncStatus',
+          containsPair(
+              'status',
+              containsPair(
+                  'internal_applied_checkpoint_request_id', anything))))),
+    );
+    expect(
+      instructions,
       contains(
         containsPair(
             'UpdateSyncStatus',
@@ -609,6 +618,15 @@ void _syncTests<T>({
         isNot(contains(containsPair('DidCompleteSync',
             containsPair('applied_checkpoint_request_id', anything)))),
       );
+      expect(
+        instructions,
+        isNot(contains(containsPair(
+            'UpdateSyncStatus',
+            containsPair(
+                'status',
+                containsPair(
+                    'internal_applied_checkpoint_request_id', anything))))),
+      );
       expect(lastAppliedCheckpointRequestId(), isNull);
 
       final [row] = db.select('select powersync_offline_sync_status();');
@@ -634,6 +652,16 @@ void _syncTests<T>({
         ),
       ),
     );
+    expect(
+      appliedInstructions,
+      contains(containsPair(
+        'UpdateSyncStatus',
+        containsPair(
+          'status',
+          containsPair('internal_applied_checkpoint_request_id', 1),
+        ),
+      )),
+    );
     expect(lastAppliedCheckpointRequestId(), 1);
 
     pushCheckpoint(buckets: priorityBuckets);
@@ -642,6 +670,15 @@ void _syncTests<T>({
     expect(
       instructions,
       contains(containsPair('DidCompleteSync', <String, Object?>{})),
+    );
+    expect(
+      instructions,
+      isNot(contains(containsPair(
+          'UpdateSyncStatus',
+          containsPair(
+              'status',
+              containsPair(
+                  'internal_applied_checkpoint_request_id', anything))))),
     );
 
     final [row] = db.select('select powersync_offline_sync_status();');

@@ -133,6 +133,8 @@ impl StorageAdapter {
             priority_status: priority_items,
             downloading: None,
             streams,
+            // Checkpoint requests should not be made or compared while offline.
+            internal_applied_checkpoint_request_id: None,
         })
     }
 

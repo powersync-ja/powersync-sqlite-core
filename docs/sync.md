@@ -62,8 +62,10 @@ what SDKs need to do.
   id to the service, then store the accepted id with `powersync_control('local_target_op', id)`.
 - `local_target_op` is the apply gate for local writes. `next_checkpoint_request_id` only allocates
   ids; it does not update that gate.
-- Resolve explicit checkpoint waiters from `DidCompleteSync.applied_checkpoint_request_id`, not from
-  `ps_kv`.
+- Resolve explicit checkpoint waiters from `DidCompleteSync.applied_checkpoint_request_id`. SDKs
+  that drive waiters from status snapshots can also watch
+  `UpdateSyncStatus.status.internal_applied_checkpoint_request_id`. Treat that status field as
+  runtime-only SDK state, not persisted checkpoint state or app-visible progress.
 
 Most `powersync_control` commands return a JSON-encoded array of instructions for the client.
 `next_checkpoint_request_id` and `local_target_op` return scalar values directly.
@@ -105,6 +107,7 @@ interface UpdateSyncStatus {
   priority_status: [],
   downloading: null | DownloadProgress,
   streams: [],
+  internal_applied_checkpoint_request_id?: number,
 }
 
 interface DidCompleteSync {

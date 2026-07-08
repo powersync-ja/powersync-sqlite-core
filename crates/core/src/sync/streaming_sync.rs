@@ -972,7 +972,7 @@ impl StreamingSyncIteration {
         });
 
         self.status.update(
-            |status| status.applied_checkpoint(timestamp),
+            |status| status.applied_checkpoint(timestamp, applied_checkpoint_request_id),
             &mut event.instructions,
         );
     }
