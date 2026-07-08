@@ -43,66 +43,27 @@ The following commands are supported:
     SQL `NULL` if there was no target. This command can run outside of a sync iteration and does not
     affect it.
 12. `seed_checkpoint_request_id`: Payload is a positive integer or integer string. After receiving
-    `EstablishSyncStream`, SDKs should reconcile the provided local hint with the service
-    checkpoint-request state on every connection attempt. This can bump core when the service is
-    ahead, or restore the service-side value when the service has cleared stale state but core still
-    has a local hint. Then seed core with the reconciled value. Core stores the seeded value
-    verbatim and does not enforce monotonicity; SDKs own the reconciliation and must not seed a
-    stale value. Posting a checkpoint request with an id of at least `1` during reconciliation and
-    seeding the service's response covers the no-record case and doubles as a probe of the service's
-    checkpoint-request support. If both the client and service have lost the value, the counter may
-    restart.
+    `EstablishSyncStream`, SDKs should reconcile the local hint with service-side
+    checkpoint-request state, then seed core with the accepted positive id.
 
-When uploads request a write checkpoint, SDKs should call
-`powersync_control('next_checkpoint_request_id', NULL)` inside a transaction to allocate the id to
-pass to the request-checkpoint API. In checkpoint-request mode, the SDK should first allocate the id,
-then post that id to the service, and then call `powersync_control('local_target_op', id)` with the
-same id once the service accepts the request. This sets the local target op to the request op,
-replacing the pending-write sentinel with the concrete checkpoint request id that the sync stream
-can satisfy. `next_checkpoint_request_id` only advances the request counter; it does not update the
-local target op used to block applying downloaded rows.
+## Checkpoint Request Expectations
 
-`powersync_control('local_target_op', op_id)` probes and optionally updates the internal local
-target op. The same command is used for compatibility when a new SDK is used with an older
-PowerSync service that does not yet support client-created checkpoint requests; after the
-service-side write checkpoint request returns a concrete id, call
-`powersync_control('local_target_op', id)` with that id. Passing `NULL` returns the current target
-without changing it, and passing `0` clears the local target. This command only updates the apply
-gate; it does not allocate, seed, or overwrite `last_requested_checkpoint_request_id`.
+Checkpoint request state exists to protect local writes and to support explicit "wait until synced"
+requests. The detailed state model lives in `write-checkpoint-requests.md`; this section summarizes
+what SDKs need to do.
 
-Database migration v14 moves legacy `$local` checkpoint state into `ps_kv`: `$local.last_applied_op`
-becomes `last_applied_checkpoint_request_id`, `$local.last_op` becomes the internal
-`last_seen_checkpoint_request_id`, and any positive `$local.target_op` is stored as
-`local_target_op`. A concrete `$local.target_op` could be used to seed
-`last_requested_checkpoint_request_id`, but it should be redundant because SDKs reconcile the
-request counter with the service on connect. The migration then deletes the `$local` row, leaving
-only real sync buckets in `ps_buckets`, and drops `ps_buckets.target_op` so
-older SDKs fail hard if they try to keep using the migrated database directly. Downgrading restores
-the column, and restores a `$local` row only when `local_target_op` exists, so older SDKs can keep
-using target-op based blocking without inventing a synthetic local bucket when there was no local
-target state. A restored concrete target remains satisfiable after a downgrade because checkpoint
-request ids and legacy write checkpoint ids share one namespace: the service reports accepted
-checkpoint request ids as the `write_checkpoint` values older-protocol clients observe. Because the down migration keeps the `ps_kv` keys around, the up migration clears
-them before copying, so re-upgrading a downgraded database takes the `$local` row (including any
-progress an older SDK made) as the source of truth instead of failing on the existing keys.
-
-`last_requested_checkpoint_request_id` is internal allocation state used by
-`next_checkpoint_request_id` to allocate increasing ids for client-created checkpoint requests.
-`last_seen_checkpoint_request_id` and `last_applied_checkpoint_request_id` are high-water marks
-that local writes clear, so only checkpoint request ids observed after a write count towards the
-apply gate. SDKs should use `DidCompleteSync.applied_checkpoint_request_id` for explicit checkpoint
-request waits instead of presenting these values as meaningful sync progress.
-
-If `local_target_op` is absent after migration, there is no local write gate waiting for a
-checkpoint. In that case, SDKs can start client-created checkpoint requests normally, even when
-`last_requested_checkpoint_request_id` is undefined and the first allocated id is `1`.
-
-The ambiguous migration case is a migrated `local_target_op` of max op id: local writes are
-pending, but there is no concrete request id to wait for yet. The max-op sentinel may also cover
-earlier pending uploads that were already associated with legacy service-created write checkpoints.
-In that state, create one old-style write checkpoint first, store the returned concrete id with
-`powersync_control('local_target_op', id)`, let that gate resolve, and then switch to
-client-created checkpoint requests after the request counter has been reconciled on connect.
+- On every connection, reconcile `EstablishSyncStream.last_checkpoint_request_id` with the service.
+  Post at least `1` when there is no known id, then call
+  `powersync_control('seed_checkpoint_request_id', acceptedId)`.
+  The service returns the maximum of client and service-side state, so this hydrates a client that
+  lost its local value and recreates service-side state when the service lost its record.
+- Wait for seeding to complete before creating checkpoint requests. For an upload write checkpoint,
+  call `powersync_control('next_checkpoint_request_id', NULL)` in a transaction, post the returned
+  id to the service, then store the accepted id with `powersync_control('local_target_op', id)`.
+- `local_target_op` is the apply gate for local writes. `next_checkpoint_request_id` only allocates
+  ids; it does not update that gate.
+- Resolve explicit checkpoint waiters from `DidCompleteSync.applied_checkpoint_request_id`, not from
+  `ps_kv`.
 
 Most `powersync_control` commands return a JSON-encoded array of instructions for the client.
 `next_checkpoint_request_id` and `local_target_op` return scalar values directly.
