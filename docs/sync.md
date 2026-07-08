@@ -41,20 +41,16 @@ The following commands are supported:
 11. `local_target_op`: Payload is `null`, an integer, or an integer string. Probes, updates or
     clears the local target op and returns the previously-observed value in a `LocalTargetOp`
     result. This command can run outside of a sync iteration and does not affect it.
-12. `seed_checkpoint_request_id`: Payload is `null`, an integer, or an integer string. After
-    receiving `EstablishSyncStream`, SDKs should reconcile the provided local hint with the service
+12. `seed_checkpoint_request_id`: Payload is a positive integer or integer string. After receiving
+    `EstablishSyncStream`, SDKs should reconcile the provided local hint with the service
     checkpoint-request state on every connection attempt. This can bump core when the service is
     ahead, or restore the service-side value when the service has cleared stale state but core still
     has a local hint. Then seed core with the reconciled value. Core stores the seeded value
     verbatim and does not enforce monotonicity; SDKs own the reconciliation and must not seed a
-    stale value. A `NULL` payload is accepted for completeness (core stores `0`, marking the state
-    as seeded so the first allocation returns `1`), but SDKs should not need it in practice:
-    posting a checkpoint request with an id of at least `1` during reconciliation and seeding the
-    service's response covers the no-record case and doubles as a probe of the service's
-    checkpoint-request support. Blindly forwarding a raw `NULL` service response while core holds a
-    counter would reset it, since the store is verbatim (see
-    `docs/write-checkpoint-requests.md`). If both the client and service have lost the value, the
-    counter may restart.
+    stale value. Posting a checkpoint request with an id of at least `1` during reconciliation and
+    seeding the service's response covers the no-record case and doubles as a probe of the service's
+    checkpoint-request support. If both the client and service have lost the value, the counter may
+    restart.
 
 When uploads request a write checkpoint, SDKs should call
 `powersync_control('next_checkpoint_request_id', NULL)` inside a transaction to allocate the id to

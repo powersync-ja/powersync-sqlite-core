@@ -613,17 +613,8 @@ RETURNING value",
     /// The value is stored verbatim: core does not enforce monotonicity here. SDKs are
     /// responsible for reconciling their local hint with the service before seeding, and cannot
     /// allocate new checkpoint request ids until that seeding has completed.
-    ///
-    /// A null service value means the service has no record for this client yet. Store zero in
-    /// that case so the first local allocation returns one while still marking the state as seeded.
-    pub fn seed_checkpoint_request_id(
-        &self,
-        request_id: Option<i64>,
-    ) -> Result<(), PowerSyncError> {
-        self.write_i64_kv(
-            LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY,
-            request_id.unwrap_or(0),
-        )
+    pub fn seed_checkpoint_request_id(&self, request_id: i64) -> Result<(), PowerSyncError> {
+        self.write_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY, request_id)
     }
 
     fn read_i64_kv(&self, key: &'static str) -> Result<Option<i64>, PowerSyncError> {

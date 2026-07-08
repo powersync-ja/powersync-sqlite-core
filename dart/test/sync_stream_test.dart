@@ -62,8 +62,7 @@ void main() {
 
   bool establishesSyncStream(List<Object?> instructions) {
     return instructions.any((instruction) =>
-        instruction is Map &&
-        instruction.containsKey('EstablishSyncStream'));
+        instruction is Map && instruction.containsKey('EstablishSyncStream'));
   }
 
   List<Object?> control(String operation, Object? data) {
@@ -71,7 +70,7 @@ void main() {
     if (operation == 'start' && establishesSyncStream(result)) {
       return [
         ...result,
-        ...controlRaw('seed_checkpoint_request_id', null),
+        ...controlRaw('seed_checkpoint_request_id', 1),
       ];
     }
     return result;

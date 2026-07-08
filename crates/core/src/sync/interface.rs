@@ -98,7 +98,7 @@ pub enum SyncEvent<'a> {
     DidRefreshToken,
     /// Seeds the checkpoint request counter from service state.
     SeedCheckpointRequestId {
-        request_id: Option<i64>,
+        request_id: i64,
     },
     /// Notifies the sync client that the current CRUD upload (for which the client SDK is
     /// responsible) has finished.
@@ -290,10 +290,10 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
                 "seed_checkpoint_request_id" => {
                     SyncControlRequest::SyncEvent(SyncEvent::SeedCheckpointRequestId {
-                        request_id: parse_optional_i64_payload(
+                        request_id: parse_positive_i64_payload(
                             *payload,
                             "checkpoint request id",
-                            "checkpoint request id must be an integer, integer string, or null",
+                            "checkpoint request id must be an integer or integer string",
                         )?,
                     })
                 }
@@ -416,4 +416,22 @@ fn parse_optional_i64_payload(
     }
 
     Ok(Some(value))
+}
+
+fn parse_positive_i64_payload(
+    payload: *mut sqlite::value,
+    name: &'static str,
+    type_error: &'static str,
+) -> Result<i64, PowerSyncError> {
+    let Some(value) = parse_optional_i64_payload(payload, name, type_error)? else {
+        return Err(PowerSyncError::argument_error(type_error));
+    };
+
+    if value == 0 {
+        return Err(PowerSyncError::argument_error(format!(
+            "{name} must be a positive integer"
+        )));
+    }
+
+    Ok(value)
 }

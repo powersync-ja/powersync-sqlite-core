@@ -79,8 +79,8 @@ void _syncTests<T>({
 
     if (operation == 'start' && establishesSyncStream(result)) {
       final seedResult = matcher.enabled
-          ? matcher.invoke('seed_checkpoint_request_id', null)
-          : invokeControlRaw('seed_checkpoint_request_id', null);
+          ? matcher.invoke('seed_checkpoint_request_id', 1)
+          : invokeControlRaw('seed_checkpoint_request_id', 1);
       return [...result, ...seedResult];
     }
 
@@ -233,7 +233,7 @@ void _syncTests<T>({
           'app_metadata': {'key1': 'value1', 'key2': 'value2'}
         }),
       ),
-      ...invokeControlRaw('seed_checkpoint_request_id', null),
+      ...invokeControlRaw('seed_checkpoint_request_id', 1),
     ];
 
     expect(
@@ -430,11 +430,11 @@ void _syncTests<T>({
   syncTest('allocates requested checkpoint request ids', (_) {
     invokeControl('start', null);
 
-    expect(nextCheckpointRequestId(), 1);
-    expect(lastRequestedCheckpointRequestId(), 1);
-
     expect(nextCheckpointRequestId(), 2);
     expect(lastRequestedCheckpointRequestId(), 2);
+
+    expect(nextCheckpointRequestId(), 3);
+    expect(lastRequestedCheckpointRequestId(), 3);
   });
 
   syncTest('seeds requested checkpoint request ids from service state', (_) {
@@ -468,12 +468,32 @@ void _syncTests<T>({
     invokeControlRaw('seed_checkpoint_request_id', 5);
     expect(lastRequestedCheckpointRequestId(), 5);
     expect(nextCheckpointRequestId(), 6);
+  });
 
-    // A NULL seed is stored as 0, restarting the counter. Forwarding a raw NULL service response
-    // while a counter exists resets it - SDKs must reconcile before seeding.
-    invokeControlRaw('seed_checkpoint_request_id', null);
-    expect(lastRequestedCheckpointRequestId(), 0);
-    expect(nextCheckpointRequestId(), 1);
+  syncTest('rejects absent checkpoint request ids when seeding', (_) {
+    invokeControlRaw('start', null);
+
+    expect(
+      () => invokeControlRaw('seed_checkpoint_request_id', null),
+      throwsA(isSqliteException(
+        3091,
+        contains('checkpoint request id must be an integer or integer string'),
+      )),
+    );
+    expect(lastRequestedCheckpointRequestId(), isNull);
+  });
+
+  syncTest('rejects zero checkpoint request ids when seeding', (_) {
+    invokeControlRaw('start', null);
+
+    expect(
+      () => invokeControlRaw('seed_checkpoint_request_id', 0),
+      throwsA(isSqliteException(
+        3091,
+        contains('checkpoint request id must be a positive integer'),
+      )),
+    );
+    expect(lastRequestedCheckpointRequestId(), isNull);
   });
 
   syncTest('accepts text checkpoint request ids when seeding', (_) {
@@ -1104,7 +1124,7 @@ void _syncTests<T>({
       db.execute('DELETE FROM ps_crud');
       probeLocalTargetOp(1);
       expect(invokeControl('completed_upload', null), isEmpty);
-      expect(lastRequestedCheckpointRequestId(), 0);
+      expect(lastRequestedCheckpointRequestId(), 1);
 
       // Sync afterwards containing data and write checkpoint.
       pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');

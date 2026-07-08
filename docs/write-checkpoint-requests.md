@@ -156,14 +156,13 @@ locally. If both sides have lost the value, it is acceptable for the counter to 
 happen after local state is cleared and stale service state expires, or when multiple user ids share
 the same client id. SDKs may also refresh service state when their user/client context changes.
 
-Because seeds are stored verbatim, seeding `NULL` (or a low id) while core holds a higher counter
-resets that counter, and previously allocated ids would be handed out again. SDKs must therefore
-never forward a raw service response without reconciling: the recommended pattern is to always post
-an id of at least `1` (the maximum of the local hint and any concrete local target) during
-reconciliation and seed core with the service's response to that request. In practice SDKs never
-need to seed `NULL` at all — when there is no local record, posting a checkpoint request with id
-`1` works and doubles as a probe of the service's checkpoint-request support. Core still accepts a
-`NULL` seed for completeness.
+Because seeds are stored verbatim, seeding a low id while core holds a higher counter resets that
+counter, and previously allocated ids would be handed out again. SDKs must therefore never forward
+a raw service response without reconciling: the recommended pattern is to always post an id of at
+least `1` (the maximum of the local hint and any concrete local target) during reconciliation and
+seed core with the service's response to that request. When there is no local record, posting a
+checkpoint request with id `1` works and doubles as a probe of the service's checkpoint-request
+support. Core rejects `NULL` seeds.
 
 `powersync_control('next_checkpoint_request_id', NULL)` must be called inside a transaction during
 an active sync iteration after `last_requested_checkpoint_request_id` exists locally. It increments

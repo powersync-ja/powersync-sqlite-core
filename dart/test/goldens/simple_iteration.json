@@ -35,7 +35,7 @@
   },
   {
     "operation": "seed_checkpoint_request_id",
-    "data": null,
+    "data": 1,
     "output": []
   },
   {
