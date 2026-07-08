@@ -77,12 +77,6 @@ pub enum SyncControlRequest<'a> {
     StartSyncStream(StartSyncStream),
     /// The client requests to stop the current sync iteration.
     StopSyncStream,
-    /// The client requests a new checkpoint request id.
-    NextCheckpointRequestId,
-    /// The client probes and optionally updates the local target op.
-    ///
-    /// This can run outside of a sync iteration and does not affect it.
-    ProbeLocalTargetOp { target_op: Option<i64> },
     /// The client is forwading a sync event to the core extension.
     SyncEvent(SyncEvent<'a>),
 }
@@ -156,12 +150,6 @@ pub enum Instruction {
         /// If false, this is a pre-fetch.
         did_expire: bool,
     },
-    /// Return a newly allocated checkpoint request id to the SDK.
-    CheckpointRequestId { request_id: i64 },
-    /// Return the local target op value observed before an optional update.
-    LocalTargetOp { target_op: Option<i64> },
-    // These are defined like this because deserializers in Kotlin can't support either an
-    // object or a literal value
     /// Close the websocket / HTTP stream to the sync service.
     CloseSyncStream(CloseSyncStream),
     /// Flush the file-system if it's non-durable (only applicable to the Dart SDK).
@@ -261,14 +249,46 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     }
                 }),
                 "stop" => SyncControlRequest::StopSyncStream,
-                "next_checkpoint_request_id" => SyncControlRequest::NextCheckpointRequestId,
-                "local_target_op" => SyncControlRequest::ProbeLocalTargetOp {
-                    target_op: parse_optional_i64_payload(
+                "next_checkpoint_request_id" => {
+                    let has_sync_iteration = {
+                        let client = state.sync_client.borrow();
+                        client
+                            .as_ref()
+                            .map(|client| client.has_sync_iteration())
+                            .unwrap_or(false)
+                    };
+
+                    if !has_sync_iteration {
+                        return Err(PowerSyncError::state_error("No iteration is active"));
+                    }
+
+                    let adapter = state.storage_adapter(db)?;
+                    if !adapter.has_checkpoint_request_id()? {
+                        return Err(PowerSyncError::state_error(
+                            "Checkpoint request state has not been seeded",
+                        ));
+                    }
+
+                    let request_id = adapter.next_checkpoint_request_id()?;
+                    ctx.result_int64(request_id);
+                    return Ok(());
+                }
+                "local_target_op" => {
+                    let target_op = parse_optional_i64_payload(
                         *payload,
                         "local target op",
                         "local target op must be an integer, integer string, or null",
-                    )?,
-                },
+                    )?;
+                    let adapter = state.storage_adapter(db)?;
+                    let previous_target_op = adapter.probe_local_target_op(target_op)?;
+
+                    match previous_target_op {
+                        Some(target_op) => ctx.result_int64(target_op),
+                        None => ctx.result_null(),
+                    }
+
+                    return Ok(());
+                }
                 "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
                     data: if payload.value_type() == ColumnType::Text {
                         payload.text()

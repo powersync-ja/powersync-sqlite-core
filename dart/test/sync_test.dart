@@ -63,6 +63,26 @@ void _syncTests<T>({
     return jsonDecode(row.columnAt(0));
   }
 
+  Object? invokeControlScalar(String operation, Object? data) {
+    db.execute('begin');
+    ResultSet result;
+
+    try {
+      result = db.select('SELECT powersync_control(?, ?)', [operation, data]);
+
+      const statement = 'SELECT * FROM sqlite_stmt WHERE busy AND sql != ?;';
+      final busy = db.select(statement, [statement]);
+      expect(busy, isEmpty);
+    } catch (e) {
+      db.execute('rollback');
+      rethrow;
+    }
+
+    db.execute('commit');
+    final [row] = result;
+    return row.columnAt(0);
+  }
+
   bool establishesSyncStream(List<Object?> instructions) {
     return instructions.any((instruction) =>
         instruction is Map && instruction.containsKey('EstablishSyncStream'));
@@ -170,15 +190,11 @@ void _syncTests<T>({
   }
 
   int nextCheckpointRequestId() {
-    final [instruction] = invokeControl('next_checkpoint_request_id', null);
-    final data = (instruction as Map)['CheckpointRequestId'] as Map;
-    return data['request_id'] as int;
+    return invokeControlScalar('next_checkpoint_request_id', null) as int;
   }
 
   Object? probeLocalTargetOp([Object? opId]) {
-    final [instruction] = invokeControl('local_target_op', opId);
-    final data = (instruction as Map)['LocalTargetOp'] as Map;
-    return data['target_op'];
+    return invokeControlScalar('local_target_op', opId);
   }
 
   ResultSet fetchRows() {

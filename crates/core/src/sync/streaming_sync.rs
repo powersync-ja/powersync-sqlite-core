@@ -117,23 +117,6 @@ impl SyncClient {
                     Ok(active.instructions)
                 }
             }
-            SyncControlRequest::NextCheckpointRequestId => {
-                if !self.has_sync_iteration() {
-                    return Err(PowerSyncError::state_error("No iteration is active"));
-                }
-                if !self.adapter.has_checkpoint_request_id()? {
-                    return Err(PowerSyncError::state_error(
-                        "Checkpoint request state has not been seeded",
-                    ));
-                }
-
-                let request_id = self.adapter.next_checkpoint_request_id()?;
-                Ok(alloc::vec![Instruction::CheckpointRequestId { request_id }])
-            }
-            SyncControlRequest::ProbeLocalTargetOp { target_op } => {
-                let target_op = self.adapter.probe_local_target_op(target_op)?;
-                Ok(alloc::vec![Instruction::LocalTargetOp { target_op }])
-            }
             SyncControlRequest::StopSyncStream => self.state.tear_down(),
         }
     }

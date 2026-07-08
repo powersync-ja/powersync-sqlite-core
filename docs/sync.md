@@ -36,11 +36,12 @@ The following commands are supported:
 9. `subscriptions`: Store a new sync stream subscription in the database or remove it.
    This command can run outside of a sync iteration and does not affect it.
 10. `next_checkpoint_request_id`: No payload. During an active sync iteration after checkpoint
-    request state exists locally, allocates and returns the next checkpoint request id in a
-    `CheckpointRequestId` instruction.
+    request state exists locally, allocates and returns the next checkpoint request id as an
+    integer result.
 11. `local_target_op`: Payload is `null`, an integer, or an integer string. Probes, updates or
-    clears the local target op and returns the previously-observed value in a `LocalTargetOp`
-    result. This command can run outside of a sync iteration and does not affect it.
+    clears the local target op and returns the previously-observed value as an integer result, or
+    SQL `NULL` if there was no target. This command can run outside of a sync iteration and does not
+    affect it.
 12. `seed_checkpoint_request_id`: Payload is a positive integer or integer string. After receiving
     `EstablishSyncStream`, SDKs should reconcile the provided local hint with the service
     checkpoint-request state on every connection attempt. This can bump core when the service is
@@ -103,15 +104,14 @@ In that state, create one old-style write checkpoint first, store the returned c
 `powersync_control('local_target_op', id)`, let that gate resolve, and then switch to
 client-created checkpoint requests after the request counter has been reconciled on connect.
 
-`powersync_control` returns a JSON-encoded array of instructions for the client:
+Most `powersync_control` commands return a JSON-encoded array of instructions for the client.
+`next_checkpoint_request_id` and `local_target_op` return scalar values directly.
 
 ```typescript
 type Instruction = { LogLine: LogLine }
    | { UpdateSyncStatus: UpdateSyncStatus }
    | { EstablishSyncStream: EstablishSyncStream }
    | { FetchCredentials: FetchCredentials }
-   | { CheckpointRequestId: { request_id: number } }
-   | { LocalTargetOp: { target_op: null | number } }
    // Close a connection previously started after EstablishSyncStream
    | { CloseSyncStream: { hide_disconnect: boolean } }
    // For the Dart web client, flush the (otherwise non-durable) file system.

@@ -92,7 +92,7 @@ The SDK implementation:
 
 ```text
 let previousTarget = transaction {
-    powersync_control('local_target_op', NULL).LocalTargetOp.target_op
+    powersync_control('local_target_op', NULL)
 }
 
 if previousTarget == MAX_OP_ID {
@@ -116,7 +116,7 @@ the request. Only then does the upload path store that id as `local_target_op` w
 
 ```text
 let requestId = transaction {
-    powersync_control('next_checkpoint_request_id', NULL).CheckpointRequestId.request_id
+    powersync_control('next_checkpoint_request_id', NULL)
 }
 
 POST /sync/checkpoint-request {
@@ -166,7 +166,7 @@ support. Core rejects `NULL` seeds.
 
 `powersync_control('next_checkpoint_request_id', NULL)` must be called inside a transaction during
 an active sync iteration after `last_requested_checkpoint_request_id` exists locally. It increments
-and returns `last_requested_checkpoint_request_id` in a `CheckpointRequestId` instruction.
+and returns `last_requested_checkpoint_request_id` as an integer result.
 
 ```sql
 INSERT INTO ps_kv(key, value)
@@ -204,7 +204,7 @@ active sync iteration:
 This command only updates the apply gate. It does not allocate, seed, or overwrite
 `last_requested_checkpoint_request_id`.
 
-The command returns the previous target value in a `LocalTargetOp` result, or `NULL` if there was no
+The command returns the previous target value as an integer result, or SQL `NULL` if there was no
 target.
 
 ```text
