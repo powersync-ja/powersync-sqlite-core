@@ -77,9 +77,10 @@ impl StorageAdapter {
 
     pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>, PowerSyncError> {
         // language=SQLite
-        let statement = self.db.prepare_v2(
-            "SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0 AND name != '$local'",
-        ).into_db_result(self.db)?;
+        let statement = self
+            .db
+            .prepare_v2("SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0")
+            .into_db_result(self.db)?;
 
         let mut requests = Vec::<BucketRequest>::new();
 
@@ -555,8 +556,7 @@ WHERE bucket = ?1",
 
     /// Persists the checkpoint request id observed in a complete sync checkpoint.
     ///
-    /// This replaces the legacy `$local.last_op` bookkeeping used to decide whether downloaded
-    /// data can be applied after local uploads complete.
+    /// This is used to decide whether downloaded data can be applied after local uploads complete.
     pub fn persist_last_seen_checkpoint_request_id(
         &self,
         request_id: i64,

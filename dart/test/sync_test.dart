@@ -784,7 +784,7 @@ void _syncTests<T>({
   });
 
   test('deletes old buckets', () {
-    for (final name in ['one', 'two', 'three', r'$local']) {
+    for (final name in ['one', 'two', 'three']) {
       db.execute('INSERT INTO ps_buckets (name) VALUES (?)', [name]);
     }
 
@@ -816,7 +816,6 @@ void _syncTests<T>({
     // Should delete the old buckets two and three
     expect(db.select('select name from ps_buckets order by id'), [
       {'name': 'one'},
-      {'name': r'$local'}
     ]);
   });
 

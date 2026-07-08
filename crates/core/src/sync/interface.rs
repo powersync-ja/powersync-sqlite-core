@@ -400,6 +400,8 @@ fn parse_optional_i64_payload(
     let value = match payload.value_type() {
         ColumnType::Null => return Ok(None),
         ColumnType::Integer => payload.int64(),
+        // Allow decimal strings as a fallback for JavaScript SQLite drivers that can't bind
+        // 64-bit integers as BigInt without losing precision through Number.
         ColumnType::Text => payload
             .text()
             .parse::<i64>()
