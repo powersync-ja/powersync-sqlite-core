@@ -121,10 +121,12 @@ DidCompleteSync { applied_checkpoint_request_id?: checkpoint.write_checkpoint }
 SDKs should resolve `requestCheckpoint()` / `waitForSync()` waiters when this value is greater than
 or equal to the requested id.
 
-Core also includes the same applied request id in
-`UpdateSyncStatus.status.internal_applied_checkpoint_request_id` for the status update emitted with
-the completed checkpoint. SDKs may use that for status-stream waiters, but should treat it as
-internal, runtime-only state rather than app-visible progress or persisted checkpoint state.
+Core also includes the applied request id in
+`UpdateSyncStatus.status.internal_last_applied_checkpoint_request_id` when a status update follows a
+checkpoint apply with a `write_checkpoint`. Later status updates without an applied request id,
+including disconnect updates, clear the field. SDKs may use this for status-stream waiters, but
+should treat it as internal, runtime-only state rather than app-visible progress or persisted
+checkpoint state.
 
 ## Control Commands
 

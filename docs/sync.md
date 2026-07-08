@@ -64,7 +64,7 @@ what SDKs need to do.
   ids; it does not update that gate.
 - Resolve explicit checkpoint waiters from `DidCompleteSync.applied_checkpoint_request_id`. SDKs
   that drive waiters from status snapshots can also watch
-  `UpdateSyncStatus.status.internal_applied_checkpoint_request_id`. Treat that status field as
+  `UpdateSyncStatus.status.internal_last_applied_checkpoint_request_id`. Treat that status field as
   runtime-only SDK state, not persisted checkpoint state or app-visible progress.
 
 Most `powersync_control` commands return a JSON-encoded array of instructions for the client.
@@ -107,7 +107,7 @@ interface UpdateSyncStatus {
   priority_status: [],
   downloading: null | DownloadProgress,
   streams: [],
-  internal_applied_checkpoint_request_id?: number,
+  internal_last_applied_checkpoint_request_id?: number,
 }
 
 interface DidCompleteSync {

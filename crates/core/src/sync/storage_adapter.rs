@@ -134,7 +134,7 @@ impl StorageAdapter {
             downloading: None,
             streams,
             // Checkpoint requests should not be made or compared while offline.
-            internal_applied_checkpoint_request_id: None,
+            internal_last_applied_checkpoint_request_id: None,
         })
     }
 

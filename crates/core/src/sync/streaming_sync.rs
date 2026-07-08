@@ -967,6 +967,13 @@ impl StreamingSyncIteration {
         timestamp: TimestampMicros,
         applied_checkpoint_request_id: Option<i64>,
     ) {
+        if let Some(request_id) = applied_checkpoint_request_id {
+            event.instructions.push(Instruction::LogLine {
+                severity: LogSeverity::DEBUG,
+                line: format!("Applied checkpoint request id {request_id}").into(),
+            });
+        }
+
         event.instructions.push(Instruction::DidCompleteSync {
             applied_checkpoint_request_id,
         });

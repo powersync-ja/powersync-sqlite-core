@@ -407,7 +407,7 @@ void _syncTests<T>({
           containsPair(
               'status',
               containsPair(
-                  'internal_applied_checkpoint_request_id', anything))))),
+                  'internal_last_applied_checkpoint_request_id', anything))))),
     );
     expect(
       instructions,
@@ -624,8 +624,8 @@ void _syncTests<T>({
             'UpdateSyncStatus',
             containsPair(
                 'status',
-                containsPair(
-                    'internal_applied_checkpoint_request_id', anything))))),
+                containsPair('internal_last_applied_checkpoint_request_id',
+                    anything))))),
       );
       expect(lastAppliedCheckpointRequestId(), isNull);
 
@@ -654,11 +654,16 @@ void _syncTests<T>({
     );
     expect(
       appliedInstructions,
+      contains(containsPair('LogLine',
+          {'severity': 'DEBUG', 'line': 'Applied checkpoint request id 1'})),
+    );
+    expect(
+      appliedInstructions,
       contains(containsPair(
         'UpdateSyncStatus',
         containsPair(
           'status',
-          containsPair('internal_applied_checkpoint_request_id', 1),
+          containsPair('internal_last_applied_checkpoint_request_id', 1),
         ),
       )),
     );
@@ -678,7 +683,7 @@ void _syncTests<T>({
           containsPair(
               'status',
               containsPair(
-                  'internal_applied_checkpoint_request_id', anything))))),
+                  'internal_last_applied_checkpoint_request_id', anything))))),
     );
 
     final [row] = db.select('select powersync_offline_sync_status();');
@@ -689,6 +694,29 @@ void _syncTests<T>({
 
     expect(
         db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"), isEmpty);
+  });
+
+  syncTest('disconnect clears applied checkpoint request id from status', (_) {
+    invokeControl('start', null);
+
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+    pushCheckpointComplete();
+
+    final instructions = invokeControl('stop', null);
+    expect(
+      instructions,
+      contains(containsPair(
+        'UpdateSyncStatus',
+        containsPair(
+          'status',
+          allOf(
+            containsPair('connected', false),
+            isNot(containsPair(
+                'internal_last_applied_checkpoint_request_id', anything)),
+          ),
+        ),
+      )),
+    );
   });
 
   syncTest('local writes clear checkpoint request high-water marks', (_) {
@@ -1160,7 +1188,13 @@ void _syncTests<T>({
 
       // Now complete the upload process.
       probeLocalTargetOp(1);
-      invokeControl('completed_upload', null);
+      final uploadCompleteInstructions =
+          invokeControl('completed_upload', null);
+      expect(
+        uploadCompleteInstructions,
+        contains(containsPair('LogLine',
+            {'severity': 'DEBUG', 'line': 'Applied checkpoint request id 1'})),
+      );
 
       // This should apply the pending write checkpoint.
       expect(fetchRows(), [
