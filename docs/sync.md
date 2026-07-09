@@ -52,28 +52,9 @@ The following commands are supported:
 ## Checkpoint Request Expectations
 
 Checkpoint request state exists to protect local writes and to support explicit "wait until synced"
-requests. The detailed state model lives in `write-checkpoint-requests.md`; this section summarizes
-what SDKs need to do.
-
-- On every connection, reconcile `EstablishSyncStream.last_checkpoint_request_id` with the service.
-  Post at least `1` when there is no known id, then call
-  `powersync_control('seed_checkpoint_request_id', acceptedId)`.
-  The service returns the maximum of client and service-side state, so this hydrates a client that
-  lost its local value and recreates service-side state when the service lost its record.
-- Wait for seeding to complete before creating checkpoint requests. For an upload write checkpoint,
-  call `powersync_control('next_checkpoint_request_id', NULL)` in a transaction, post the returned
-  id to the service, then store the accepted id with `powersync_control('target_checkpoint_request_id', id)`.
-- `target_checkpoint_request_id` is the apply gate for local writes. `next_checkpoint_request_id` only allocates
-  ids; it does not update that gate.
-- To retry a checkpoint request without incrementing the counter, read
-  `powersync_control('current_checkpoint_request_id', NULL)` and repost that id when the SDK's
-  runtime last-applied checkpoint request id is absent or lower.
-- Resolve explicit checkpoint waiters from `DidCompleteSync.applied_checkpoint_request_id`. SDKs
-  that drive waiters from the sync status should react to
-  `UpdateSyncStatus.status.internal_last_applied_checkpoint_request_id` on the status update that
-  carries it: core clears the field on later status updates without an applied request id and on
-  reconnects, so it is an event-style signal, not a high-water mark to poll. Treat that status
-  field as runtime-only SDK state, not persisted checkpoint state or app-visible progress.
+requests. The state model, the per-connection reconciliation and seeding flow, and how SDKs resolve
+checkpoint waiters (through `DidCompleteSync.applied_checkpoint_request_id` or the equivalent
+sync-status field) are documented in `write-checkpoint-requests.md`.
 
 Most `powersync_control` commands return a JSON-encoded array of instructions for the client.
 `next_checkpoint_request_id`, `current_checkpoint_request_id` and `target_checkpoint_request_id` return values
