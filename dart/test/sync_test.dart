@@ -197,6 +197,10 @@ void _syncTests<T>({
     return invokeControlScalar('local_target_op', opId);
   }
 
+  Object? currentCheckpointRequestId() {
+    return invokeControlScalar('current_checkpoint_request_id', null);
+  }
+
   ResultSet fetchRows() {
     return db.select('select * from items');
   }
@@ -460,6 +464,31 @@ void _syncTests<T>({
 
     expect(nextCheckpointRequestId(), 3);
     expect(lastRequestedCheckpointRequestId(), 3);
+  });
+
+  syncTest('reports current checkpoint request id without incrementing', (_) {
+    expect(currentCheckpointRequestId(), isNull);
+
+    invokeControlRaw('start', null);
+    invokeControlRaw('seed_checkpoint_request_id', 1);
+    expect(currentCheckpointRequestId(), 1);
+
+    expect(currentCheckpointRequestId(), 1);
+    expect(nextCheckpointRequestId(), 2);
+    expect(currentCheckpointRequestId(), 2);
+    expect(lastRequestedCheckpointRequestId(), 2);
+
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '2');
+    pushCheckpointComplete();
+    expect(lastAppliedCheckpointRequestId(), 2);
+    expect(currentCheckpointRequestId(), 2);
+
+    db.execute("insert into items (id, col) values ('local', 'data');");
+    expect(lastAppliedCheckpointRequestId(), isNull);
+    expect(currentCheckpointRequestId(), 2);
+
+    expect(nextCheckpointRequestId(), 3);
+    expect(currentCheckpointRequestId(), 3);
   });
 
   syncTest('seeds requested checkpoint request ids from service state', (_) {

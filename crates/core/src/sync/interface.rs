@@ -289,6 +289,14 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
 
                     return Ok(());
                 }
+                "current_checkpoint_request_id" => {
+                    let adapter = state.storage_adapter(db)?;
+                    match adapter.last_checkpoint_request_id()? {
+                        Some(request_id) => ctx.result_int64(request_id),
+                        None => ctx.result_null(),
+                    }
+                    return Ok(());
+                }
                 "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
                     data: if payload.value_type() == ColumnType::Text {
                         payload.text()

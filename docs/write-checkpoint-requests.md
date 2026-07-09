@@ -59,6 +59,16 @@ the service lost its record, posting the local hint recreates the service-side s
 seeded request counter. SDKs should wait for the connection reconciliation and seed step before
 creating checkpoint requests.
 
+To retry an existing checkpoint request without advancing the counter, SDKs can read:
+
+```text
+powersync_control('current_checkpoint_request_id', NULL)
+```
+
+Core returns the current sequence value as a SQLite integer, or SQL `NULL` when the counter has not
+been seeded. SDKs can compare this with their runtime last-applied checkpoint request id and repost
+the current id when the applied id is absent or lower.
+
 ## Local Write Gate
 
 A local write records CRUD and sets:
@@ -144,6 +154,13 @@ checkpoint state.
 - Participates in the caller's transaction. If the transaction rolls back after the id was posted
   to the service, retrying posts the same id again, which is safe because the service treats the
   latest posted id as effective state.
+
+`powersync_control('current_checkpoint_request_id', NULL)`
+
+- Returns: current checkpoint request sequence value as a SQLite integer, or SQL `NULL` if absent.
+- Does not allocate a new id.
+- SDKs should compare this with their runtime last-applied checkpoint request id to decide whether
+  to repost the current id.
 
 `powersync_control('local_target_op', value)`
 
