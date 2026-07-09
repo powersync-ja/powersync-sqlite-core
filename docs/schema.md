@@ -31,7 +31,7 @@ a checkpoint and that we have validated its checksum).
 8. `count_since_last`: The amount of operations downloaded since the last verified checkpoint.
 
 Schema version 14 removes the legacy `target_op` column after migrating `$local.target_op` to
-`ps_kv.local_target_op`, and deletes the `$local` row so `ps_buckets` only contains real sync
+`ps_kv.target_checkpoint_request_id`, and deletes the `$local` row so `ps_buckets` only contains real sync
 buckets. This makes older SDKs fail with a hard SQLite error if they try to keep using the migrated
 database without downgrading. That failure is deliberate — including for multi-process deployments
 where processes with mixed SDK versions share one database — because an older SDK silently

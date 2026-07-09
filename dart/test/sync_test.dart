@@ -193,8 +193,8 @@ void _syncTests<T>({
     return invokeControlScalar('next_checkpoint_request_id', null) as int;
   }
 
-  Object? probeLocalTargetOp([Object? opId]) {
-    return invokeControlScalar('local_target_op', opId);
+  Object? probeTargetCheckpointRequestId([Object? opId]) {
+    return invokeControlScalar('target_checkpoint_request_id', opId);
   }
 
   Object? currentCheckpointRequestId() {
@@ -569,61 +569,61 @@ void _syncTests<T>({
         contains('Checkpoint request state has not been seeded'),
       )),
     );
-    expect(probeLocalTargetOp(), isNull);
+    expect(probeTargetCheckpointRequestId(), isNull);
   });
 
-  syncTest('probes and updates local target op without sync iteration', (_) {
-    expect(probeLocalTargetOp(), isNull);
-    expect(probeLocalTargetOp(1), isNull);
+  syncTest('probes and updates target checkpoint request id without sync iteration', (_) {
+    expect(probeTargetCheckpointRequestId(), isNull);
+    expect(probeTargetCheckpointRequestId(1), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
-    expect(probeLocalTargetOp(), 1);
+    expect(probeTargetCheckpointRequestId(), 1);
 
-    expect(probeLocalTargetOp(2), 1);
+    expect(probeTargetCheckpointRequestId(2), 1);
     expect(lastRequestedCheckpointRequestId(), isNull);
-    expect(probeLocalTargetOp(), 2);
+    expect(probeTargetCheckpointRequestId(), 2);
   });
 
-  syncTest('accepts text checkpoint request ids for local target op', (_) {
-    expect(probeLocalTargetOp('1'), isNull);
+  syncTest('accepts text checkpoint request ids for target checkpoint request id', (_) {
+    expect(probeTargetCheckpointRequestId('1'), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
-    expect(probeLocalTargetOp(), 1);
+    expect(probeTargetCheckpointRequestId(), 1);
   });
 
-  syncTest('rejects negative local target ops', (_) {
+  syncTest('rejects negative target checkpoint request ids', (_) {
     expect(
-      () => invokeControlRaw('local_target_op', -1),
+      () => invokeControlRaw('target_checkpoint_request_id', -1),
       throwsA(isSqliteException(
         3091,
-        contains('local target op must be a non-negative integer'),
+        contains('target checkpoint request id must be a non-negative integer'),
       )),
     );
   });
 
-  syncTest('local target op does not update checkpoint request id', (_) {
+  syncTest('target checkpoint request id does not update checkpoint request id', (_) {
     invokeControlRaw('start', null);
     invokeControlRaw('seed_checkpoint_request_id', 10);
 
     expect(lastRequestedCheckpointRequestId(), 10);
-    expect(probeLocalTargetOp(7), isNull);
-    expect(probeLocalTargetOp(), 7);
+    expect(probeTargetCheckpointRequestId(7), isNull);
+    expect(probeTargetCheckpointRequestId(), 7);
     expect(lastRequestedCheckpointRequestId(), 10);
   });
 
   syncTest('does not store target ops as checkpoint request id', (_) {
-    expect(probeLocalTargetOp(0), isNull);
+    expect(probeTargetCheckpointRequestId(0), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
-    expect(probeLocalTargetOp(), isNull);
+    expect(probeTargetCheckpointRequestId(), isNull);
 
-    expect(probeLocalTargetOp(1), isNull);
+    expect(probeTargetCheckpointRequestId(1), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
-    expect(probeLocalTargetOp(), 1);
+    expect(probeTargetCheckpointRequestId(), 1);
 
-    expect(probeLocalTargetOp(0), 1);
-    expect(probeLocalTargetOp(), isNull);
+    expect(probeTargetCheckpointRequestId(0), 1);
+    expect(probeTargetCheckpointRequestId(), isNull);
 
-    expect(probeLocalTargetOp(9223372036854775807), isNull);
+    expect(probeTargetCheckpointRequestId(9223372036854775807), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
-    expect(probeLocalTargetOp(), 9223372036854775807);
+    expect(probeTargetCheckpointRequestId(), 9223372036854775807);
   });
 
   syncTest('does not persist placeholder checkpoint request id', (_) {
@@ -766,7 +766,7 @@ void _syncTests<T>({
           "SELECT 1 FROM ps_kv WHERE key = 'last_seen_checkpoint_request_id'"),
       isEmpty,
     );
-    expect(probeLocalTargetOp(), 9223372036854775807);
+    expect(probeTargetCheckpointRequestId(), 9223372036854775807);
   });
 
   test('clearing database clears sync status', () {
@@ -1216,7 +1216,7 @@ void _syncTests<T>({
       ]);
 
       // Now complete the upload process.
-      probeLocalTargetOp(1);
+      probeTargetCheckpointRequestId(1);
       final uploadCompleteInstructions =
           invokeControl('completed_upload', null);
       expect(
@@ -1238,7 +1238,7 @@ void _syncTests<T>({
 
       // Complete upload process
       db.execute('DELETE FROM ps_crud');
-      probeLocalTargetOp(1);
+      probeTargetCheckpointRequestId(1);
       expect(invokeControl('completed_upload', null), isEmpty);
       expect(lastRequestedCheckpointRequestId(), 1);
 
@@ -1268,7 +1268,7 @@ void _syncTests<T>({
       ]);
 
       // Now the upload is complete and requests a write checkpoint
-      probeLocalTargetOp(1);
+      probeTargetCheckpointRequestId(1);
       expect(invokeControl('completed_upload', null), isEmpty);
 
       // Which triggers a new iteration
@@ -1305,7 +1305,7 @@ void _syncTests<T>({
       db.execute("insert into items (id, col) values ('local2', 'data2');");
 
       // Now the upload is complete and requests a write checkpoint
-      probeLocalTargetOp(1);
+      probeTargetCheckpointRequestId(1);
       expect(invokeControl('completed_upload', null), [
         containsPair('LogLine', {
           'severity': 'WARNING',

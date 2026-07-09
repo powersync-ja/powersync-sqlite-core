@@ -273,17 +273,17 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     ctx.result_int64(request_id);
                     return Ok(());
                 }
-                "local_target_op" => {
-                    let target_op = parse_optional_i64_payload(
+                "target_checkpoint_request_id" => {
+                    let target = parse_optional_i64_payload(
                         *payload,
-                        "local target op",
-                        "local target op must be an integer, integer string, or null",
+                        "target checkpoint request id",
+                        "target checkpoint request id must be an integer, integer string, or null",
                     )?;
                     let adapter = state.storage_adapter(db)?;
-                    let previous_target_op = adapter.probe_local_target_op(target_op)?;
+                    let previous_target = adapter.probe_target_checkpoint_request_id(target)?;
 
-                    match previous_target_op {
-                        Some(target_op) => ctx.result_int64(target_op),
+                    match previous_target {
+                        Some(target) => ctx.result_int64(target),
                         None => ctx.result_null(),
                     }
 

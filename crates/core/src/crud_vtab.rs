@@ -252,7 +252,7 @@ impl SimpleCrudTransactionMode {
             // restart. Keeping them around could open the apply gate for a newly allocated target
             // id that compares below a stale seen value.
             db.exec_safe(formatcp!(
-                "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('local_target_op', {MAX_OP_ID});
+                "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('target_checkpoint_request_id', {MAX_OP_ID});
 DELETE FROM ps_kv WHERE key IN ('last_seen_checkpoint_request_id', 'last_applied_checkpoint_request_id')"
             ))?;
             self.had_writes = true;

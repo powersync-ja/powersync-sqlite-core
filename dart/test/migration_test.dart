@@ -109,7 +109,7 @@ VALUES(1, '$local', 5, 6, 7, 0, 0, 1, 0, 0, 0);
       expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
         {'key': 'last_applied_checkpoint_request_id', 'value': 5},
         {'key': 'last_seen_checkpoint_request_id', 'value': 6},
-        {'key': 'local_target_op', 'value': 7},
+        {'key': 'target_checkpoint_request_id', 'value': 7},
       ]);
       expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
           isEmpty);
@@ -142,7 +142,7 @@ VALUES(1, '$local', 5, 6, 9223372036854775807, 0, 0, 1, 0, 0, 0);
       expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
         {'key': 'last_applied_checkpoint_request_id', 'value': 5},
         {'key': 'last_seen_checkpoint_request_id', 'value': 6},
-        {'key': 'local_target_op', 'value': 9223372036854775807},
+        {'key': 'target_checkpoint_request_id', 'value': 9223372036854775807},
       ]);
     });
 
@@ -159,7 +159,7 @@ VALUES(1, '$local', 0, 0, 9223372036854775807, 0, 0, 1, 0, 0, 0);
       // The max-op sentinel is valid local target state, but target ops no longer seed
       // last_requested_checkpoint_request_id.
       expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
-        {'key': 'local_target_op', 'value': 9223372036854775807},
+        {'key': 'target_checkpoint_request_id', 'value': 9223372036854775807},
       ]);
     });
 
@@ -170,7 +170,7 @@ INSERT INTO ps_kv(key, value) VALUES
   ('last_requested_checkpoint_request_id', 7),
   ('last_seen_checkpoint_request_id', 6),
   ('last_applied_checkpoint_request_id', 5),
-  ('local_target_op', 7);
+  ('target_checkpoint_request_id', 7);
 ''');
 
       db.executeInTx('select powersync_test_migration(13)');
@@ -196,7 +196,7 @@ INSERT INTO ps_kv(key, value) VALUES
   ('last_requested_checkpoint_request_id', 7),
   ('last_seen_checkpoint_request_id', 6),
   ('last_applied_checkpoint_request_id', 5),
-  ('local_target_op', 7);
+  ('target_checkpoint_request_id', 7);
 ''');
 
       db.executeInTx('select powersync_test_migration(13)');
@@ -216,7 +216,7 @@ UPDATE ps_buckets
         {'key': 'last_applied_checkpoint_request_id', 'value': 8},
         {'key': 'last_requested_checkpoint_request_id', 'value': 7},
         {'key': 'last_seen_checkpoint_request_id', 'value': 8},
-        {'key': 'local_target_op', 'value': 9},
+        {'key': 'target_checkpoint_request_id', 'value': 9},
       ]);
       expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
           isEmpty);

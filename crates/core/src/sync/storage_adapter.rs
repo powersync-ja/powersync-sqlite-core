@@ -30,10 +30,10 @@ const LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_requested_checkpoin
 const LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY: &str = "last_seen_checkpoint_request_id";
 const LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_applied_checkpoint_request_id";
 
-// Tracks the local target used to block applying downloaded rows while local writes are
-// outstanding. When present, this is normally either the max-op sentinel for pending local writes or
-// a concrete checkpoint request id also stored in LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY.
-const LOCAL_TARGET_OP_KEY: &str = "local_target_op";
+// Tracks the target used to block applying downloaded rows while local writes are outstanding.
+// When present, this is normally either the max-op sentinel for pending local writes or a concrete
+// checkpoint request id also stored in LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY.
+const TARGET_CHECKPOINT_REQUEST_ID_KEY: &str = "target_checkpoint_request_id";
 
 /// An adapter for storing sync state.
 ///
@@ -509,13 +509,11 @@ WHERE bucket = ?1",
         Ok(())
     }
 
-    pub fn local_state(&self) -> Result<Option<LocalState>, PowerSyncError> {
-        Ok(self
-            .read_i64_kv(LOCAL_TARGET_OP_KEY)?
-            .map(|target_op| LocalState { target_op }))
+    pub fn target_checkpoint_request_id(&self) -> Result<Option<i64>, PowerSyncError> {
+        self.read_i64_kv(TARGET_CHECKPOINT_REQUEST_ID_KEY)
     }
 
-    /// Probes and optionally updates the local target op used to block applying downloaded rows
+    /// Probes and optionally updates the target checkpoint request id used to block applying downloaded rows
     /// while local writes are outstanding.
     ///
     /// In the write-checkpoint flow, callers allocate a checkpoint request id, post it to the
@@ -523,37 +521,37 @@ WHERE bucket = ?1",
     /// once the request succeeds. This is also used for older services where the SDK cannot create
     /// checkpoint requests explicitly.
     ///
-    /// The target op can also be used internally as a sentinel value such as max op id while local
+    /// The target can also be used internally as a sentinel value such as max op id while local
     /// writes are pending, so it must not always be interpreted as a checkpoint request id.
     ///
     /// This only updates the apply gate. It does not allocate, seed or overwrite
     /// `last_requested_checkpoint_request_id`, which is managed by `seed_checkpoint_request_id` and
     /// `next_checkpoint_request_id`.
     ///
-    /// Returns the target op value from before this call. When `target_op` is `None`, this only
-    /// reads the current value. A `target_op` of zero clears the stored target, removing the apply
+    /// Returns the target value from before this call. When `target` is `None`, this only
+    /// reads the current value. A `target` of zero clears the stored target, removing the apply
     /// gate entirely; any other value overwrites it.
     ///
     /// Negative values are rejected when parsing the `powersync_control` payload, before this is
     /// called.
-    pub fn probe_local_target_op(
+    pub fn probe_target_checkpoint_request_id(
         &self,
-        target_op: Option<i64>,
+        target: Option<i64>,
     ) -> Result<Option<i64>, PowerSyncError> {
-        let previous_target_op = self.local_state()?.map(|state| state.target_op);
+        let previous_target = self.target_checkpoint_request_id()?;
 
-        let Some(target_op) = target_op else {
-            return Ok(previous_target_op);
+        let Some(target) = target else {
+            return Ok(previous_target);
         };
 
-        if target_op == 0 {
-            self.delete_kv(LOCAL_TARGET_OP_KEY)?;
-            return Ok(previous_target_op);
+        if target == 0 {
+            self.delete_kv(TARGET_CHECKPOINT_REQUEST_ID_KEY)?;
+            return Ok(previous_target);
         }
 
-        self.write_i64_kv(LOCAL_TARGET_OP_KEY, target_op)?;
+        self.write_i64_kv(TARGET_CHECKPOINT_REQUEST_ID_KEY, target)?;
 
-        Ok(previous_target_op)
+        Ok(previous_target)
     }
 
     /// Persists the checkpoint request id observed in a complete sync checkpoint.
@@ -651,10 +649,6 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         stmt.exec()?;
         Ok(())
     }
-}
-
-pub struct LocalState {
-    pub target_op: i64,
 }
 
 pub struct BucketInfo {

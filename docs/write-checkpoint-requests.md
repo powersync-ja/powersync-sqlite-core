@@ -8,20 +8,21 @@ The state is internal core/SDK bookkeeping. Apps should not read it as user-faci
 
 ## State Model
 
-| Key | Purpose | Who updates it |
-| --- | --- | --- |
-| `local_target_op` | Apply gate for local writes. Downloaded full checkpoints can apply only after the stream has seen this id. `MAX_OP_ID` means "local writes exist, but no concrete checkpoint id is known yet". | Core CRUD triggers set the sentinel; SDK upload code stores the accepted concrete id through `powersync_control('local_target_op', id)`. |
-| `last_requested_checkpoint_request_id` | Allocation counter for client-created checkpoint requests. | SDKs seed it after connection reconciliation, then core increments it through `powersync_control('next_checkpoint_request_id', NULL)`. |
-| `last_seen_checkpoint_request_id` | Latest full checkpoint `write_checkpoint` observed in the stream since the last local write. | Core updates it when a full checkpoint validates. Local writes clear it. |
-| `last_applied_checkpoint_request_id` | Latest full checkpoint `write_checkpoint` applied locally since the last local write. | Core updates it after a full checkpoint applies. Local writes clear it. |
+| Key                                    | Purpose                                                                                                                                                                                        | Who updates it                                                                                                                           |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `target_checkpoint_request_id`                      | Apply gate for local writes. Downloaded full checkpoints can apply only after the stream has seen this id. `MAX_OP_ID` means "local writes exist, but no concrete checkpoint id is known yet". | Core CRUD triggers set the sentinel; SDK upload code stores the accepted concrete id through `powersync_control('target_checkpoint_request_id', id)`. |
+| `last_requested_checkpoint_request_id` | Allocation counter for client-created checkpoint requests.                                                                                                                                     | SDKs seed it after connection reconciliation, then core increments it through `powersync_control('next_checkpoint_request_id', NULL)`.   |
+| `last_seen_checkpoint_request_id`      | Latest full checkpoint `write_checkpoint` observed in the stream since the last local write.                                                                                                   | Core updates it when a full checkpoint validates. Local writes clear it.                                                                 |
+| `last_applied_checkpoint_request_id`   | Latest full checkpoint `write_checkpoint` applied locally since the last local write.                                                                                                          | Core updates it after a full checkpoint applies. Local writes clear it.                                                                  |
 
 Why four keys?
 
-- `local_target_op` is the gate that protects local writes.
+- `target_checkpoint_request_id` is the gate that protects local writes.
 - `last_requested_checkpoint_request_id` is the counter used to create new requests.
 - `last_seen_checkpoint_request_id` answers "has the stream reached the gate yet?"
-- `last_applied_checkpoint_request_id` is persisted for diagnostics. SDK waiters should use
-  `DidCompleteSync.applied_checkpoint_request_id` instead.
+- `last_applied_checkpoint_request_id` is persisted for consistency with the legacy
+  `$local.last_applied_op` bookkeeping and for diagnostics. SDK waiters should use
+  `DidCompleteSync.applied_checkpoint_request_id` or the equivalent sync-status field instead.
 
 ## SDK Expectations
 
@@ -36,7 +37,7 @@ SDKs should use `powersync_control` as the public API for this state:
    `powersync_control('next_checkpoint_request_id', NULL)`.
 6. Post that id to the service checkpoint-request endpoint.
 7. After the service accepts it, store it as the local write gate with
-   `powersync_control('local_target_op', id)`.
+   `powersync_control('target_checkpoint_request_id', id)`.
 8. Resolve explicit waiters from `DidCompleteSync.applied_checkpoint_request_id`, not from `ps_kv`.
 
 `seed_checkpoint_request_id` stores the id verbatim and does not enforce monotonicity. SDKs own
@@ -74,7 +75,7 @@ the current id when the applied id is absent or lower.
 A local write records CRUD and sets:
 
 ```sql
-ps_kv['local_target_op'] = MAX_OP_ID
+ps_kv['target_checkpoint_request_id'] = MAX_OP_ID
 ```
 
 It also clears `last_seen_checkpoint_request_id` and `last_applied_checkpoint_request_id`, because
@@ -94,14 +95,14 @@ POST /sync/checkpoint-request {
 }
 
 transaction {
-    previousTarget = powersync_control('local_target_op', NULL)
+    previousTarget = powersync_control('target_checkpoint_request_id', NULL)
     if previousTarget == MAX_OP_ID && ps_crud is still empty {
-        powersync_control('local_target_op', requestId)
+        powersync_control('target_checkpoint_request_id', requestId)
     }
 }
 ```
 
-`local_target_op` is intentionally separate from `last_requested_checkpoint_request_id`: allocating
+`target_checkpoint_request_id` is intentionally separate from `last_requested_checkpoint_request_id`: allocating
 a checkpoint request id does not mean it should block or unblock local writes.
 
 ## Applying Downloaded Checkpoints
@@ -114,13 +115,13 @@ can be applied.
 Full checkpoints and non-priority-0 partial checkpoints can publish only when:
 
 - `ps_crud` is empty, and
-- `local_target_op` is absent or less than or equal to `last_seen_checkpoint_request_id`.
+- `target_checkpoint_request_id` is absent or less than or equal to `last_seen_checkpoint_request_id`.
 
 Priority 0 partial syncs may publish while uploads are outstanding.
 
 If a full checkpoint validates but cannot apply because local CRUD is pending, core keeps it as a
 pending checkpoint. When the SDK later sends `completed_upload`, core retries it unless the
-pending checkpoint is older than the current `local_target_op`.
+pending checkpoint is older than the current `target_checkpoint_request_id`.
 
 After a full checkpoint applies, core emits:
 
@@ -134,8 +135,10 @@ or equal to the requested id.
 Core also includes the applied request id in
 `UpdateSyncStatus.status.internal_last_applied_checkpoint_request_id` when a status update follows a
 checkpoint apply with a `write_checkpoint`. Later status updates without an applied request id,
-including disconnect updates, clear the field. SDKs may use this for status-stream waiters, but
-should treat it as internal, runtime-only state rather than app-visible progress or persisted
+including disconnect updates, clear the field. SDKs don't need to memoize it: it is an event-style
+signal, so react to the value when a status update carries it (for example, resolve waiters whose
+requested id is less than or equal to the emitted value) rather than polling it as a high-water
+mark. Treat it as internal, runtime-only state rather than app-visible progress or persisted
 checkpoint state.
 
 ## Control Commands
@@ -162,7 +165,7 @@ checkpoint state.
 - SDKs should compare this with their runtime last-applied checkpoint request id to decide whether
   to repost the current id.
 
-`powersync_control('local_target_op', value)`
+`powersync_control('target_checkpoint_request_id', value)`
 
 - Payload `NULL`: return current target without changing it.
 - Payload `0`: clear the target.

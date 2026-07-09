@@ -41,8 +41,8 @@ The following commands are supported:
 11. `current_checkpoint_request_id`: No payload. Returns the current checkpoint request sequence
     value as an integer result, or SQL `NULL` if absent. This command does not allocate a new id and
     can run outside a sync iteration.
-12. `local_target_op`: Payload is `null`, an integer, or an integer string. Probes, updates or
-    clears the local target op and returns the previously-observed value as an integer result, or
+12. `target_checkpoint_request_id`: Payload is `null`, an integer, or an integer string. Probes, updates or
+    clears the target checkpoint request id and returns the previously-observed value as an integer result, or
     SQL `NULL` if there was no target. This command can run outside of a sync iteration and does not
     affect it.
 13. `seed_checkpoint_request_id`: Payload is a positive integer or integer string. After receiving
@@ -62,19 +62,21 @@ what SDKs need to do.
   lost its local value and recreates service-side state when the service lost its record.
 - Wait for seeding to complete before creating checkpoint requests. For an upload write checkpoint,
   call `powersync_control('next_checkpoint_request_id', NULL)` in a transaction, post the returned
-  id to the service, then store the accepted id with `powersync_control('local_target_op', id)`.
-- `local_target_op` is the apply gate for local writes. `next_checkpoint_request_id` only allocates
+  id to the service, then store the accepted id with `powersync_control('target_checkpoint_request_id', id)`.
+- `target_checkpoint_request_id` is the apply gate for local writes. `next_checkpoint_request_id` only allocates
   ids; it does not update that gate.
 - To retry a checkpoint request without incrementing the counter, read
   `powersync_control('current_checkpoint_request_id', NULL)` and repost that id when the SDK's
   runtime last-applied checkpoint request id is absent or lower.
 - Resolve explicit checkpoint waiters from `DidCompleteSync.applied_checkpoint_request_id`. SDKs
-  that drive waiters from status snapshots can also watch
-  `UpdateSyncStatus.status.internal_last_applied_checkpoint_request_id`. Treat that status field as
-  runtime-only SDK state, not persisted checkpoint state or app-visible progress.
+  that drive waiters from the sync status should react to
+  `UpdateSyncStatus.status.internal_last_applied_checkpoint_request_id` on the status update that
+  carries it: core clears the field on later status updates without an applied request id and on
+  reconnects, so it is an event-style signal, not a high-water mark to poll. Treat that status
+  field as runtime-only SDK state, not persisted checkpoint state or app-visible progress.
 
 Most `powersync_control` commands return a JSON-encoded array of instructions for the client.
-`next_checkpoint_request_id`, `current_checkpoint_request_id` and `local_target_op` return values
+`next_checkpoint_request_id`, `current_checkpoint_request_id` and `target_checkpoint_request_id` return values
 directly.
 
 ```typescript

@@ -70,7 +70,7 @@ impl<'a> SyncOperation<'a> {
                 "SELECT 1
 FROM ps_kv AS target
 LEFT JOIN ps_kv AS seen ON seen.key = 'last_seen_checkpoint_request_id'
-WHERE target.key = 'local_target_op'
+WHERE target.key = 'target_checkpoint_request_id'
   AND CAST(target.value AS INTEGER) > COALESCE(CAST(seen.value AS INTEGER), 0)",
             )?;
 

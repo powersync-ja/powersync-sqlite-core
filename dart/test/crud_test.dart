@@ -249,7 +249,7 @@ void main() {
           });
         });
 
-        test('updates local target op and updated rows', () {
+        test('updates target checkpoint request id and updated rows', () {
           // Stale high-water marks (e.g. from before a request counter restart) must be cleared
           // by a local write, so they can't open the apply gate for a smaller new target id.
           db.execute('''
@@ -274,10 +274,10 @@ INSERT INTO ps_kv(key, value) VALUES
               isEmpty);
           expect(
               db.select(
-                  "SELECT key, value FROM ps_kv WHERE key LIKE '%checkpoint_request_id' OR key = 'local_target_op'"),
+                  "SELECT key, value FROM ps_kv WHERE key LIKE '%checkpoint_request_id'"),
               [
                 {
-                  'key': 'local_target_op',
+                  'key': 'target_checkpoint_request_id',
                   'value': 9223372036854775807,
                 }
               ]);

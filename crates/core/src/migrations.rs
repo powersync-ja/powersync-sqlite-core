@@ -469,7 +469,7 @@ DROP TABLE ps_sync_state_old;
         // so it becomes the last seen checkpoint request.
         //
         // `$local.target_op` can either be a concrete legacy write checkpoint id or a sentinel such
-        // as i64::MAX while local writes are pending. Store it separately as `local_target_op`.
+        // as i64::MAX while local writes are pending. Store it separately as `target_checkpoint_request_id`.
         // Seeding `last_requested_checkpoint_request_id` from a concrete target would be possible,
         // but should be redundant because SDKs reconcile the request counter with service state on
         // connect before advancing it through `next_checkpoint_request_id`.
@@ -496,7 +496,7 @@ DELETE FROM ps_kv
  WHERE key IN (
    'last_applied_checkpoint_request_id',
    'last_seen_checkpoint_request_id',
-   'local_target_op'
+   'target_checkpoint_request_id'
  );
 
 INSERT INTO ps_kv(key, value)
@@ -512,7 +512,7 @@ SELECT 'last_seen_checkpoint_request_id', last_op
    AND last_op > 0;
 
 INSERT INTO ps_kv(key, value)
-SELECT 'local_target_op', target_op
+SELECT 'target_checkpoint_request_id', target_op
   FROM ps_buckets
  WHERE name = '$local'
    AND target_op > 0;
@@ -531,7 +531,7 @@ ALTER TABLE ps_buckets DROP COLUMN target_op;
         // `$local.pending_delete = 1` marked this as a synthetic local-only bucket instead of a
         // normal service bucket. Restore each old progress column from its matching ps_kv key.
         // The 0 defaults cover a local target that exists before any checkpoint has been seen or
-        // applied. If `local_target_op` is absent, don't create a `$local` row: the old
+        // applied. If `target_checkpoint_request_id` is absent, don't create a `$local` row: the old
         // implementation also didn't have a `$local` bucket unless there was local target state to
         // track.
         const DOWN_STATEMENTS: &[&str] = &[
@@ -582,10 +582,10 @@ SELECT '$local', 1, seen, applied, target
     SELECT
       IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'last_seen_checkpoint_request_id'), 0) AS seen,
       IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'last_applied_checkpoint_request_id'), 0) AS applied,
-      (SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'local_target_op') AS target
+      (SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'target_checkpoint_request_id') AS target
   )
  WHERE EXISTS (
-    SELECT 1 FROM ps_kv WHERE key = 'local_target_op'
+    SELECT 1 FROM ps_kv WHERE key = 'target_checkpoint_request_id'
  )
 ON CONFLICT(name) DO UPDATE SET
   pending_delete = excluded.pending_delete,

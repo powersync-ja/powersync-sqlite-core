@@ -651,7 +651,7 @@ impl StreamingSyncIteration {
             return Ok(());
         };
 
-        let target_write = self.adapter.local_state()?.map(|e| e.target_op);
+        let target_write = self.adapter.target_checkpoint_request_id()?;
         if checkpoint.write_checkpoint < target_write {
             // Note: None < Some(x). The pending checkpoint does not contain the write
             // checkpoint created during the upload, so we don't have to try applying it, it's
