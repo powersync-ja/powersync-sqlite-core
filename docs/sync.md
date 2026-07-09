@@ -45,9 +45,10 @@ The following commands are supported:
     clears the target checkpoint request id and returns the previously-observed value as an integer result, or
     SQL `NULL` if there was no target. This command can run outside of a sync iteration and does not
     affect it.
-13. `seed_checkpoint_request_id`: Payload is a positive integer or integer string. After receiving
-    `EstablishSyncStream`, SDKs should reconcile the local hint with service-side
-    checkpoint-request state, then seed core with the accepted positive id.
+13. `seed_checkpoint_request_id`: Payload is a positive integer or integer string. During an active
+    sync iteration, after receiving `EstablishSyncStream`, SDKs should reconcile the local hint with
+    service-side checkpoint-request state, then seed core with the accepted positive id. Returns the
+    seeded id as an integer result.
 
 ## Checkpoint Request Expectations
 
@@ -57,8 +58,8 @@ checkpoint waiters (through `DidCompleteSync.applied_checkpoint_request_id` or t
 sync-status field) are documented in `write-checkpoint-requests.md`.
 
 Most `powersync_control` commands return a JSON-encoded array of instructions for the client.
-`next_checkpoint_request_id`, `current_checkpoint_request_id` and `target_checkpoint_request_id` return values
-directly.
+`seed_checkpoint_request_id`, `next_checkpoint_request_id`, `current_checkpoint_request_id` and
+`target_checkpoint_request_id` return values directly.
 
 ```typescript
 type Instruction = { LogLine: LogLine }

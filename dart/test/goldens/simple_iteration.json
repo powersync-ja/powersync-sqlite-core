@@ -34,11 +34,6 @@
     ]
   },
   {
-    "operation": "seed_checkpoint_request_id",
-    "data": 1,
-    "output": []
-  },
-  {
     "operation": "line_text",
     "data": {
       "checkpoint": {

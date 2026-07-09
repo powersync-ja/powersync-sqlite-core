@@ -38,10 +38,5 @@
         }
       }
     ]
-  },
-  {
-    "operation": "seed_checkpoint_request_id",
-    "data": 1,
-    "output": []
   }
 ]

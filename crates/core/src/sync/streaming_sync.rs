@@ -562,10 +562,6 @@ impl StreamingSyncIteration {
                         .update(|s| s.disconnect(), &mut event.instructions);
                     break false;
                 }
-                SyncEvent::SeedCheckpointRequestId { request_id } => {
-                    self.adapter.seed_checkpoint_request_id(request_id)?;
-                    continue;
-                }
                 SyncEvent::TextLine { data } => SyncLineWithSource::from_text(data)?,
                 SyncEvent::BinaryLine { data } => SyncLineWithSource::from_binary(data)?,
                 SyncEvent::UploadFinished => {

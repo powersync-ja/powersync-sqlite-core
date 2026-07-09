@@ -146,7 +146,9 @@ checkpoint state.
 `powersync_control('seed_checkpoint_request_id', id)`
 
 - Payload: positive integer or integer string.
+- Returns: seeded checkpoint request id as a SQLite integer.
 - Stores the reconciled checkpoint-request counter seed.
+- Requires an active sync iteration.
 - Must be called after connection reconciliation and before allocating new ids.
 
 `powersync_control('next_checkpoint_request_id', NULL)`

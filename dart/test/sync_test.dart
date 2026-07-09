@@ -60,7 +60,12 @@ void _syncTests<T>({
 
     db.execute('commit');
     final [row] = result;
-    return jsonDecode(row.columnAt(0));
+    final rawResult = row.columnAt(0);
+    if (rawResult is String) {
+      return jsonDecode(rawResult);
+    } else {
+      return const [];
+    }
   }
 
   Object? invokeControlScalar(String operation, Object? data) {
@@ -83,6 +88,10 @@ void _syncTests<T>({
     return row.columnAt(0);
   }
 
+  int seedCheckpointRequestId(Object? requestId) {
+    return invokeControlScalar('seed_checkpoint_request_id', requestId) as int;
+  }
+
   bool establishesSyncStream(List<Object?> instructions) {
     return instructions.any((instruction) =>
         instruction is Map && instruction.containsKey('EstablishSyncStream'));
@@ -98,10 +107,7 @@ void _syncTests<T>({
     }
 
     if (operation == 'start' && establishesSyncStream(result)) {
-      final seedResult = matcher.enabled
-          ? matcher.invoke('seed_checkpoint_request_id', 1)
-          : invokeControlRaw('seed_checkpoint_request_id', 1);
-      return [...result, ...seedResult];
+      seedCheckpointRequestId(1);
     }
 
     return result;
@@ -246,15 +252,12 @@ void _syncTests<T>({
   });
 
   syncTest('app_metadata is passed to EstablishSyncStream request', (_) {
-    final startInstructions = [
-      ...invokeControlRaw(
-        'start',
-        json.encode({
-          'app_metadata': {'key1': 'value1', 'key2': 'value2'}
-        }),
-      ),
-      ...invokeControlRaw('seed_checkpoint_request_id', 1),
-    ];
+    final startInstructions = invokeControlRaw(
+      'start',
+      json.encode({
+        'app_metadata': {'key1': 'value1', 'key2': 'value2'}
+      }),
+    );
 
     expect(
       startInstructions,
@@ -470,7 +473,7 @@ void _syncTests<T>({
     expect(currentCheckpointRequestId(), isNull);
 
     invokeControlRaw('start', null);
-    invokeControlRaw('seed_checkpoint_request_id', 1);
+    expect(seedCheckpointRequestId(1), 1);
     expect(currentCheckpointRequestId(), 1);
 
     expect(currentCheckpointRequestId(), 1);
@@ -494,7 +497,7 @@ void _syncTests<T>({
   syncTest('seeds requested checkpoint request ids from service state', (_) {
     final startInstructions = invokeControlRaw('start', null);
     expect(streamLastCheckpointRequestId(startInstructions), isNull);
-    invokeControlRaw('seed_checkpoint_request_id', 41);
+    expect(seedCheckpointRequestId(41), 41);
 
     expect(nextCheckpointRequestId(), 42);
     expect(lastRequestedCheckpointRequestId(), 42);
@@ -505,7 +508,7 @@ void _syncTests<T>({
       contains(containsPair('EstablishSyncStream', anything)),
     );
     expect(streamLastCheckpointRequestId(restartInstructions), 42);
-    expect(invokeControlRaw('seed_checkpoint_request_id', 100), isEmpty);
+    expect(seedCheckpointRequestId(100), 100);
 
     expect(nextCheckpointRequestId(), 101);
     expect(lastRequestedCheckpointRequestId(), 101);
@@ -513,13 +516,13 @@ void _syncTests<T>({
 
   syncTest('stores seeded checkpoint request ids verbatim', (_) {
     invokeControlRaw('start', null);
-    invokeControlRaw('seed_checkpoint_request_id', 41);
+    expect(seedCheckpointRequestId(41), 41);
     expect(lastRequestedCheckpointRequestId(), 41);
 
     // Core does not enforce monotonicity when seeding. SDKs own reconciliation and seed the
     // effective state accepted by the service, which may be below the local counter (e.g. after
     // switching users).
-    invokeControlRaw('seed_checkpoint_request_id', 5);
+    expect(seedCheckpointRequestId(5), 5);
     expect(lastRequestedCheckpointRequestId(), 5);
     expect(nextCheckpointRequestId(), 6);
   });
@@ -552,10 +555,21 @@ void _syncTests<T>({
 
   syncTest('accepts text checkpoint request ids when seeding', (_) {
     invokeControlRaw('start', null);
-    invokeControlRaw('seed_checkpoint_request_id', '41');
+    expect(seedCheckpointRequestId('41'), 41);
 
     expect(lastRequestedCheckpointRequestId(), 41);
     expect(nextCheckpointRequestId(), 42);
+  });
+
+  syncTest('requires active sync iteration before seeding checkpoint ids', (_) {
+    expect(
+      () => seedCheckpointRequestId(1),
+      throwsA(isSqliteException(
+        21,
+        contains('No iteration is active'),
+      )),
+    );
+    expect(lastRequestedCheckpointRequestId(), isNull);
   });
 
   syncTest('requires checkpoint request state before allocating checkpoint ids',
@@ -572,7 +586,9 @@ void _syncTests<T>({
     expect(probeTargetCheckpointRequestId(), isNull);
   });
 
-  syncTest('probes and updates target checkpoint request id without sync iteration', (_) {
+  syncTest(
+      'probes and updates target checkpoint request id without sync iteration',
+      (_) {
     expect(probeTargetCheckpointRequestId(), isNull);
     expect(probeTargetCheckpointRequestId(1), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
@@ -583,7 +599,9 @@ void _syncTests<T>({
     expect(probeTargetCheckpointRequestId(), 2);
   });
 
-  syncTest('accepts text checkpoint request ids for target checkpoint request id', (_) {
+  syncTest(
+      'accepts text checkpoint request ids for target checkpoint request id',
+      (_) {
     expect(probeTargetCheckpointRequestId('1'), isNull);
     expect(lastRequestedCheckpointRequestId(), isNull);
     expect(probeTargetCheckpointRequestId(), 1);
@@ -599,9 +617,10 @@ void _syncTests<T>({
     );
   });
 
-  syncTest('target checkpoint request id does not update checkpoint request id', (_) {
+  syncTest('target checkpoint request id does not update checkpoint request id',
+      (_) {
     invokeControlRaw('start', null);
-    invokeControlRaw('seed_checkpoint_request_id', 10);
+    expect(seedCheckpointRequestId(10), 10);
 
     expect(lastRequestedCheckpointRequestId(), 10);
     expect(probeTargetCheckpointRequestId(7), isNull);

@@ -90,10 +90,6 @@ pub enum SyncEvent<'a> {
     ///
     /// In response, we'll stop the current iteration to begin another one with the new token.
     DidRefreshToken,
-    /// Seeds the checkpoint request counter from service state.
-    SeedCheckpointRequestId {
-        request_id: i64,
-    },
     /// Notifies the sync client that the current CRUD upload (for which the client SDK is
     /// responsible) has finished.
     ///
@@ -249,6 +245,29 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     }
                 }),
                 "stop" => SyncControlRequest::StopSyncStream,
+                "seed_checkpoint_request_id" => {
+                    let has_sync_iteration = {
+                        let client = state.sync_client.borrow();
+                        client
+                            .as_ref()
+                            .map(|client| client.has_sync_iteration())
+                            .unwrap_or(false)
+                    };
+
+                    if !has_sync_iteration {
+                        return Err(PowerSyncError::state_error("No iteration is active"));
+                    }
+
+                    let request_id = parse_positive_i64_payload(
+                        *payload,
+                        "checkpoint request id",
+                        "checkpoint request id must be an integer or integer string",
+                    )?;
+                    let adapter = state.storage_adapter(db)?;
+                    adapter.seed_checkpoint_request_id(request_id)?;
+                    ctx.result_int64(request_id);
+                    return Ok(());
+                }
                 "next_checkpoint_request_id" => {
                     let has_sync_iteration = {
                         let client = state.sync_client.borrow();
@@ -316,15 +335,6 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     },
                 }),
                 "refreshed_token" => SyncControlRequest::SyncEvent(SyncEvent::DidRefreshToken),
-                "seed_checkpoint_request_id" => {
-                    SyncControlRequest::SyncEvent(SyncEvent::SeedCheckpointRequestId {
-                        request_id: parse_positive_i64_payload(
-                            *payload,
-                            "checkpoint request id",
-                            "checkpoint request id must be an integer or integer string",
-                        )?,
-                    })
-                }
                 "completed_upload" => SyncControlRequest::SyncEvent(SyncEvent::UploadFinished),
                 "update_subscriptions" => {
                     SyncControlRequest::SyncEvent(SyncEvent::DidUpdateSubscriptions {

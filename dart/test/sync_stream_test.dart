@@ -68,10 +68,7 @@ void main() {
   List<Object?> control(String operation, Object? data) {
     final result = controlRaw(operation, data);
     if (operation == 'start' && establishesSyncStream(result)) {
-      return [
-        ...result,
-        ...controlRaw('seed_checkpoint_request_id', 1),
-      ];
+      controlRaw('seed_checkpoint_request_id', 1);
     }
     return result;
   }
