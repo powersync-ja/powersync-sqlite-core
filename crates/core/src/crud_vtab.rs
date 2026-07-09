@@ -15,6 +15,10 @@ use crate::error::PowerSyncError;
 use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
 use crate::state::DatabaseState;
+use crate::sync::storage_adapter::{
+    LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY, LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY,
+    TARGET_CHECKPOINT_REQUEST_ID_KEY,
+};
 use crate::utils::MAX_OP_ID;
 use crate::vtab_util::*;
 
@@ -252,8 +256,8 @@ impl SimpleCrudTransactionMode {
             // restart. Keeping them around could open the apply gate for a newly allocated target
             // id that compares below a stale seen value.
             db.exec_safe(formatcp!(
-                "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('target_checkpoint_request_id', {MAX_OP_ID});
-DELETE FROM ps_kv WHERE key IN ('last_seen_checkpoint_request_id', 'last_applied_checkpoint_request_id')"
+                "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('{TARGET_CHECKPOINT_REQUEST_ID_KEY}', {MAX_OP_ID});
+DELETE FROM ps_kv WHERE key IN ('{LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY}', '{LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY}')"
             ))?;
             self.had_writes = true;
         }

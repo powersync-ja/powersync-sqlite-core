@@ -26,14 +26,16 @@ use super::{
     bucket_priority::BucketPriority, interface::BucketRequest, streaming_sync::OwnedCheckpoint,
 };
 
-const LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_requested_checkpoint_request_id";
-const LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY: &str = "last_seen_checkpoint_request_id";
-const LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_applied_checkpoint_request_id";
+pub(crate) const LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY: &str =
+    "last_requested_checkpoint_request_id";
+pub(crate) const LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY: &str = "last_seen_checkpoint_request_id";
+pub(crate) const LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY: &str =
+    "last_applied_checkpoint_request_id";
 
 // Tracks the target used to block applying downloaded rows while local writes are outstanding.
 // When present, this is normally either the max-op sentinel for pending local writes or a concrete
 // checkpoint request id also stored in LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY.
-const TARGET_CHECKPOINT_REQUEST_ID_KEY: &str = "target_checkpoint_request_id";
+pub(crate) const TARGET_CHECKPOINT_REQUEST_ID_KEY: &str = "target_checkpoint_request_id";
 
 /// An adapter for storing sync state.
 ///
