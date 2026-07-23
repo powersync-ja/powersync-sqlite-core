@@ -20,6 +20,7 @@ use powersync_sqlite_nostd::{self as sqlite, ColumnType};
 use powersync_sqlite_nostd::{Connection, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use serde_with::{DisplayFromStr, serde_as};
 use sqlite::{ResultCode, Value};
 
 use crate::sync::BucketPriority;
@@ -137,6 +138,7 @@ pub enum SyncEvent<'a> {
 }
 
 /// An instruction sent by the core extension to the SDK.
+#[serde_as]
 #[derive(Serialize)]
 pub enum Instruction {
     LogLine {
@@ -173,7 +175,11 @@ pub enum Instruction {
     /// Notify that a sync has been completed, prompting client SDKs to clear earlier errors.
     DidCompleteSync {
         /// The checkpoint request id applied by this completed sync, if the checkpoint had one.
+        ///
+        /// Serialized as a decimal string to preserve the full 64-bit value in JSON clients, the
+        /// same as [CheckpointRequestPayload::checkpoint_request_id].
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde_as(as = "Option<DisplayFromStr>")]
         applied_checkpoint_request_id: Option<i64>,
     },
 
@@ -274,17 +280,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                 }),
                 "stop" => SyncControlRequest::StopSyncStream,
                 "seed_checkpoint_request_id" => {
-                    let has_sync_iteration = {
-                        let client = state.sync_client.borrow();
-                        client
-                            .as_ref()
-                            .map(|client| client.has_sync_iteration())
-                            .unwrap_or(false)
-                    };
-
-                    if !has_sync_iteration {
-                        return Err(PowerSyncError::state_error("No iteration is active"));
-                    }
+                    require_active_sync_iteration(&state)?;
 
                     let request_id = parse_positive_i64_payload(
                         *payload,
@@ -297,17 +293,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     return Ok(());
                 }
                 "next_checkpoint_request_id" => {
-                    let has_sync_iteration = {
-                        let client = state.sync_client.borrow();
-                        client
-                            .as_ref()
-                            .map(|client| client.has_sync_iteration())
-                            .unwrap_or(false)
-                    };
-
-                    if !has_sync_iteration {
-                        return Err(PowerSyncError::state_error("No iteration is active"));
-                    }
+                    require_active_sync_iteration(&state)?;
 
                     let adapter = state.storage_adapter(db)?;
                     if !adapter.has_checkpoint_request_id()? {
@@ -457,6 +443,24 @@ create_sqlite_text_fn!(
     powersync_offline_sync_status_impl,
     "powersync_offline_sync_status"
 );
+
+/// Errors with a state error unless a sync iteration is currently active.
+///
+/// Checkpoint request ids can only be seeded or allocated in the context of a running iteration.
+fn require_active_sync_iteration(state: &DatabaseState) -> Result<(), PowerSyncError> {
+    let has_sync_iteration = state
+        .sync_client
+        .borrow()
+        .as_ref()
+        .map(|client| client.has_sync_iteration())
+        .unwrap_or(false);
+
+    if !has_sync_iteration {
+        return Err(PowerSyncError::state_error("No iteration is active"));
+    }
+
+    Ok(())
+}
 
 fn parse_optional_i64_payload(
     payload: *mut sqlite::value,

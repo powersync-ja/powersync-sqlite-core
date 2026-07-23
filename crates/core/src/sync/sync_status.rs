@@ -3,7 +3,7 @@ use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     format,
     rc::Rc,
-    string::String,
+    string::{String, ToString},
     vec::Vec,
 };
 use core::{
@@ -203,8 +203,11 @@ impl Serialize for DownloadSyncStatus {
         serializer.serialize_field("downloading", &self.downloading)?;
         serializer.serialize_field("streams", &SerializeStreamsWithProgress(self))?;
         if let Some(request_id) = self.internal_last_applied_checkpoint_request_id {
-            serializer
-                .serialize_field("internal_last_applied_checkpoint_request_id", &request_id)?;
+            // Serialized as a decimal string to preserve the full 64-bit value in JSON clients.
+            serializer.serialize_field(
+                "internal_last_applied_checkpoint_request_id",
+                &request_id.to_string(),
+            )?;
         }
 
         serializer.end()

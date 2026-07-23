@@ -448,7 +448,7 @@ void _syncTests<T>({
       contains(
         containsPair(
           'DidCompleteSync',
-          {'applied_checkpoint_request_id': 1},
+          {'applied_checkpoint_request_id': '1'},
         ),
       ),
     );
@@ -756,7 +756,7 @@ void _syncTests<T>({
       contains(
         containsPair(
           'DidCompleteSync',
-          {'applied_checkpoint_request_id': 1},
+          {'applied_checkpoint_request_id': '1'},
         ),
       ),
     );
@@ -771,7 +771,7 @@ void _syncTests<T>({
         'UpdateSyncStatus',
         containsPair(
           'status',
-          containsPair('internal_last_applied_checkpoint_request_id', 1),
+          containsPair('internal_last_applied_checkpoint_request_id', '1'),
         ),
       )),
     );
