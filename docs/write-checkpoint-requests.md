@@ -28,8 +28,10 @@ Why four keys?
 
 SDKs should use `powersync_control` as the public API for this state:
 
-1. On each sync connection, read `EstablishSyncStream.last_checkpoint_request_id`.
-2. Reconcile that local hint with service-side checkpoint-request state before allocating new ids.
+1. Set `checkpoint_mode: "requests"` in each `powersync_control('start', ...)` payload.
+2. On each sync connection, post `EstablishSyncStream.checkpoint_request` to the service-side
+   checkpoint-request endpoint. Core has already selected the maximum of the local allocation
+   counter, any concrete local-write target and `1`.
 3. Seed core with the reconciled positive id by calling
    `powersync_control('seed_checkpoint_request_id', id)`.
 4. Wait for seeding to complete before creating checkpoint requests.
@@ -40,17 +42,22 @@ SDKs should use `powersync_control` as the public API for this state:
    `powersync_control('target_checkpoint_request_id', id)`.
 8. Resolve explicit waiters from `DidCompleteSync.applied_checkpoint_request_id`, not from `ps_kv`.
 
-`seed_checkpoint_request_id` stores the id verbatim and does not enforce monotonicity. SDKs own
-reconciliation and must not seed stale service state. The recommended reconciliation pattern is:
+`seed_checkpoint_request_id` stores the id verbatim and does not enforce monotonicity. SDKs must
+seed the state accepted by the service, not a stale local or remote value. Core prepares the initial
+request as:
 
 ```text
-effectiveId = max(localHint ?? 0, concreteLocalTarget ?? 0, 1)
-acceptedId = postCheckpointRequestStateToService(effectiveId)
+initialId = max(lastRequestedCheckpointRequestId ?? 0, concreteLocalTarget ?? 0, 1)
+acceptedId = postCheckpointRequestStateToService({
+    client_id: clientId,
+    checkpoint_request_id: initialId.toDecimalString()
+})
 powersync_control('seed_checkpoint_request_id', acceptedId)
 ```
 
-Posting at least `1` covers the no-record case and probes whether the service supports checkpoint
-requests. Core rejects `NULL` and `0` seeds.
+The max-op target sentinel is not a concrete request id and is excluded. Posting at least `1`
+covers the no-record case and probes whether the service supports checkpoint requests. Core
+rejects `NULL` and `0` seeds.
 
 The service returns the maximum of the client-provided id and its service-side record. If the client
 lost local state, for example after `disconnectAndClear`, this response hydrates core's counter. If

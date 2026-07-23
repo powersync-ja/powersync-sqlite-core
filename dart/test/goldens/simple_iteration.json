@@ -27,8 +27,7 @@
               "include_defaults": true,
               "subscriptions": []
             }
-          },
-          "last_checkpoint_request_id": null
+          }
         }
       }
     ]

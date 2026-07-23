@@ -188,11 +188,11 @@ void _syncTests<T>({
     return rows.isEmpty ? null : rows.single.columnAt(0);
   }
 
-  Object? streamLastCheckpointRequestId(List<Object?> instructions) {
+  Object? streamCheckpointRequest(List<Object?> instructions) {
     final instruction = instructions.whereType<Map>().firstWhere(
         (instruction) => instruction.containsKey('EstablishSyncStream'));
     final establish = instruction['EstablishSyncStream'] as Map;
-    return establish['last_checkpoint_request_id'];
+    return establish['checkpoint_request'];
   }
 
   int nextCheckpointRequestId() {
@@ -271,6 +271,58 @@ void _syncTests<T>({
         ),
       ),
     );
+  });
+
+  syncTest('prepares initial checkpoint request state when enabled', (_) {
+    final initial = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(initial), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '1',
+    });
+
+    // A concrete target is a lower bound even when the allocation counter has not been seeded.
+    probeTargetCheckpointRequestId(4);
+    final fromTarget = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(fromTarget), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '4',
+    });
+
+    // The larger persisted allocation counter wins over the concrete target.
+    expect(seedCheckpointRequestId(7), 7);
+    final fromCounter = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(fromCounter), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '7',
+    });
+
+    // The max-op local-write sentinel is not a concrete checkpoint request id.
+    probeTargetCheckpointRequestId(9223372036854775807);
+    final ignoringSentinel = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(ignoringSentinel), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '7',
+    });
+  });
+
+  syncTest('omits initial checkpoint request state in legacy mode', (_) {
+    final instructions = invokeControlRaw('start', null);
+    final establish = instructions.whereType<Map>().firstWhere((instruction) =>
+        instruction
+            .containsKey('EstablishSyncStream'))['EstablishSyncStream'] as Map;
+    expect(establish, isNot(containsPair('checkpoint_request', anything)));
   });
 
   test('handles connection events', () {
@@ -495,19 +547,27 @@ void _syncTests<T>({
   });
 
   syncTest('seeds requested checkpoint request ids from service state', (_) {
-    final startInstructions = invokeControlRaw('start', null);
-    expect(streamLastCheckpointRequestId(startInstructions), isNull);
+    final startInstructions = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(startInstructions), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '1',
+    });
     expect(seedCheckpointRequestId(41), 41);
 
     expect(nextCheckpointRequestId(), 42);
     expect(lastRequestedCheckpointRequestId(), 42);
 
-    final restartInstructions = invokeControlRaw('start', null);
-    expect(
-      restartInstructions,
-      contains(containsPair('EstablishSyncStream', anything)),
+    final restartInstructions = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
     );
-    expect(streamLastCheckpointRequestId(restartInstructions), 42);
+    expect(streamCheckpointRequest(restartInstructions), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '42',
+    });
     expect(seedCheckpointRequestId(100), 100);
 
     expect(nextCheckpointRequestId(), 101);

@@ -18,6 +18,9 @@ The following commands are supported:
       If no raw tables are used, the `schema` entry can be omitted.
     - `active_streams`: An array of `{name: string, params: Record<string, any>}` entries representing streams that
       have an active subscription object in the application at the time the stream was opened.
+    - `checkpoint_mode`: Either `"legacy"` (the default when omitted) or `"requests"`.
+      In request mode, `EstablishSyncStream.checkpoint_request` contains the initial payload to
+      affirm with the service.
 2. `stop`: No payload, requests the current sync iteration (if any) to be shut down.
 3. `line_text`: Payload is a serialized JSON object received from the sync service.
 4. `line_binary`: Payload is a BSON-encoded object received from the sync service.
@@ -81,14 +84,16 @@ interface LogLine {
 }
 
 // Instructs client SDKs to open a connection to the sync service.
-// last_checkpoint_request_id is the client's current counter state before this stream request.
-// On every connect, SDKs use it to re-affirm checkpoint request state with the service (which may
-// have deleted its record). The re-affirmation is bidirectional: the hint can restore the
-// service-side value, or the service's response can bump the local counter via
+// checkpoint_request is included when checkpoint_mode is "requests" in the start call. SDKs should
+// post this payload to their checkpoint request endpoint and seed the accepted response with
 // powersync_control('seed_checkpoint_request_id', response).
 interface EstablishSyncStream {
   request: any // The JSON-encoded StreamingSyncRequest to send to the sync service
-  last_checkpoint_request_id: null | number
+  checkpoint_request?: {
+    client_id: string,
+    // Decimal string so the full signed 64-bit range is preserved across SDKs.
+    checkpoint_request_id: string
+  }
 }
 
 // Instructs SDKS to update the downloading state of their SyncStatus.

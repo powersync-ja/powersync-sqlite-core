@@ -26,7 +26,10 @@ use crate::{
         BucketPriority,
         checkpoint::OwnedBucketChecksum,
         diagnostics::DiagnosticsCollector,
-        interface::{CloseSyncStream, StartSyncStream, StreamSubscriptionRequest},
+        interface::{
+            CheckpointMode, CheckpointRequestPayload, CloseSyncStream, StartSyncStream,
+            StreamSubscriptionRequest,
+        },
         line::{
             BucketSubscriptionReason, DataLine, StreamDescription, StreamSubscriptionError,
             StreamSubscriptionErrorCause, SyncLineWithSource,
@@ -928,6 +931,16 @@ impl StreamingSyncIteration {
             .adapter
             .collect_subscription_requests(self.options.include_defaults)?;
 
+        let client_id = client_id(self.db)?;
+        let checkpoint_request = if self.options.checkpoint_mode == CheckpointMode::Requests {
+            Some(CheckpointRequestPayload {
+                client_id: client_id.clone(),
+                checkpoint_request_id: self.adapter.initial_checkpoint_request_id()?.to_string(),
+            })
+        } else {
+            None
+        };
+
         let request = StreamingSyncRequest {
             buckets: requests,
             include_checksum: true,
@@ -936,7 +949,7 @@ impl StreamingSyncIteration {
             // will break if it's not set and the SDK requests sync data as BSON.
             // For details, see https://github.com/powersync-ja/powersync-service/pull/332
             binary_data: true,
-            client_id: client_id(self.db)?,
+            client_id,
             parameters: self.options.parameters.take(),
             streams: stream_subscriptions.request.clone(),
             app_metadata: self.options.app_metadata.take(),
@@ -944,7 +957,7 @@ impl StreamingSyncIteration {
 
         event.instructions.push(Instruction::EstablishSyncStream {
             request,
-            last_checkpoint_request_id: self.adapter.last_checkpoint_request_id()?,
+            checkpoint_request,
         });
         Ok(BeforeCheckpoint {
             local_buckets: local_bucket_names,

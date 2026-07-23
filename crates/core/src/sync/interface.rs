@@ -45,6 +45,14 @@ pub struct StartSyncStream {
     #[serde(default)]
     pub app_metadata: Option<Box<RawValue>>,
 
+    /// The checkpoint mechanism used by this SDK.
+    ///
+    /// In [CheckpointMode::Requests], [Instruction::EstablishSyncStream] includes the initial
+    /// checkpoint request payload the SDK should reconcile with the service before allocating
+    /// request ids.
+    #[serde(default)]
+    pub checkpoint_mode: CheckpointMode,
+
     /// Whether sync diagnostics with detailed download stats and inferred schema should be reported
     /// by the sync client.
     pub diagnostics: Option<DiagnosticOptions>,
@@ -64,9 +72,21 @@ impl Default for StartSyncStream {
             include_defaults: Self::include_defaults_by_default(),
             active_streams: Default::default(),
             app_metadata: Default::default(),
+            checkpoint_mode: CheckpointMode::default(),
             diagnostics: Default::default(),
         }
     }
+}
+
+/// Selects the checkpoint mechanism used for a sync iteration.
+#[derive(Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointMode {
+    /// Uses the legacy write-checkpoint flow.
+    #[default]
+    Legacy,
+    /// Uses client-generated checkpoint request ids.
+    Requests,
 }
 
 /// A request sent from a client SDK to the [SyncClient] with a `powersync_control` invocation.
@@ -131,14 +151,14 @@ pub enum Instruction {
     /// and then forward received lines via [SyncEvent::TextLine] and [SyncEvent::BinaryLine].
     EstablishSyncStream {
         request: StreamingSyncRequest,
-        /// The latest checkpoint request id known locally before opening this stream.
+        /// The checkpoint request state SDKs using checkpoint-request mode should affirm with the
+        /// service before allocating request ids.
         ///
-        /// This is simply the client's current counter state. SDKs use it on every connection
-        /// attempt to re-affirm checkpoint request state with the service, which may have deleted
-        /// its record. The re-affirmation works bidirectionally: it can restore the service-side
-        /// value from this hint or bump the local counter from the service's response, which is
-        /// reported back with `seed_checkpoint_request_id`.
-        last_checkpoint_request_id: Option<i64>,
+        /// Core combines its local allocation counter with any concrete local-write target and
+        /// supplies the larger value. This is omitted unless checkpoint requests were enabled on
+        /// [StartSyncStream].
+        #[serde(skip_serializing_if = "Option::is_none")]
+        checkpoint_request: Option<CheckpointRequestPayload>,
     },
     FetchCredentials {
         /// Whether the credentials currently used have expired.
@@ -188,6 +208,14 @@ pub struct StreamingSyncRequest {
     pub streams: Rc<StreamSubscriptionRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_metadata: Option<Box<RawValue>>,
+}
+
+/// Initial payload for reconciling checkpoint-request state with the service.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct CheckpointRequestPayload {
+    pub client_id: String,
+    /// A decimal string to preserve the full 64-bit value in JSON clients.
+    pub checkpoint_request_id: String,
 }
 
 #[derive(Debug, Serialize, PartialEq)]

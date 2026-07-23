@@ -610,11 +610,27 @@ RETURNING value",
         self.read_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY)
     }
 
+    /// Returns the checkpoint request id to affirm when starting a request-mode sync iteration.
+    ///
+    /// The allocation counter is normally authoritative. A concrete target can be newer during a
+    /// legacy-to-request-mode transition or after migrating unusual state, so include it as a
+    /// lower bound. The max-op sentinel represents pending local writes without a concrete request
+    /// id and must not be sent to the service.
+    pub fn initial_checkpoint_request_id(&self) -> Result<i64, PowerSyncError> {
+        let last_requested = self.last_checkpoint_request_id()?.unwrap_or(0);
+        let concrete_target = self
+            .target_checkpoint_request_id()?
+            .filter(|target| *target > 0 && *target != i64::MAX)
+            .unwrap_or(0);
+
+        Ok(last_requested.max(concrete_target).max(1))
+    }
+
     /// Seeds the local checkpoint request counter from service state.
     ///
     /// The value is stored verbatim: core does not enforce monotonicity here. SDKs are
-    /// responsible for reconciling their local hint with the service before seeding, and cannot
-    /// allocate new checkpoint request ids until that seeding has completed.
+    /// responsible for posting the initial payload to the service and seeding its accepted
+    /// response, and cannot allocate new checkpoint request ids until that seeding has completed.
     pub fn seed_checkpoint_request_id(&self, request_id: i64) -> Result<(), PowerSyncError> {
         self.write_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY, request_id)
     }
