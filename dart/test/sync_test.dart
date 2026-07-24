@@ -322,7 +322,7 @@ void _syncTests<T>({
     final establish = instructions.whereType<Map>().firstWhere((instruction) =>
         instruction
             .containsKey('EstablishSyncStream'))['EstablishSyncStream'] as Map;
-    expect(establish, isNot(containsPair('checkpoint_request', anything)));
+    expect(establish, isNot(contains('checkpoint_request')));
   });
 
   test('handles connection events', () {
