@@ -1,5 +1,6 @@
 use core::cell::RefCell;
 use core::ffi::{c_int, c_void};
+use core::num::NonZeroI64;
 
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
@@ -288,8 +289,8 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                         "checkpoint request id must be an integer or integer string",
                     )?;
                     let adapter = state.storage_adapter(db)?;
-                    adapter.seed_checkpoint_request_id(request_id)?;
-                    ctx.result_int64(request_id);
+                    adapter.seed_checkpoint_request_id(request_id.get())?;
+                    ctx.result_int64(request_id.get());
                     return Ok(());
                 }
                 "next_checkpoint_request_id" => {
@@ -492,16 +493,11 @@ fn parse_positive_i64_payload(
     payload: *mut sqlite::value,
     name: &'static str,
     type_error: &'static str,
-) -> Result<i64, PowerSyncError> {
+) -> Result<NonZeroI64, PowerSyncError> {
     let Some(value) = parse_optional_i64_payload(payload, name, type_error)? else {
         return Err(PowerSyncError::argument_error(type_error));
     };
 
-    if value == 0 {
-        return Err(PowerSyncError::argument_error(format!(
-            "{name} must be a positive integer"
-        )));
-    }
-
-    Ok(value)
+    NonZeroI64::new(value)
+        .ok_or_else(|| PowerSyncError::argument_error(format!("{name} must be a positive integer")))
 }
