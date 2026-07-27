@@ -59,7 +59,6 @@ rustflags = [
     "-C", "link-arg=-miphonesimulator-version-min=11.0",
 ]
 
-
 [target.x86_64-apple-darwin]
 rustflags = [
     "-C", "link-arg=-mmacosx-version-min=10.13",

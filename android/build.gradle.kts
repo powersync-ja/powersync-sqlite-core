@@ -88,9 +88,9 @@ fun Exec.rustCompilation(soname: String, output: String? = null) {
         )
     }
 
-    // It's important to set an soname. Otherwise, the linker hardcodes the path in the
+    // It's important to set the soname. Otherwise, the linker hardcodes the path in the
     // lib, which breaks loading.
-    environment["RUSTFLAGS"] = "-C link-arg=-Wl,-soname,$soname"
+    environment("RUSTFLAGS", "-C link-arg=-Wl,-soname,$soname")
 
     commandLine(args)
 }
