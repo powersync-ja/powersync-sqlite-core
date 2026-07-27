@@ -365,15 +365,6 @@ impl StreamingSyncIteration {
                             severity: LogSeverity::DEBUG,
                             line: "Validated and applied checkpoint".into(),
                         });
-                        event.instructions.push(Instruction::FlushFileSystem {});
-
-                        // Persist here so that all database writes happen while preparing the
-                        // transition, keeping apply_transition infallible.
-                        if let Some(request_id) = target.write_checkpoint {
-                            self.adapter
-                                .persist_last_applied_checkpoint_request_id(request_id)?;
-                        }
-
                         SyncStateMachineTransition::SyncLocalChangesApplied {
                             applied_checkpoint_request_id: target.write_checkpoint,
                             partial: None,

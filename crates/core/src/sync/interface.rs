@@ -171,8 +171,6 @@ pub enum Instruction {
     },
     /// Close the websocket / HTTP stream to the sync service.
     CloseSyncStream(CloseSyncStream),
-    /// Flush the file-system if it's non-durable (only applicable to the Dart SDK).
-    FlushFileSystem {},
     /// Notify that a sync has been completed, prompting client SDKs to clear earlier errors.
     DidCompleteSync {
         /// The checkpoint request id applied by this completed sync, if the checkpoint had one.

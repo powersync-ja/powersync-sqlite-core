@@ -71,8 +71,6 @@ type Instruction = { LogLine: LogLine }
    | { FetchCredentials: FetchCredentials }
    // Close a connection previously started after EstablishSyncStream
    | { CloseSyncStream: { hide_disconnect: boolean } }
-   // For the Dart web client, flush the (otherwise non-durable) file system.
-   | { FlushFileSystem: {} }
    // Notify clients that a checkpoint was completed. Clients can clear the
    // download error state in response to this. If a full checkpoint with a
    // write_checkpoint was applied, applied_checkpoint_request_id is set.
