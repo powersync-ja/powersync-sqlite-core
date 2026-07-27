@@ -64,13 +64,19 @@ runs:
         path: android/build/distributions/powersync_android.zip
         if-no-files-found: error
 
+    - name: Build individual libraries for Dart SDK
+      shell: bash
+      run: |
+        cd android
+        ./gradlew buildRustStandalone
+
     - name: Copy individual libraries
       shell: bash
       run: |
-        cp target/aarch64-linux-android/release/libpowersync.so libpowersync_aarch64.android.so
-        cp target/armv7-linux-androideabi/release/libpowersync.so libpowersync_armv7.android.so
-        cp target/i686-linux-android/release/libpowersync.so libpowersync_x86.android.so
-        cp target/x86_64-linux-android/release/libpowersync.so libpowersync_x64.android.so
+        cp android/build/standalone/arm64-v8a/libpowersync.so libpowersync_aarch64.android.so
+        cp android/build/standalone/armeabi-v7a/libpowersync.so libpowersync_armv7.android.so
+        cp android/build/standalone/x86/libpowersync.so libpowersync_x86.android.so
+        cp android/build/standalone/x86_64/libpowersync.so libpowersync_x64.android.so
 
     - name: Upload individual libraries
       uses: actions/upload-artifact@v4
