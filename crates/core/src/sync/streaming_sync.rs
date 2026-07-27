@@ -362,7 +362,6 @@ impl StreamingSyncIteration {
                             severity: LogSeverity::DEBUG,
                             line: "Validated and applied checkpoint".into(),
                         });
-                        event.instructions.push(Instruction::FlushFileSystem {});
                         SyncStateMachineTransition::SyncLocalChangesApplied {
                             partial: None,
                             timestamp,
