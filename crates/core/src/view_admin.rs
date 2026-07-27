@@ -85,7 +85,6 @@ fn powersync_clear_impl(
         local_db.exec_safe("DELETE FROM ps_oplog; DELETE FROM ps_buckets")?;
     } else {
         trigger_resync(local_db, state)?;
-        local_db.exec_safe("DELETE FROM ps_buckets WHERE name = '$local'")?;
     }
 
     // language=SQLite
@@ -164,7 +163,7 @@ fn trigger_resync(db: *mut sqlite::sqlite3, state: &DatabaseState) -> Result<(),
         }
     }
 
-    db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0 WHERE name != '$local'")
+    db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0")
         .into_db_result(db)?;
     Ok(Default::default())
 }

@@ -100,6 +100,7 @@ COMMIT;
     // Start a fake sync client to apply the changes we've already written to
     // ps_oplog
     control('start');
+    control('seed_checkpoint_request_id', 1);
     final lastOpid =
         db.select('select max(op_id) from ps_oplog').single.columnAt(0) as int;
     final allBuckets = db

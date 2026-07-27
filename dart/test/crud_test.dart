@@ -249,7 +249,15 @@ void main() {
           });
         });
 
-        test('updates local bucket and updated rows', () {
+        test('updates target checkpoint request id and updated rows', () {
+          // Stale high-water marks (e.g. from before a request counter restart) must be cleared
+          // by a local write, so they can't open the apply gate for a smaller new target id.
+          db.execute('''
+INSERT INTO ps_kv(key, value) VALUES
+  ('last_seen_checkpoint_request_id', 6),
+  ('last_applied_checkpoint_request_id', 5);
+''');
+
           db.execute(
               'INSERT INTO powersync_crud (op, id, type, data) VALUES (?, ?, ?, ?)',
               [
@@ -262,12 +270,17 @@ void main() {
           expect(db.select('SELECT * FROM ps_updated_rows'), [
             {'row_type': 'users', 'row_id': 'foo'}
           ]);
-          expect(db.select('SELECT * FROM ps_buckets'), [
-            allOf(
-              containsPair('name', r'$local'),
-              containsPair('target_op', 9223372036854775807),
-            )
-          ]);
+          expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
+              isEmpty);
+          expect(
+              db.select(
+                  "SELECT key, value FROM ps_kv WHERE key LIKE '%checkpoint_request_id'"),
+              [
+                {
+                  'key': 'target_checkpoint_request_id',
+                  'value': 9223372036854775807,
+                }
+              ]);
         });
 
         test('does not require data', () {

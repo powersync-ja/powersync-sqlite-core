@@ -12,8 +12,12 @@ use crate::schema::{
 };
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
+use crate::sync::storage_adapter::{
+    LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY, TARGET_CHECKPOINT_REQUEST_ID_KEY,
+};
 use crate::sync::sync_status::TimestampMicros;
 use crate::utils::SqlBuffer;
+use const_format::formatcp;
 use powersync_sqlite_nostd::{self as sqlite, Destructor, ManagedStmt};
 use powersync_sqlite_nostd::{Connection, ResultCode};
 
@@ -66,9 +70,13 @@ impl<'a> SyncOperation<'a> {
 
         if needs_check {
             // language=SQLite
-            let statement = self.db.prepare_v2(
-                "SELECT 1 FROM ps_buckets WHERE target_op > last_op AND name = '$local'",
-            )?;
+            let statement = self.db.prepare_v2(formatcp!(
+                "SELECT 1
+FROM ps_kv AS target
+LEFT JOIN ps_kv AS seen ON seen.key = '{LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY}'
+WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
+  AND CAST(target.value AS INTEGER) > COALESCE(CAST(seen.value AS INTEGER), 0)"
+            ))?;
 
             if statement.step()? == ResultCode::ROW {
                 return Ok(false);

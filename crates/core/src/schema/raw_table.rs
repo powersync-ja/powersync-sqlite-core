@@ -267,8 +267,7 @@ pub fn generate_raw_table_trigger(
             // Prevent illegal writes to a table marked as insert-only by raising errors here.
             buffer.push_str("SELECT RAISE(FAIL, 'Unexpected update on insert-only table');\n");
         } else {
-            // Write directly to powersync_crud_ to skip writing the $local bucket for insert-only
-            // tables.
+            // Insert-only tables use manual CRUD writes so they don't block incoming data.
             let fragment = table_columns_to_json_object("NEW", &as_schema_table)?;
             buffer.powersync_crud_manual_put(&table.name, &fragment);
         }

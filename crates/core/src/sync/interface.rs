@@ -1,5 +1,6 @@
 use core::cell::RefCell;
 use core::ffi::{c_int, c_void};
+use core::num::NonZeroI64;
 
 use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
@@ -12,6 +13,7 @@ use crate::sync::diagnostics::{DiagnosticOptions, DiagnosticsEvent};
 use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::rc::Rc;
 use alloc::{string::String, vec::Vec};
 use powersync_sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
@@ -19,6 +21,7 @@ use powersync_sqlite_nostd::{self as sqlite, ColumnType};
 use powersync_sqlite_nostd::{Connection, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
+use serde_with::{DisplayFromStr, serde_as};
 use sqlite::{ResultCode, Value};
 
 use crate::sync::BucketPriority;
@@ -44,6 +47,14 @@ pub struct StartSyncStream {
     #[serde(default)]
     pub app_metadata: Option<Box<RawValue>>,
 
+    /// The checkpoint mechanism used by this SDK.
+    ///
+    /// In [CheckpointMode::Requests], [Instruction::EstablishSyncStream] includes the initial
+    /// checkpoint request payload the SDK should reconcile with the service before allocating
+    /// request ids.
+    #[serde(default)]
+    pub checkpoint_mode: CheckpointMode,
+
     /// Whether sync diagnostics with detailed download stats and inferred schema should be reported
     /// by the sync client.
     pub diagnostics: Option<DiagnosticOptions>,
@@ -63,9 +74,21 @@ impl Default for StartSyncStream {
             include_defaults: Self::include_defaults_by_default(),
             active_streams: Default::default(),
             app_metadata: Default::default(),
+            checkpoint_mode: CheckpointMode::default(),
             diagnostics: Default::default(),
         }
     }
+}
+
+/// Selects the checkpoint mechanism used for a sync iteration.
+#[derive(Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointMode {
+    /// Uses the legacy write-checkpoint flow.
+    #[default]
+    Legacy,
+    /// Uses client-generated checkpoint request ids.
+    Requests,
 }
 
 /// A request sent from a client SDK to the [SyncClient] with a `powersync_control` invocation.
@@ -116,6 +139,7 @@ pub enum SyncEvent<'a> {
 }
 
 /// An instruction sent by the core extension to the SDK.
+#[serde_as]
 #[derive(Serialize)]
 pub enum Instruction {
     LogLine {
@@ -128,19 +152,35 @@ pub enum Instruction {
     },
     /// Connect to the sync service using the [StreamingSyncRequest] created by the core extension,
     /// and then forward received lines via [SyncEvent::TextLine] and [SyncEvent::BinaryLine].
-    EstablishSyncStream { request: StreamingSyncRequest },
+    EstablishSyncStream {
+        request: StreamingSyncRequest,
+        /// The checkpoint request state SDKs using checkpoint-request mode should affirm with the
+        /// service before allocating request ids.
+        ///
+        /// Core combines its local allocation counter with any concrete local-write target and
+        /// supplies the larger value. This is omitted unless checkpoint requests were enabled on
+        /// [StartSyncStream].
+        #[serde(skip_serializing_if = "Option::is_none")]
+        checkpoint_request: Option<CheckpointRequestPayload>,
+    },
     FetchCredentials {
         /// Whether the credentials currently used have expired.
         ///
         /// If false, this is a pre-fetch.
         did_expire: bool,
     },
-    // These are defined like this because deserializers in Kotlin can't support either an
-    // object or a literal value
     /// Close the websocket / HTTP stream to the sync service.
     CloseSyncStream(CloseSyncStream),
     /// Notify that a sync has been completed, prompting client SDKs to clear earlier errors.
-    DidCompleteSync {},
+    DidCompleteSync {
+        /// The checkpoint request id applied by this completed sync, if the checkpoint had one.
+        ///
+        /// Serialized as a decimal string to preserve the full 64-bit value in JSON clients, the
+        /// same as [CheckpointRequestPayload::checkpoint_request_id].
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde_as(as = "Option<DisplayFromStr>")]
+        applied_checkpoint_request_id: Option<i64>,
+    },
 
     /// Handle a diagnostic event.
     ///
@@ -173,6 +213,14 @@ pub struct StreamingSyncRequest {
     pub streams: Rc<StreamSubscriptionRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_metadata: Option<Box<RawValue>>,
+}
+
+/// Initial payload for reconciling checkpoint-request state with the service.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct CheckpointRequestPayload {
+    pub client_id: String,
+    /// A decimal string to preserve the full 64-bit value in JSON clients.
+    pub checkpoint_request_id: String,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -230,6 +278,57 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
                     }
                 }),
                 "stop" => SyncControlRequest::StopSyncStream,
+                "seed_checkpoint_request_id" => {
+                    require_active_sync_iteration(&state)?;
+
+                    let request_id = parse_positive_i64_payload(
+                        *payload,
+                        "checkpoint request id",
+                        "checkpoint request id must be an integer or integer string",
+                    )?;
+                    let adapter = state.storage_adapter(db)?;
+                    adapter.seed_checkpoint_request_id(request_id.get())?;
+                    ctx.result_int64(request_id.get());
+                    return Ok(());
+                }
+                "next_checkpoint_request_id" => {
+                    require_active_sync_iteration(&state)?;
+
+                    let adapter = state.storage_adapter(db)?;
+                    if !adapter.has_checkpoint_request_id()? {
+                        return Err(PowerSyncError::state_error(
+                            "Checkpoint request state has not been seeded",
+                        ));
+                    }
+
+                    let request_id = adapter.next_checkpoint_request_id()?;
+                    ctx.result_int64(request_id);
+                    return Ok(());
+                }
+                "target_checkpoint_request_id" => {
+                    let target = parse_optional_i64_payload(
+                        *payload,
+                        "target checkpoint request id",
+                        "target checkpoint request id must be an integer, integer string, or null",
+                    )?;
+                    let adapter = state.storage_adapter(db)?;
+                    let previous_target = adapter.probe_target_checkpoint_request_id(target)?;
+
+                    match previous_target {
+                        Some(target) => ctx.result_int64(target),
+                        None => ctx.result_null(),
+                    }
+
+                    return Ok(());
+                }
+                "current_checkpoint_request_id" => {
+                    let adapter = state.storage_adapter(db)?;
+                    match adapter.last_checkpoint_request_id()? {
+                        Some(request_id) => ctx.result_int64(request_id),
+                        None => ctx.result_null(),
+                    }
+                    return Ok(());
+                }
                 "line_text" => SyncControlRequest::SyncEvent(SyncEvent::TextLine {
                     data: if payload.value_type() == ColumnType::Text {
                         payload.text()
@@ -343,3 +442,60 @@ create_sqlite_text_fn!(
     powersync_offline_sync_status_impl,
     "powersync_offline_sync_status"
 );
+
+/// Errors with a state error unless a sync iteration is currently active.
+///
+/// Checkpoint request ids can only be seeded or allocated in the context of a running iteration.
+fn require_active_sync_iteration(state: &DatabaseState) -> Result<(), PowerSyncError> {
+    let has_sync_iteration = state
+        .sync_client
+        .borrow()
+        .as_ref()
+        .map(|client| client.has_sync_iteration())
+        .unwrap_or(false);
+
+    if !has_sync_iteration {
+        return Err(PowerSyncError::state_error("No iteration is active"));
+    }
+
+    Ok(())
+}
+
+fn parse_optional_i64_payload(
+    payload: *mut sqlite::value,
+    name: &'static str,
+    type_error: &'static str,
+) -> Result<Option<i64>, PowerSyncError> {
+    let value = match payload.value_type() {
+        ColumnType::Null => return Ok(None),
+        ColumnType::Integer => payload.int64(),
+        // Allow decimal strings as a fallback for JavaScript SQLite drivers that can't bind
+        // 64-bit integers as BigInt without losing precision through Number.
+        ColumnType::Text => payload
+            .text()
+            .parse::<i64>()
+            .map_err(|_| PowerSyncError::argument_error(type_error))?,
+        _ => return Err(PowerSyncError::argument_error(type_error)),
+    };
+
+    if value < 0 {
+        return Err(PowerSyncError::argument_error(format!(
+            "{name} must be a non-negative integer"
+        )));
+    }
+
+    Ok(Some(value))
+}
+
+fn parse_positive_i64_payload(
+    payload: *mut sqlite::value,
+    name: &'static str,
+    type_error: &'static str,
+) -> Result<NonZeroI64, PowerSyncError> {
+    let Some(value) = parse_optional_i64_payload(payload, name, type_error)? else {
+        return Err(PowerSyncError::argument_error(type_error));
+    };
+
+    NonZeroI64::new(value)
+        .ok_or_else(|| PowerSyncError::argument_error(format!("{name} must be a positive integer")))
+}

@@ -16,7 +16,7 @@ use crate::fix_data::apply_v035_fix;
 use crate::schema::inspection::ExistingView;
 use crate::sync::BucketPriority;
 
-pub const LATEST_VERSION: i32 = 13;
+pub const LATEST_VERSION: i32 = 14;
 
 pub fn powersync_migrate(
     ctx: *mut sqlite::context,
@@ -456,6 +456,148 @@ DROP TABLE ps_sync_state_old;
         let track_migration =
             local_db.prepare_v2("INSERT INTO ps_migration(id, down_migrations) VALUES (?, ?)")?;
         track_migration.bind_int(1, 13)?;
+        track_migration.bind_text(2, &down, Destructor::STATIC)?;
+        track_migration.exec()?;
+    }
+
+    if current_version < 14 && target_version >= 14 {
+        // Move the legacy `$local` checkpoint bookkeeping into ps_kv.
+        //
+        // In older databases, `$local.last_applied_op` represented the latest legacy write
+        // checkpoint that was actually applied, so it becomes the last applied checkpoint request.
+        // `$local.last_op` represented the latest legacy write checkpoint seen in the sync stream,
+        // so it becomes the last seen checkpoint request.
+        //
+        // `$local.target_op` can either be a concrete legacy write checkpoint id or a sentinel such
+        // as i64::MAX while local writes are pending. Store it separately as `target_checkpoint_request_id`.
+        // Seeding `last_requested_checkpoint_request_id` from a concrete target would be possible,
+        // but should be redundant because SDKs reconcile the request counter with service state on
+        // connect before advancing it through `next_checkpoint_request_id`.
+        //
+        // An absent local target can safely start client-created checkpoint requests from 1. The
+        // ambiguous case is an existing max-op local target without a concrete requested id:
+        // pending local writes may already be associated with legacy service-created write
+        // checkpoints, so SDKs should bridge once through the legacy endpoint before starting
+        // client-created checkpoint requests.
+        //
+        // This migration can also run on a database that was previously on version 14 and then
+        // downgraded: the down migration rebuilds the `$local` row from ps_kv but keeps the ps_kv
+        // keys around, and an older SDK may have advanced `$local` since. Clear the keys first so
+        // the `$local` row is the source of truth and the inserts below can't conflict.
+        //
+        // After copying, the `$local` row is deleted: version 14 tracks this state exclusively in
+        // ps_kv, so ps_buckets only contains real sync buckets. The down migration recreates the
+        // row from ps_kv when needed.
+        //
+        // DROP COLUMN requires SQLite 3.35+; the extension already refuses to load below
+        // MIN_SQLITE_VERSION_NUMBER (3.44), so this is safe in the up path.
+        let up = "\
+DELETE FROM ps_kv
+ WHERE key IN (
+   'last_applied_checkpoint_request_id',
+   'last_seen_checkpoint_request_id',
+   'target_checkpoint_request_id'
+ );
+
+INSERT INTO ps_kv(key, value)
+SELECT 'last_applied_checkpoint_request_id', last_applied_op
+  FROM ps_buckets
+ WHERE name = '$local'
+   AND last_applied_op > 0;
+
+INSERT INTO ps_kv(key, value)
+SELECT 'last_seen_checkpoint_request_id', last_op
+  FROM ps_buckets
+ WHERE name = '$local'
+   AND last_op > 0;
+
+INSERT INTO ps_kv(key, value)
+SELECT 'target_checkpoint_request_id', target_op
+  FROM ps_buckets
+ WHERE name = '$local'
+   AND target_op > 0;
+
+DELETE FROM ps_buckets WHERE name = '$local';
+
+ALTER TABLE ps_buckets DROP COLUMN target_op;
+";
+        local_db.exec_safe(up).into_db_result(local_db)?;
+
+        // Downgrading needs to rebuild the old `$local` row from the new ps_kv state so older SDKs
+        // can keep using their target-op based blocking behavior. In that model, `$local.last_op`
+        // tracked the latest seen legacy write checkpoint and was compared with `$local.target_op`
+        // to decide whether downloaded changes could be applied. The `$local.last_applied_op`
+        // value represented the checkpoint that had actually been applied locally.
+        // `$local.pending_delete = 1` marked this as a synthetic local-only bucket instead of a
+        // normal service bucket. Restore each old progress column from its matching ps_kv key.
+        // The 0 defaults cover a local target that exists before any checkpoint has been seen or
+        // applied. If `target_checkpoint_request_id` is absent, don't create a `$local` row: the old
+        // implementation also didn't have a `$local` bucket unless there was local target state to
+        // track.
+        const DOWN_STATEMENTS: &[&str] = &[
+            "ALTER TABLE ps_buckets RENAME TO ps_buckets_14",
+            "DROP INDEX ps_buckets_name",
+            "CREATE TABLE ps_buckets(
+  id INTEGER PRIMARY KEY,
+  name TEXT NOT NULL,
+  last_applied_op INTEGER NOT NULL DEFAULT 0,
+  last_op INTEGER NOT NULL DEFAULT 0,
+  target_op INTEGER NOT NULL DEFAULT 0,
+  add_checksum INTEGER NOT NULL DEFAULT 0,
+  op_checksum INTEGER NOT NULL DEFAULT 0,
+  pending_delete INTEGER NOT NULL DEFAULT 0
+) STRICT",
+            "CREATE UNIQUE INDEX ps_buckets_name ON ps_buckets (name)",
+            "ALTER TABLE ps_buckets ADD COLUMN count_at_last INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE ps_buckets ADD COLUMN count_since_last INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE ps_buckets ADD COLUMN downloaded_size INTEGER NOT NULL DEFAULT 0",
+            "INSERT INTO ps_buckets(
+  id,
+  name,
+  last_applied_op,
+  last_op,
+  add_checksum,
+  op_checksum,
+  pending_delete,
+  count_at_last,
+  count_since_last,
+  downloaded_size
+)
+SELECT
+  id,
+  name,
+  last_applied_op,
+  last_op,
+  add_checksum,
+  op_checksum,
+  pending_delete,
+  count_at_last,
+  count_since_last,
+  downloaded_size
+FROM ps_buckets_14",
+            "DROP TABLE ps_buckets_14",
+            "INSERT INTO ps_buckets(name, pending_delete, last_op, last_applied_op, target_op)
+SELECT '$local', 1, seen, applied, target
+  FROM (
+    SELECT
+      IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'last_seen_checkpoint_request_id'), 0) AS seen,
+      IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'last_applied_checkpoint_request_id'), 0) AS applied,
+      (SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = 'target_checkpoint_request_id') AS target
+  )
+ WHERE EXISTS (
+    SELECT 1 FROM ps_kv WHERE key = 'target_checkpoint_request_id'
+ )
+ON CONFLICT(name) DO UPDATE SET
+  pending_delete = excluded.pending_delete,
+  last_op = excluded.last_op,
+  last_applied_op = excluded.last_applied_op,
+  target_op = excluded.target_op",
+            "DELETE FROM ps_migration WHERE id >= 14",
+        ];
+        let down = serialize_down_statements(DOWN_STATEMENTS)?;
+        let track_migration =
+            local_db.prepare_v2("INSERT INTO ps_migration(id, down_migrations) VALUES (?, ?)")?;
+        track_migration.bind_int(1, 14)?;
         track_migration.bind_text(2, &down, Destructor::STATIC)?;
         track_migration.exec()?;
     }

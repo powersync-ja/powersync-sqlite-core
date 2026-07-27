@@ -26,6 +26,15 @@ use super::{
     bucket_priority::BucketPriority, interface::BucketRequest, streaming_sync::OwnedCheckpoint,
 };
 
+pub const LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_requested_checkpoint_request_id";
+pub const LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY: &str = "last_seen_checkpoint_request_id";
+pub const LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY: &str = "last_applied_checkpoint_request_id";
+
+// Tracks the target used to block applying downloaded rows while local writes are outstanding.
+// When present, this is normally either the max-op sentinel for pending local writes or a concrete
+// checkpoint request id also stored in LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY.
+pub const TARGET_CHECKPOINT_REQUEST_ID_KEY: &str = "target_checkpoint_request_id";
+
 /// An adapter for storing sync state.
 ///
 /// This is used to encapsulate some SQL queries used for the sync implementation, making the code
@@ -68,9 +77,10 @@ impl StorageAdapter {
 
     pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>, PowerSyncError> {
         // language=SQLite
-        let statement = self.db.prepare_v2(
-            "SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0 AND name != '$local'",
-        ).into_db_result(self.db)?;
+        let statement = self
+            .db
+            .prepare_v2("SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0")
+            .into_db_result(self.db)?;
 
         let mut requests = Vec::<BucketRequest>::new();
 
@@ -123,6 +133,8 @@ impl StorageAdapter {
             priority_status: priority_items,
             downloading: None,
             streams,
+            // Checkpoint requests should not be made or compared while offline.
+            internal_last_applied_checkpoint_request_id: None,
         })
     }
 
@@ -260,10 +272,8 @@ WHERE bucket = ?1",
             }
         }
 
-        if let (None, Some(write_checkpoint)) = (&priority, &checkpoint.write_checkpoint) {
-            update_bucket.bind_int64(1, *write_checkpoint)?;
-            update_bucket.bind_text(2, "$local", sqlite::Destructor::STATIC)?;
-            update_bucket.exec()?;
+        if let (None, Some(checkpoint_request_id)) = (&priority, &checkpoint.write_checkpoint) {
+            self.persist_last_seen_checkpoint_request_id(*checkpoint_request_id)?;
         }
 
         #[derive(Serialize)]
@@ -499,23 +509,162 @@ WHERE bucket = ?1",
         Ok(())
     }
 
-    pub fn local_state(&self) -> Result<Option<LocalState>, PowerSyncError> {
-        let stmt = self
-            .db
-            .prepare_v2("SELECT target_op FROM ps_buckets WHERE name = ?")?;
-        stmt.bind_text(1, "$local", sqlite::Destructor::STATIC)?;
+    pub fn target_checkpoint_request_id(&self) -> Result<Option<i64>, PowerSyncError> {
+        self.read_i64_kv(TARGET_CHECKPOINT_REQUEST_ID_KEY)
+    }
 
-        Ok(if stmt.step()? == ResultCode::ROW {
-            let target_op = stmt.column_int64(0);
-            Some(LocalState { target_op })
+    /// Probes and optionally updates the target checkpoint request id used to block applying downloaded rows
+    /// while local writes are outstanding.
+    ///
+    /// In the write-checkpoint flow, callers allocate a checkpoint request id, post it to the
+    /// service, and then update this from the max-op sentinel to the concrete checkpoint request id
+    /// once the request succeeds. This is also used for older services where the SDK cannot create
+    /// checkpoint requests explicitly.
+    ///
+    /// The target can also be used internally as a sentinel value such as max op id while local
+    /// writes are pending, so it must not always be interpreted as a checkpoint request id.
+    ///
+    /// This only updates the apply gate. It does not allocate, seed or overwrite
+    /// `last_requested_checkpoint_request_id`, which is managed by `seed_checkpoint_request_id` and
+    /// `next_checkpoint_request_id`.
+    ///
+    /// Returns the target value from before this call. When `target` is `None`, this only
+    /// reads the current value. A `target` of zero clears the stored target, removing the apply
+    /// gate entirely; any other value overwrites it.
+    ///
+    /// Negative values are rejected when parsing the `powersync_control` payload, before this is
+    /// called.
+    pub fn probe_target_checkpoint_request_id(
+        &self,
+        target: Option<i64>,
+    ) -> Result<Option<i64>, PowerSyncError> {
+        let previous_target = self.target_checkpoint_request_id()?;
+
+        let Some(target) = target else {
+            return Ok(previous_target);
+        };
+
+        if target == 0 {
+            self.delete_kv(TARGET_CHECKPOINT_REQUEST_ID_KEY)?;
+            return Ok(previous_target);
+        }
+
+        self.write_i64_kv(TARGET_CHECKPOINT_REQUEST_ID_KEY, target)?;
+
+        Ok(previous_target)
+    }
+
+    /// Persists the checkpoint request id observed in a complete sync checkpoint.
+    ///
+    /// This is used to decide whether downloaded data can be applied after local uploads complete.
+    pub fn persist_last_seen_checkpoint_request_id(
+        &self,
+        request_id: i64,
+    ) -> Result<(), PowerSyncError> {
+        self.write_i64_kv(LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY, request_id)
+    }
+
+    /// Persists the checkpoint request id that was applied locally.
+    ///
+    /// This is always the id from the last applied checkpoint as sent by the service - a plain
+    /// overwrite with no monotonicity enforced by core. External code owns consistency of these
+    /// ids; waiters should rely on `DidCompleteSync.applied_checkpoint_request_id` rather than
+    /// comparing this value across reconnects.
+    pub fn persist_last_applied_checkpoint_request_id(
+        &self,
+        request_id: i64,
+    ) -> Result<(), PowerSyncError> {
+        self.write_i64_kv(LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY, request_id)
+    }
+
+    /// Increments, persists and returns the next client-created checkpoint request id.
+    pub fn next_checkpoint_request_id(&self) -> Result<i64, PowerSyncError> {
+        let statement = self.db.prepare_v2(
+            "INSERT INTO ps_kv(key, value)
+VALUES(?1, 1)
+ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1
+RETURNING value",
+        )?;
+        statement.bind_text(
+            1,
+            LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY,
+            sqlite::Destructor::STATIC,
+        )?;
+
+        if statement.step()? == ResultCode::ROW {
+            Ok(statement.column_int64(0))
+        } else {
+            Err(PowerSyncError::unknown_internal())
+        }
+    }
+
+    /// Returns whether the local checkpoint request counter has been initialized.
+    pub fn has_checkpoint_request_id(&self) -> Result<bool, PowerSyncError> {
+        Ok(self.last_checkpoint_request_id()?.is_some())
+    }
+
+    /// Returns the latest checkpoint request id known locally.
+    pub fn last_checkpoint_request_id(&self) -> Result<Option<i64>, PowerSyncError> {
+        self.read_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY)
+    }
+
+    /// Returns the checkpoint request id to affirm when starting a request-mode sync iteration.
+    ///
+    /// The allocation counter is normally authoritative. A concrete target can be newer during a
+    /// legacy-to-request-mode transition or after migrating unusual state, so include it as a
+    /// lower bound. The max-op sentinel represents pending local writes without a concrete request
+    /// id and must not be sent to the service.
+    pub fn initial_checkpoint_request_id(&self) -> Result<i64, PowerSyncError> {
+        let last_requested = self.last_checkpoint_request_id()?.unwrap_or(0);
+        let concrete_target = self
+            .target_checkpoint_request_id()?
+            .filter(|target| *target > 0 && *target != i64::MAX)
+            .unwrap_or(0);
+
+        Ok(last_requested.max(concrete_target).max(1))
+    }
+
+    /// Seeds the local checkpoint request counter from service state.
+    ///
+    /// The value is stored verbatim: core does not enforce monotonicity here. SDKs are
+    /// responsible for posting the initial payload to the service and seeding its accepted
+    /// response, and cannot allocate new checkpoint request ids until that seeding has completed.
+    pub fn seed_checkpoint_request_id(&self, request_id: i64) -> Result<(), PowerSyncError> {
+        self.write_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY, request_id)
+    }
+
+    fn read_i64_kv(&self, key: &'static str) -> Result<Option<i64>, PowerSyncError> {
+        let statement = self
+            .db
+            .prepare_v2("SELECT value FROM ps_kv WHERE key = ?1")
+            .into_db_result(self.db)?;
+        statement.bind_text(1, key, sqlite::Destructor::STATIC)?;
+
+        Ok(if statement.step()? == ResultCode::ROW {
+            Some(statement.column_int64(0))
         } else {
             None
         })
     }
-}
 
-pub struct LocalState {
-    pub target_op: i64,
+    fn write_i64_kv(&self, key: &'static str, value: i64) -> Result<(), PowerSyncError> {
+        let stmt = self.db.prepare_v2(
+            "INSERT INTO ps_kv(key, value)
+VALUES(?1, ?2)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )?;
+        stmt.bind_text(1, key, sqlite::Destructor::STATIC)?;
+        stmt.bind_int64(2, value)?;
+        stmt.exec()?;
+        Ok(())
+    }
+
+    fn delete_kv(&self, key: &'static str) -> Result<(), PowerSyncError> {
+        let stmt = self.db.prepare_v2("DELETE FROM ps_kv WHERE key = ?1")?;
+        stmt.bind_text(1, key, sqlite::Destructor::STATIC)?;
+        stmt.exec()?;
+        Ok(())
+    }
 }
 
 pub struct BucketInfo {

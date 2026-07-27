@@ -26,7 +26,10 @@ use crate::{
         BucketPriority,
         checkpoint::OwnedBucketChecksum,
         diagnostics::DiagnosticsCollector,
-        interface::{CloseSyncStream, StartSyncStream, StreamSubscriptionRequest},
+        interface::{
+            CheckpointMode, CheckpointRequestPayload, CloseSyncStream, StartSyncStream,
+            StreamSubscriptionRequest,
+        },
         line::{
             BucketSubscriptionReason, DataLine, StreamDescription, StreamSubscriptionError,
             StreamSubscriptionErrorCause, SyncLineWithSource,
@@ -362,7 +365,16 @@ impl StreamingSyncIteration {
                             severity: LogSeverity::DEBUG,
                             line: "Validated and applied checkpoint".into(),
                         });
+
+                        // Persist here so that all database writes happen while preparing the
+                        // transition, keeping apply_transition infallible.
+                        if let Some(request_id) = target.write_checkpoint {
+                            self.adapter
+                                .persist_last_applied_checkpoint_request_id(request_id)?;
+                        }
+
                         SyncStateMachineTransition::SyncLocalChangesApplied {
+                            applied_checkpoint_request_id: target.write_checkpoint,
                             partial: None,
                             timestamp,
                         }
@@ -399,6 +411,9 @@ impl StreamingSyncIteration {
                     }
                     SyncLocalResult::ChangesApplied { timestamp } => {
                         SyncStateMachineTransition::SyncLocalChangesApplied {
+                            // A checkpoint request is only considered applied once the full
+                            // checkpoint has been applied, not for partial completions.
+                            applied_checkpoint_request_id: None,
                             partial: Some(priority),
                             timestamp,
                         }
@@ -496,7 +511,11 @@ impl StreamingSyncIteration {
             } => {
                 self.validated_but_not_applied = Some(validated_but_not_applied);
             }
-            SyncStateMachineTransition::SyncLocalChangesApplied { partial, timestamp } => {
+            SyncStateMachineTransition::SyncLocalChangesApplied {
+                applied_checkpoint_request_id,
+                partial,
+                timestamp,
+            } => {
                 if let Some(priority) = partial {
                     self.status.update(
                         |status| {
@@ -505,7 +524,7 @@ impl StreamingSyncIteration {
                         &mut event.instructions,
                     );
                 } else {
-                    self.handle_checkpoint_applied(event, timestamp);
+                    self.handle_checkpoint_applied(event, timestamp, applied_checkpoint_request_id);
                 }
             }
             SyncStateMachineTransition::Empty => {}
@@ -630,7 +649,7 @@ impl StreamingSyncIteration {
             return Ok(());
         };
 
-        let target_write = self.adapter.local_state()?.map(|e| e.target_op);
+        let target_write = self.adapter.target_checkpoint_request_id()?;
         if checkpoint.write_checkpoint < target_write {
             // Note: None < Some(x). The pending checkpoint does not contain the write
             // checkpoint created during the upload, so we don't have to try applying it, it's
@@ -646,7 +665,11 @@ impl StreamingSyncIteration {
                     line: "Applied pending checkpoint after completed upload".into(),
                 });
 
-                self.handle_checkpoint_applied(event, timestamp);
+                if let Some(request_id) = checkpoint.write_checkpoint {
+                    self.adapter
+                        .persist_last_applied_checkpoint_request_id(request_id)?;
+                }
+                self.handle_checkpoint_applied(event, timestamp, checkpoint.write_checkpoint);
             }
             _ => {
                 event.instructions.push(Instruction::LogLine {
@@ -907,6 +930,16 @@ impl StreamingSyncIteration {
             .adapter
             .collect_subscription_requests(self.options.include_defaults)?;
 
+        let client_id = client_id(self.db)?;
+        let checkpoint_request = if self.options.checkpoint_mode == CheckpointMode::Requests {
+            Some(CheckpointRequestPayload {
+                client_id: client_id.clone(),
+                checkpoint_request_id: self.adapter.initial_checkpoint_request_id()?.to_string(),
+            })
+        } else {
+            None
+        };
+
         let request = StreamingSyncRequest {
             buckets: requests,
             include_checksum: true,
@@ -915,26 +948,46 @@ impl StreamingSyncIteration {
             // will break if it's not set and the SDK requests sync data as BSON.
             // For details, see https://github.com/powersync-ja/powersync-service/pull/332
             binary_data: true,
-            client_id: client_id(self.db)?,
+            client_id,
             parameters: self.options.parameters.take(),
             streams: stream_subscriptions.request.clone(),
             app_metadata: self.options.app_metadata.take(),
         };
 
-        event
-            .instructions
-            .push(Instruction::EstablishSyncStream { request });
+        event.instructions.push(Instruction::EstablishSyncStream {
+            request,
+            checkpoint_request,
+        });
         Ok(BeforeCheckpoint {
             local_buckets: local_bucket_names,
             stream_subscriptions: stream_subscriptions,
         })
     }
 
-    fn handle_checkpoint_applied(&mut self, event: &mut ActiveEvent, timestamp: TimestampMicros) {
-        event.instructions.push(Instruction::DidCompleteSync {});
+    /// Emits the instructions and status update for a fully applied checkpoint.
+    ///
+    /// The applied checkpoint request id must already have been persisted by the caller: this
+    /// runs while applying a state transition, which must stay infallible (see
+    /// [SyncStateMachineTransition]).
+    fn handle_checkpoint_applied(
+        &mut self,
+        event: &mut ActiveEvent,
+        timestamp: TimestampMicros,
+        applied_checkpoint_request_id: Option<i64>,
+    ) {
+        if let Some(request_id) = applied_checkpoint_request_id {
+            event.instructions.push(Instruction::LogLine {
+                severity: LogSeverity::DEBUG,
+                line: format!("Applied checkpoint request id {request_id}").into(),
+            });
+        }
+
+        event.instructions.push(Instruction::DidCompleteSync {
+            applied_checkpoint_request_id,
+        });
 
         self.status.update(
-            |status| status.applied_checkpoint(timestamp),
+            |status| status.applied_checkpoint(timestamp, applied_checkpoint_request_id),
             &mut event.instructions,
         );
     }
@@ -1112,6 +1165,7 @@ enum SyncStateMachineTransition<'a> {
         validated_but_not_applied: OwnedCheckpoint,
     },
     SyncLocalChangesApplied {
+        applied_checkpoint_request_id: Option<i64>,
         partial: Option<BucketPriority>,
         timestamp: TimestampMicros,
     },

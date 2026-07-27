@@ -4,12 +4,12 @@ import 'dart:typed_data';
 
 import 'package:bson/bson.dart';
 import 'package:file/local.dart';
+import 'package:path/path.dart';
 import 'package:sqlite3/common.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:sqlite3_test/sqlite3_test.dart';
 import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
-import 'package:path/path.dart';
 
 import 'utils/native_test_utils.dart';
 import 'utils/test_utils.dart';
@@ -60,16 +60,57 @@ void _syncTests<T>({
 
     db.execute('commit');
     final [row] = result;
-    return jsonDecode(row.columnAt(0));
+    final rawResult = row.columnAt(0);
+    if (rawResult is String) {
+      return jsonDecode(rawResult);
+    } else {
+      return const [];
+    }
+  }
+
+  Object? invokeControlScalar(String operation, Object? data) {
+    db.execute('begin');
+    ResultSet result;
+
+    try {
+      result = db.select('SELECT powersync_control(?, ?)', [operation, data]);
+
+      const statement = 'SELECT * FROM sqlite_stmt WHERE busy AND sql != ?;';
+      final busy = db.select(statement, [statement]);
+      expect(busy, isEmpty);
+    } catch (e) {
+      db.execute('rollback');
+      rethrow;
+    }
+
+    db.execute('commit');
+    final [row] = result;
+    return row.columnAt(0);
+  }
+
+  int seedCheckpointRequestId(Object? requestId) {
+    return invokeControlScalar('seed_checkpoint_request_id', requestId) as int;
+  }
+
+  bool establishesSyncStream(List<Object?> instructions) {
+    return instructions.any((instruction) =>
+        instruction is Map && instruction.containsKey('EstablishSyncStream'));
   }
 
   List<Object?> invokeControl(String operation, Object? data) {
+    List<Object?> result;
     if (matcher.enabled) {
       // Trace through golden matcher
-      return matcher.invoke(operation, data);
+      result = matcher.invoke(operation, data);
     } else {
-      return invokeControlRaw(operation, data);
+      result = invokeControlRaw(operation, data);
     }
+
+    if (operation == 'start' && establishesSyncStream(result)) {
+      seedCheckpointRequestId(1);
+    }
+
+    return result;
   }
 
   setUp(() async {
@@ -133,6 +174,37 @@ void _syncTests<T>({
 
   List<Object?> pushCheckpointComplete({int? priority, String lastOpId = '1'}) {
     return syncLine(checkpointComplete(priority: priority, lastOpId: lastOpId));
+  }
+
+  Object? lastRequestedCheckpointRequestId() {
+    final rows = db.select(
+        "SELECT value FROM ps_kv WHERE key = 'last_requested_checkpoint_request_id'");
+    return rows.isEmpty ? null : rows.single.columnAt(0);
+  }
+
+  Object? lastAppliedCheckpointRequestId() {
+    final rows = db.select(
+        "SELECT value FROM ps_kv WHERE key = 'last_applied_checkpoint_request_id'");
+    return rows.isEmpty ? null : rows.single.columnAt(0);
+  }
+
+  Object? streamCheckpointRequest(List<Object?> instructions) {
+    final instruction = instructions.whereType<Map>().firstWhere(
+        (instruction) => instruction.containsKey('EstablishSyncStream'));
+    final establish = instruction['EstablishSyncStream'] as Map;
+    return establish['checkpoint_request'];
+  }
+
+  int nextCheckpointRequestId() {
+    return invokeControlScalar('next_checkpoint_request_id', null) as int;
+  }
+
+  Object? probeTargetCheckpointRequestId([Object? opId]) {
+    return invokeControlScalar('target_checkpoint_request_id', opId);
+  }
+
+  Object? currentCheckpointRequestId() {
+    return invokeControlScalar('current_checkpoint_request_id', null);
   }
 
   ResultSet fetchRows() {
@@ -199,6 +271,58 @@ void _syncTests<T>({
         ),
       ),
     );
+  });
+
+  syncTest('prepares initial checkpoint request state when enabled', (_) {
+    final initial = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(initial), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '1',
+    });
+
+    // A concrete target is a lower bound even when the allocation counter has not been seeded.
+    probeTargetCheckpointRequestId(4);
+    final fromTarget = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(fromTarget), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '4',
+    });
+
+    // The larger persisted allocation counter wins over the concrete target.
+    expect(seedCheckpointRequestId(7), 7);
+    final fromCounter = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(fromCounter), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '7',
+    });
+
+    // The max-op local-write sentinel is not a concrete checkpoint request id.
+    probeTargetCheckpointRequestId(9223372036854775807);
+    final ignoringSentinel = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(ignoringSentinel), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '7',
+    });
+  });
+
+  syncTest('omits initial checkpoint request state in legacy mode', (_) {
+    final instructions = invokeControlRaw('start', null);
+    final establish = instructions.whereType<Map>().firstWhere((instruction) =>
+        instruction
+            .containsKey('EstablishSyncStream'))['EstablishSyncStream'] as Map;
+    expect(establish, isNot(contains('checkpoint_request')));
   });
 
   test('handles connection events', () {
@@ -318,8 +442,16 @@ void _syncTests<T>({
   syncTest('remembers sync state', (controller) {
     invokeControl('start', null);
 
-    pushCheckpoint(buckets: priorityBuckets);
-    pushCheckpointComplete();
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+    expect(
+      pushCheckpointComplete(),
+      contains(
+        containsPair(
+          'DidCompleteSync',
+          {'applied_checkpoint_request_id': '1'},
+        ),
+      ),
+    );
 
     controller.elapse(Duration(minutes: 10));
     pushCheckpoint(buckets: priorityBuckets);
@@ -329,28 +461,36 @@ void _syncTests<T>({
     final instructions = invokeControl('start', null);
     expect(
       instructions,
-      contains(
-        containsPair(
+      isNot(contains(containsPair(
           'UpdateSyncStatus',
           containsPair(
-            'status',
+              'status',
+              containsPair(
+                  'internal_last_applied_checkpoint_request_id', anything))))),
+    );
+    expect(
+      instructions,
+      contains(
+        containsPair(
+            'UpdateSyncStatus',
             containsPair(
-              'priority_status',
-              [
-                {
-                  'priority': 2,
-                  'last_synced_at': timestamp(),
-                  'has_synced': true
-                },
-                {
-                  'priority': 2147483647,
-                  'last_synced_at': timestamp(plusMinutes: -10),
-                  'has_synced': true
-                },
-              ],
-            ),
-          ),
-        ),
+              'status',
+              containsPair(
+                'priority_status',
+                [
+                  {
+                    'priority': 2,
+                    'last_synced_at': timestamp(),
+                    'has_synced': true
+                  },
+                  {
+                    'priority': 2147483647,
+                    'last_synced_at': timestamp(plusMinutes: -10),
+                    'has_synced': true
+                  },
+                ],
+              ),
+            )),
       ),
     );
 
@@ -369,6 +509,343 @@ void _syncTests<T>({
       'downloading': null,
       'streams': [],
     });
+  });
+
+  syncTest('allocates requested checkpoint request ids', (_) {
+    invokeControl('start', null);
+
+    expect(nextCheckpointRequestId(), 2);
+    expect(lastRequestedCheckpointRequestId(), 2);
+
+    expect(nextCheckpointRequestId(), 3);
+    expect(lastRequestedCheckpointRequestId(), 3);
+  });
+
+  syncTest('reports current checkpoint request id without incrementing', (_) {
+    expect(currentCheckpointRequestId(), isNull);
+
+    invokeControlRaw('start', null);
+    expect(seedCheckpointRequestId(1), 1);
+    expect(currentCheckpointRequestId(), 1);
+
+    expect(currentCheckpointRequestId(), 1);
+    expect(nextCheckpointRequestId(), 2);
+    expect(currentCheckpointRequestId(), 2);
+    expect(lastRequestedCheckpointRequestId(), 2);
+
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '2');
+    pushCheckpointComplete();
+    expect(lastAppliedCheckpointRequestId(), 2);
+    expect(currentCheckpointRequestId(), 2);
+
+    db.execute("insert into items (id, col) values ('local', 'data');");
+    expect(lastAppliedCheckpointRequestId(), isNull);
+    expect(currentCheckpointRequestId(), 2);
+
+    expect(nextCheckpointRequestId(), 3);
+    expect(currentCheckpointRequestId(), 3);
+  });
+
+  syncTest('seeds requested checkpoint request ids from service state', (_) {
+    final startInstructions = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(startInstructions), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '1',
+    });
+    expect(seedCheckpointRequestId(41), 41);
+
+    expect(nextCheckpointRequestId(), 42);
+    expect(lastRequestedCheckpointRequestId(), 42);
+
+    final restartInstructions = invokeControlRaw(
+      'start',
+      json.encode({'checkpoint_mode': 'requests'}),
+    );
+    expect(streamCheckpointRequest(restartInstructions), {
+      'client_id': 'test-test-test-test',
+      'checkpoint_request_id': '42',
+    });
+    expect(seedCheckpointRequestId(100), 100);
+
+    expect(nextCheckpointRequestId(), 101);
+    expect(lastRequestedCheckpointRequestId(), 101);
+  });
+
+  syncTest('stores seeded checkpoint request ids verbatim', (_) {
+    invokeControlRaw('start', null);
+    expect(seedCheckpointRequestId(41), 41);
+    expect(lastRequestedCheckpointRequestId(), 41);
+
+    // Core does not enforce monotonicity when seeding. SDKs own reconciliation and seed the
+    // effective state accepted by the service, which may be below the local counter (e.g. after
+    // switching users).
+    expect(seedCheckpointRequestId(5), 5);
+    expect(lastRequestedCheckpointRequestId(), 5);
+    expect(nextCheckpointRequestId(), 6);
+  });
+
+  syncTest('rejects absent checkpoint request ids when seeding', (_) {
+    invokeControlRaw('start', null);
+
+    expect(
+      () => invokeControlRaw('seed_checkpoint_request_id', null),
+      throwsA(isSqliteException(
+        3091,
+        contains('checkpoint request id must be an integer or integer string'),
+      )),
+    );
+    expect(lastRequestedCheckpointRequestId(), isNull);
+  });
+
+  syncTest('rejects zero checkpoint request ids when seeding', (_) {
+    invokeControlRaw('start', null);
+
+    expect(
+      () => invokeControlRaw('seed_checkpoint_request_id', 0),
+      throwsA(isSqliteException(
+        3091,
+        contains('checkpoint request id must be a positive integer'),
+      )),
+    );
+    expect(lastRequestedCheckpointRequestId(), isNull);
+  });
+
+  syncTest('accepts text checkpoint request ids when seeding', (_) {
+    invokeControlRaw('start', null);
+    expect(seedCheckpointRequestId('41'), 41);
+
+    expect(lastRequestedCheckpointRequestId(), 41);
+    expect(nextCheckpointRequestId(), 42);
+  });
+
+  syncTest('requires active sync iteration before seeding checkpoint ids', (_) {
+    expect(
+      () => seedCheckpointRequestId(1),
+      throwsA(isSqliteException(
+        21,
+        contains('No iteration is active'),
+      )),
+    );
+    expect(lastRequestedCheckpointRequestId(), isNull);
+  });
+
+  syncTest('requires checkpoint request state before allocating checkpoint ids',
+      (_) {
+    invokeControlRaw('start', null);
+
+    expect(
+      () => invokeControlRaw('next_checkpoint_request_id', null),
+      throwsA(isSqliteException(
+        21,
+        contains('Checkpoint request state has not been seeded'),
+      )),
+    );
+    expect(probeTargetCheckpointRequestId(), isNull);
+  });
+
+  syncTest(
+      'probes and updates target checkpoint request id without sync iteration',
+      (_) {
+    expect(probeTargetCheckpointRequestId(), isNull);
+    expect(probeTargetCheckpointRequestId(1), isNull);
+    expect(lastRequestedCheckpointRequestId(), isNull);
+    expect(probeTargetCheckpointRequestId(), 1);
+
+    expect(probeTargetCheckpointRequestId(2), 1);
+    expect(lastRequestedCheckpointRequestId(), isNull);
+    expect(probeTargetCheckpointRequestId(), 2);
+  });
+
+  syncTest(
+      'accepts text checkpoint request ids for target checkpoint request id',
+      (_) {
+    expect(probeTargetCheckpointRequestId('1'), isNull);
+    expect(lastRequestedCheckpointRequestId(), isNull);
+    expect(probeTargetCheckpointRequestId(), 1);
+  });
+
+  syncTest('rejects negative target checkpoint request ids', (_) {
+    expect(
+      () => invokeControlRaw('target_checkpoint_request_id', -1),
+      throwsA(isSqliteException(
+        3091,
+        contains('target checkpoint request id must be a non-negative integer'),
+      )),
+    );
+  });
+
+  syncTest('target checkpoint request id does not update checkpoint request id',
+      (_) {
+    invokeControlRaw('start', null);
+    expect(seedCheckpointRequestId(10), 10);
+
+    expect(lastRequestedCheckpointRequestId(), 10);
+    expect(probeTargetCheckpointRequestId(7), isNull);
+    expect(probeTargetCheckpointRequestId(), 7);
+    expect(lastRequestedCheckpointRequestId(), 10);
+  });
+
+  syncTest('does not store target ops as checkpoint request id', (_) {
+    expect(probeTargetCheckpointRequestId(0), isNull);
+    expect(lastRequestedCheckpointRequestId(), isNull);
+    expect(probeTargetCheckpointRequestId(), isNull);
+
+    expect(probeTargetCheckpointRequestId(1), isNull);
+    expect(lastRequestedCheckpointRequestId(), isNull);
+    expect(probeTargetCheckpointRequestId(), 1);
+
+    expect(probeTargetCheckpointRequestId(0), 1);
+    expect(probeTargetCheckpointRequestId(), isNull);
+
+    expect(probeTargetCheckpointRequestId(9223372036854775807), isNull);
+    expect(lastRequestedCheckpointRequestId(), isNull);
+    expect(probeTargetCheckpointRequestId(), 9223372036854775807);
+  });
+
+  syncTest('does not persist placeholder checkpoint request id', (_) {
+    db.execute("insert into items (id, col) values ('local', 'data');");
+
+    invokeControlRaw('start', null);
+
+    expect(lastRequestedCheckpointRequestId(), isNull);
+  });
+
+  syncTest(
+    'does not emit applied checkpoint request id for partial checkpoint',
+    (_) {
+      invokeControl('start', null);
+
+      pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+      final instructions = pushCheckpointComplete(priority: 2);
+
+      expect(
+        instructions,
+        isNot(contains(containsPair('DidCompleteSync',
+            containsPair('applied_checkpoint_request_id', anything)))),
+      );
+      expect(
+        instructions,
+        isNot(contains(containsPair(
+            'UpdateSyncStatus',
+            containsPair(
+                'status',
+                containsPair('internal_last_applied_checkpoint_request_id',
+                    anything))))),
+      );
+      expect(lastAppliedCheckpointRequestId(), isNull);
+
+      final [row] = db.select('select powersync_offline_sync_status();');
+      expect(
+        json.decode(row[0]),
+        isNot(containsPair('last_applied_checkpoint_request_id', anything)),
+      );
+    },
+  );
+
+  syncTest('emits applied checkpoint request id for full checkpoint', (_) {
+    invokeControl('start', null);
+
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+    final appliedInstructions = pushCheckpointComplete();
+
+    expect(
+      appliedInstructions,
+      contains(
+        containsPair(
+          'DidCompleteSync',
+          {'applied_checkpoint_request_id': '1'},
+        ),
+      ),
+    );
+    expect(
+      appliedInstructions,
+      contains(containsPair('LogLine',
+          {'severity': 'DEBUG', 'line': 'Applied checkpoint request id 1'})),
+    );
+    expect(
+      appliedInstructions,
+      contains(containsPair(
+        'UpdateSyncStatus',
+        containsPair(
+          'status',
+          containsPair('internal_last_applied_checkpoint_request_id', '1'),
+        ),
+      )),
+    );
+    expect(lastAppliedCheckpointRequestId(), 1);
+
+    pushCheckpoint(buckets: priorityBuckets);
+    final instructions = pushCheckpointComplete();
+
+    expect(
+      instructions,
+      contains(containsPair('DidCompleteSync', <String, Object?>{})),
+    );
+    expect(
+      instructions,
+      isNot(contains(containsPair(
+          'UpdateSyncStatus',
+          containsPair(
+              'status',
+              containsPair(
+                  'internal_last_applied_checkpoint_request_id', anything))))),
+    );
+
+    final [row] = db.select('select powersync_offline_sync_status();');
+    expect(
+      json.decode(row[0]),
+      isNot(containsPair('last_applied_checkpoint_request_id', anything)),
+    );
+
+    expect(
+        db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"), isEmpty);
+  });
+
+  syncTest('disconnect clears applied checkpoint request id from status', (_) {
+    invokeControl('start', null);
+
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
+    pushCheckpointComplete();
+
+    final instructions = invokeControl('stop', null);
+    expect(
+      instructions,
+      contains(containsPair(
+        'UpdateSyncStatus',
+        containsPair(
+          'status',
+          allOf(
+            containsPair('connected', false),
+            isNot(containsPair(
+                'internal_last_applied_checkpoint_request_id', anything)),
+          ),
+        ),
+      )),
+    );
+  });
+
+  syncTest('local writes clear checkpoint request high-water marks', (_) {
+    invokeControl('start', null);
+
+    pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '5');
+    pushCheckpointComplete();
+    expect(lastAppliedCheckpointRequestId(), 5);
+
+    // A local write can only be acknowledged by a checkpoint request id observed after it. Stale
+    // seen/applied values (which may predate a request counter restart) must not remain to open
+    // the apply gate for a smaller new target id.
+    db.execute("insert into items (id, col) values ('local', 'data');");
+
+    expect(lastAppliedCheckpointRequestId(), isNull);
+    expect(
+      db.select(
+          "SELECT 1 FROM ps_kv WHERE key = 'last_seen_checkpoint_request_id'"),
+      isEmpty,
+    );
+    expect(probeTargetCheckpointRequestId(), 9223372036854775807);
   });
 
   test('clearing database clears sync status', () {
@@ -405,15 +882,18 @@ void _syncTests<T>({
     final request = invokeControl('start', null);
     expect(
       request,
-      contains(containsPair(
-        'EstablishSyncStream',
-        {
-          // Should request state from before clear
-          'request': containsPair('buckets', [
-            {'name': 'a', 'after': '1'}
-          ]),
-        },
-      )),
+      contains(
+        containsPair(
+          'EstablishSyncStream',
+          containsPair(
+            // Should request state from before clear
+            'request',
+            containsPair('buckets', [
+              {'name': 'a', 'after': '1'}
+            ]),
+          ),
+        ),
+      ),
     );
 
     pushCheckpoint(buckets: [bucketDescription('a', count: 1)]);
@@ -513,7 +993,7 @@ void _syncTests<T>({
   });
 
   test('deletes old buckets', () {
-    for (final name in ['one', 'two', 'three', r'$local']) {
+    for (final name in ['one', 'two', 'three']) {
       db.execute('INSERT INTO ps_buckets (name) VALUES (?)', [name]);
     }
 
@@ -545,7 +1025,6 @@ void _syncTests<T>({
     // Should delete the old buckets two and three
     expect(db.select('select name from ps_buckets order by id'), [
       {'name': 'one'},
-      {'name': r'$local'}
     ]);
   });
 
@@ -816,8 +1295,14 @@ void _syncTests<T>({
       ]);
 
       // Now complete the upload process.
-      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
-      invokeControl('completed_upload', null);
+      probeTargetCheckpointRequestId(1);
+      final uploadCompleteInstructions =
+          invokeControl('completed_upload', null);
+      expect(
+        uploadCompleteInstructions,
+        contains(containsPair('LogLine',
+            {'severity': 'DEBUG', 'line': 'Applied checkpoint request id 1'})),
+      );
 
       // This should apply the pending write checkpoint.
       expect(fetchRows(), [
@@ -832,8 +1317,9 @@ void _syncTests<T>({
 
       // Complete upload process
       db.execute('DELETE FROM ps_crud');
-      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      probeTargetCheckpointRequestId(1);
       expect(invokeControl('completed_upload', null), isEmpty);
+      expect(lastRequestedCheckpointRequestId(), 1);
 
       // Sync afterwards containing data and write checkpoint.
       pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
@@ -861,7 +1347,7 @@ void _syncTests<T>({
       ]);
 
       // Now the upload is complete and requests a write checkpoint
-      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      probeTargetCheckpointRequestId(1);
       expect(invokeControl('completed_upload', null), isEmpty);
 
       // Which triggers a new iteration
@@ -898,7 +1384,7 @@ void _syncTests<T>({
       db.execute("insert into items (id, col) values ('local2', 'data2');");
 
       // Now the upload is complete and requests a write checkpoint
-      db.execute(r"UPDATE ps_buckets SET target_op = 1 WHERE name = '$local'");
+      probeTargetCheckpointRequestId(1);
       expect(invokeControl('completed_upload', null), [
         containsPair('LogLine', {
           'severity': 'WARNING',

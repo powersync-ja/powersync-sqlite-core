@@ -15,6 +15,10 @@ use crate::error::PowerSyncError;
 use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
 use crate::state::DatabaseState;
+use crate::sync::storage_adapter::{
+    LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY, LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY,
+    TARGET_CHECKPOINT_REQUEST_ID_KEY,
+};
 use crate::utils::MAX_OP_ID;
 use crate::vtab_util::*;
 
@@ -29,7 +33,7 @@ const SIMPLE_NAME: &CStr = c"powersync_crud";
 // ps_crud(tx_id, data).
 // The second form (without the trailing underscore) takes the data to insert as individual
 // components and constructs the data to insert into `ps_crud` internally. It will also update
-// `ps_updated_rows` and the `$local` bucket.
+// `ps_updated_rows` and the local write apply gate.
 //
 // Using a virtual table like this allows us to hook into xBegin, xCommit and xRollback to automatically
 // increment transaction ids. These are only called when powersync_crud_ is used as part of a transaction,
@@ -166,7 +170,7 @@ impl VirtualTable {
                 stmt.bind_text(2, &serialized, sqlite::Destructor::STATIC)?;
                 stmt.exec()?;
 
-                // However, we also set ps_updated_rows and update the $local bucket
+                // However, we also set ps_updated_rows and mark the local write state.
                 let set_updated_rows = simple.set_updated_rows_statement(db)?;
                 set_updated_rows.bind_text(1, row_type, sqlite::Destructor::STATIC)?;
                 set_updated_rows.bind_text(2, id, sqlite::Destructor::STATIC)?;
@@ -247,7 +251,14 @@ impl SimpleCrudTransactionMode {
 
     fn record_local_write(&mut self, db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
         if !self.had_writes {
-            db.exec_safe(formatcp!("INSERT OR REPLACE INTO ps_buckets(name, last_op, target_op) VALUES('$local', 0, {MAX_OP_ID})"))?;
+            // Also clear the seen/applied high-water marks: checkpoint request ids observed before
+            // this write can't acknowledge it, and stale values may predate a request counter
+            // restart. Keeping them around could open the apply gate for a newly allocated target
+            // id that compares below a stale seen value.
+            db.exec_safe(formatcp!(
+                "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('{TARGET_CHECKPOINT_REQUEST_ID_KEY}', {MAX_OP_ID});
+DELETE FROM ps_kv WHERE key IN ('{LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY}', '{LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY}')"
+            ))?;
             self.had_writes = true;
         }
 

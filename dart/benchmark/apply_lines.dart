@@ -17,8 +17,10 @@ void main(List<String> args) {
   final db = openTestDatabase();
 
   db
+    ..execute('BEGIN')
     ..execute('select powersync_init()')
-    ..execute('select powersync_control(?, null)', ['start']);
+    ..execute('select powersync_control(?, null)', ['start'])
+    ..execute('COMMIT');
 
   final stopwatch = Stopwatch()..start();
 

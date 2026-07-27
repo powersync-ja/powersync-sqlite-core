@@ -10,7 +10,7 @@ The function should always be called in a transaction.
 The following commands are supported:
 
 1. `start`: Payload is a JSON-encoded object. This requests the client to start a sync iteration.
-   The payload can either be `null` or an JSON object with:
+   The payload can either be `null` or a JSON object with:
     - An optional `parameters: Record<string, any>` entry, specifying parameters to include in the request
       to the sync service.
     - A `schema: { tables: Table[], raw_tables: RawTable[] }` entry specifying the schema of the database to
@@ -18,6 +18,9 @@ The following commands are supported:
       If no raw tables are used, the `schema` entry can be omitted.
     - `active_streams`: An array of `{name: string, params: Record<string, any>}` entries representing streams that
       have an active subscription object in the application at the time the stream was opened.
+    - `checkpoint_mode`: Either `"legacy"` (the default when omitted) or `"requests"`.
+      In request mode, `EstablishSyncStream.checkpoint_request` contains the initial payload to
+      affirm with the service.
 2. `stop`: No payload, requests the current sync iteration (if any) to be shut down.
 3. `line_text`: Payload is a serialized JSON object received from the sync service.
 4. `line_binary`: Payload is a BSON-encoded object received from the sync service.
@@ -26,18 +29,40 @@ The following commands are supported:
    - The client will emit an instruction to stop the current stream, clients should restart by sending another `start`
      command.
 6. `completed_upload`: Notify the sync implementation that all local changes have been uploaded.
-7. `update_subscriptions`: Notify the sync implementation that subscriptions which are currently active in the app
-   have changed. Depending on the TTL of caches, this may cause it to request a reconnect.
+7. `update_subscriptions`: Payload is a JSON-encoded array of
+   `{name: string, params: Record<string, any>}`. Notify the sync implementation that subscriptions
+   which are currently active in the app have changed. Depending on the TTL of caches, this may
+   cause it to request a reconnect.
 8. `connection`: Notify the sync implementation about the connection being opened (second parameter should be `established`)
    or the HTTP stream closing (second parameter should be `end`).
    This is used to set `connected` to true in the sync status without waiting for the first sync line.
-9. `subscriptions`: Store a new sync steam subscription in the database or remove it.
+9. `subscriptions`: Store a new sync stream subscription in the database or remove it.
    This command can run outside of a sync iteration and does not affect it.
-10. `update_subscriptions`: Second parameter is a JSON-encoded array of `{name: string, params: Record<string, any>}`.
-    If a new subscription is created, or when a subscription without a TTL has been removed, the client will ask to
-    restart the connection.
+10. `next_checkpoint_request_id`: No payload. During an active sync iteration after checkpoint
+    request state exists locally, allocates and returns the next checkpoint request id as an
+    integer result.
+11. `current_checkpoint_request_id`: No payload. Returns the current checkpoint request sequence
+    value as an integer result, or SQL `NULL` if absent. This command does not allocate a new id and
+    can run outside a sync iteration.
+12. `target_checkpoint_request_id`: Payload is `null`, an integer, or an integer string. Probes, updates or
+    clears the target checkpoint request id and returns the previously-observed value as an integer result, or
+    SQL `NULL` if there was no target. This command can run outside of a sync iteration and does not
+    affect it.
+13. `seed_checkpoint_request_id`: Payload is a positive integer or integer string. During an active
+    sync iteration, after receiving `EstablishSyncStream`, SDKs should reconcile the local hint with
+    service-side checkpoint-request state, then seed core with the accepted positive id. Returns the
+    seeded id as an integer result.
 
-`powersync_control` returns a JSON-encoded array of instructions for the client:
+## Checkpoint Request Expectations
+
+Checkpoint request state exists to protect local writes and to support explicit "wait until synced"
+requests. The state model, the per-connection reconciliation and seeding flow, and how SDKs resolve
+checkpoint waiters (through `DidCompleteSync.applied_checkpoint_request_id` or the equivalent
+sync-status field) are documented in `write-checkpoint-requests.md`.
+
+Most `powersync_control` commands return a JSON-encoded array of instructions for the client.
+`seed_checkpoint_request_id`, `next_checkpoint_request_id`, `current_checkpoint_request_id` and
+`target_checkpoint_request_id` return values directly.
 
 ```typescript
 type Instruction = { LogLine: LogLine }
@@ -47,8 +72,9 @@ type Instruction = { LogLine: LogLine }
    // Close a connection previously started after EstablishSyncStream
    | { CloseSyncStream: { hide_disconnect: boolean } }
    // Notify clients that a checkpoint was completed. Clients can clear the
-   // download error state in response to this.
-   | { DidCompleteSync: {} }
+   // download error state in response to this. If a full checkpoint with a
+   // write_checkpoint was applied, applied_checkpoint_request_id is set.
+   | { DidCompleteSync: DidCompleteSync }
 
 interface LogLine {
   severity: 'DEBUG' | 'INFO' | 'WARNING',
@@ -56,8 +82,16 @@ interface LogLine {
 }
 
 // Instructs client SDKs to open a connection to the sync service.
+// checkpoint_request is included when checkpoint_mode is "requests" in the start call. SDKs should
+// post this payload to their checkpoint request endpoint and seed the accepted response with
+// powersync_control('seed_checkpoint_request_id', response).
 interface EstablishSyncStream {
   request: any // The JSON-encoded StreamingSyncRequest to send to the sync service
+  checkpoint_request?: {
+    client_id: string,
+    // Decimal string so the full signed 64-bit range is preserved across SDKs.
+    checkpoint_request_id: string
+  }
 }
 
 // Instructs SDKS to update the downloading state of their SyncStatus.
@@ -66,6 +100,12 @@ interface UpdateSyncStatus {
   connecting: boolean,
   priority_status: [],
   downloading: null | DownloadProgress,
+  streams: [],
+  internal_last_applied_checkpoint_request_id?: number,
+}
+
+interface DidCompleteSync {
+  applied_checkpoint_request_id?: number,
 }
 
 // Instructs SDKs to refresh credentials from the backend connector.

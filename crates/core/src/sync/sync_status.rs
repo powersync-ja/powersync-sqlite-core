@@ -3,7 +3,7 @@ use alloc::{
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     format,
     rc::Rc,
-    string::String,
+    string::{String, ToString},
     vec::Vec,
 };
 use core::{
@@ -53,6 +53,11 @@ pub struct DownloadSyncStatus {
     /// received), information about how far the download has progressed.
     pub downloading: Option<SyncDownloadProgress>,
     pub streams: Vec<ActiveStreamSubscription>,
+    /// Runtime-only request id from the most recent applied checkpoint request.
+    ///
+    /// This is exposed in sync status for SDK internals, but it is not persisted and should not be
+    /// treated as user-facing download progress.
+    pub internal_last_applied_checkpoint_request_id: Option<i64>,
 }
 
 impl DownloadSyncStatus {
@@ -67,12 +72,14 @@ impl DownloadSyncStatus {
         self.connected = false;
         self.connecting = false;
         self.downloading = None;
+        self.internal_last_applied_checkpoint_request_id = None;
     }
 
     pub fn start_connecting(&mut self) {
         self.connected = false;
         self.downloading = None;
         self.connecting = true;
+        self.internal_last_applied_checkpoint_request_id = None;
         self.debug_assert_priority_status_is_sorted();
     }
 
@@ -117,7 +124,11 @@ impl DownloadSyncStatus {
         self.debug_assert_priority_status_is_sorted();
     }
 
-    pub fn applied_checkpoint(&mut self, now: TimestampMicros) {
+    pub fn applied_checkpoint(
+        &mut self,
+        now: TimestampMicros,
+        applied_checkpoint_request_id: Option<i64>,
+    ) {
         self.downloading = None;
         self.priority_status.clear();
 
@@ -126,6 +137,8 @@ impl DownloadSyncStatus {
             last_synced_at: Some(now),
             has_synced: Some(true),
         });
+
+        self.internal_last_applied_checkpoint_request_id = applied_checkpoint_request_id;
     }
 }
 
@@ -137,6 +150,7 @@ impl Default for DownloadSyncStatus {
             downloading: None,
             priority_status: Vec::new(),
             streams: Vec::new(),
+            internal_last_applied_checkpoint_request_id: None,
         }
     }
 }
@@ -180,12 +194,21 @@ impl Serialize for DownloadSyncStatus {
             }
         }
 
-        let mut serializer = serializer.serialize_struct("DownloadSyncStatus", 4)?;
+        let field_count =
+            5 + usize::from(self.internal_last_applied_checkpoint_request_id.is_some());
+        let mut serializer = serializer.serialize_struct("DownloadSyncStatus", field_count)?;
         serializer.serialize_field("connected", &self.connected)?;
         serializer.serialize_field("connecting", &self.connecting)?;
         serializer.serialize_field("priority_status", &self.priority_status)?;
         serializer.serialize_field("downloading", &self.downloading)?;
         serializer.serialize_field("streams", &SerializeStreamsWithProgress(self))?;
+        if let Some(request_id) = self.internal_last_applied_checkpoint_request_id {
+            // Serialized as a decimal string to preserve the full 64-bit value in JSON clients.
+            serializer.serialize_field(
+                "internal_last_applied_checkpoint_request_id",
+                &request_id.to_string(),
+            )?;
+        }
 
         serializer.end()
     }

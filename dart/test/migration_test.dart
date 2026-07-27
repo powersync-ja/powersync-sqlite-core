@@ -97,6 +97,144 @@ void main() {
       });
     }
 
+    test('migrates local checkpoint state to ps_kv', () async {
+      db.execute(fixtures.expectedState[13]!);
+      db.execute(r'''
+INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last, downloaded_size)
+VALUES(1, '$local', 5, 6, 7, 0, 0, 1, 0, 0, 0);
+''');
+
+      db.executeInTx('select powersync_init()');
+
+      expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
+        {'key': 'last_applied_checkpoint_request_id', 'value': 5},
+        {'key': 'last_seen_checkpoint_request_id', 'value': 6},
+        {'key': 'target_checkpoint_request_id', 'value': 7},
+      ]);
+      expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
+          isEmpty);
+      expect(
+        db.select("PRAGMA table_info('ps_buckets')").map((row) => row['name']),
+        isNot(contains('target_op')),
+      );
+      expect(
+        () => db.execute(
+            r"UPDATE ps_buckets SET target_op = 8 WHERE name = '$local'"),
+        throwsA(isA<SqliteException>()),
+      );
+    });
+
+    test('does not migrate last applied op as requested checkpoint id',
+        () async {
+      db.execute(fixtures.expectedState[13]!);
+      // Simulate pending local writes during migration. The legacy target op is the max-op
+      // sentinel, while last_applied_op is the last write checkpoint applied locally.
+      db.execute(r'''
+INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last, downloaded_size)
+VALUES(1, '$local', 5, 6, 9223372036854775807, 0, 0, 1, 0, 0, 0);
+''');
+
+      db.executeInTx('select powersync_init()');
+
+      // last_applied_op becomes the applied checkpoint id, but it must not seed the requested
+      // checkpoint counter. The sentinel target is preserved for blocking, but target ops no longer
+      // seed last_requested_checkpoint_request_id.
+      expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
+        {'key': 'last_applied_checkpoint_request_id', 'value': 5},
+        {'key': 'last_seen_checkpoint_request_id', 'value': 6},
+        {'key': 'target_checkpoint_request_id', 'value': 9223372036854775807},
+      ]);
+    });
+
+    test('does not migrate sentinel target op as requested checkpoint id',
+        () async {
+      db.execute(fixtures.expectedState[13]!);
+      db.execute(r'''
+INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last, downloaded_size)
+VALUES(1, '$local', 0, 0, 9223372036854775807, 0, 0, 1, 0, 0, 0);
+''');
+
+      db.executeInTx('select powersync_init()');
+
+      // The max-op sentinel is valid local target state, but target ops no longer seed
+      // last_requested_checkpoint_request_id.
+      expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
+        {'key': 'target_checkpoint_request_id', 'value': 9223372036854775807},
+      ]);
+    });
+
+    test('restores local checkpoint state on downgrade', () async {
+      db.execute(fixtures.finalState);
+      db.execute(r'''
+INSERT INTO ps_kv(key, value) VALUES
+  ('last_requested_checkpoint_request_id', 7),
+  ('last_seen_checkpoint_request_id', 6),
+  ('last_applied_checkpoint_request_id', 5),
+  ('target_checkpoint_request_id', 7);
+''');
+
+      db.executeInTx('select powersync_test_migration(13)');
+
+      expect(
+        db.select(
+            r"SELECT pending_delete, last_op, last_applied_op, target_op FROM ps_buckets WHERE name = '$local'"),
+        [
+          {
+            'pending_delete': 1,
+            'last_op': 6,
+            'last_applied_op': 5,
+            'target_op': 7,
+          }
+        ],
+      );
+    });
+
+    test('re-upgrades after downgrade with checkpoint state', () async {
+      db.execute(fixtures.finalState);
+      db.execute(r'''
+INSERT INTO ps_kv(key, value) VALUES
+  ('last_requested_checkpoint_request_id', 7),
+  ('last_seen_checkpoint_request_id', 6),
+  ('last_applied_checkpoint_request_id', 5),
+  ('target_checkpoint_request_id', 7);
+''');
+
+      db.executeInTx('select powersync_test_migration(13)');
+
+      // Simulate an older SDK advancing the restored $local row while downgraded.
+      db.execute(r'''
+UPDATE ps_buckets
+   SET last_op = 8, last_applied_op = 8, target_op = 9
+ WHERE name = '$local'
+''');
+
+      db.executeInTx('select powersync_init()');
+
+      // The $local row is the source of truth on re-upgrade; the request counter is unrelated to
+      // $local and survives the downgrade unchanged.
+      expect(db.select('SELECT key, value FROM ps_kv ORDER BY key'), [
+        {'key': 'last_applied_checkpoint_request_id', 'value': 8},
+        {'key': 'last_requested_checkpoint_request_id', 'value': 7},
+        {'key': 'last_seen_checkpoint_request_id', 'value': 8},
+        {'key': 'target_checkpoint_request_id', 'value': 9},
+      ]);
+      expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
+          isEmpty);
+
+      final schema = '${getSchema(db)}\n${getMigrations(db)}';
+      expect(schema, equals(fixtures.finalState.trim()));
+    });
+
+    test('does not restore local bucket without local target on downgrade',
+        () async {
+      db.execute(fixtures.finalState);
+
+      db.executeInTx('select powersync_test_migration(13)');
+
+      expect(db.select(r"SELECT * FROM ps_buckets WHERE name = '$local'"),
+          isEmpty);
+    });
+
     /// Here we apply a developer schema _after_ migrating
     test('schema after migration', () async {
       db.execute(fixtures.expectedState[2]!);
@@ -209,6 +347,7 @@ void main() {
 
         db.execute('begin');
         control('start');
+        control('seed_checkpoint_request_id', 1);
         control(
           'line_text',
           json.encode(checkpoint(lastOpId: 3, buckets: [

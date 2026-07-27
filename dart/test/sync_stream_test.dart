@@ -32,7 +32,7 @@ void main() {
           ['client_id', 'test-test-test-test']);
   });
 
-  List<Object?> control(String operation, Object? data) {
+  List<Object?> controlRaw(String operation, Object? data) {
     db.execute('begin');
     ResultSet result;
 
@@ -58,6 +58,19 @@ void main() {
     } else {
       return const [];
     }
+  }
+
+  bool establishesSyncStream(List<Object?> instructions) {
+    return instructions.any((instruction) =>
+        instruction is Map && instruction.containsKey('EstablishSyncStream'));
+  }
+
+  List<Object?> control(String operation, Object? data) {
+    final result = controlRaw(operation, data);
+    if (operation == 'start' && establishesSyncStream(result)) {
+      controlRaw('seed_checkpoint_request_id', 1);
+    }
+    return result;
   }
 
   group('default streams', () {
