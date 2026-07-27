@@ -53,7 +53,7 @@ fun ndkPath(): String {
     error("Expected an NDK 28 or later installation in $ndks")
 }
 
-fun Exec.rustCompilation(project: String, output: String? = null) {
+fun Exec.rustCompilation(soname: String, output: String? = null) {
     group = "build"
     environment("ANDROID_NDK_HOME", ndkPath())
 
@@ -82,17 +82,25 @@ fun Exec.rustCompilation(project: String, output: String? = null) {
             "--release",
             "-Zbuild-std",
             "-p",
-            project,
+            "powersync_loadable",
             "--features",
             "nightly"
         )
     }
 
+    // It's important to set an soname. Otherwise, the linker hardcodes the path in the
+    // lib, which breaks loading.
+    environment["RUSTFLAGS"] = "-C link-arg=-Wl,-soname,$soname"
+
     commandLine(args)
 }
 
-val buildRust = tasks.register<Exec>("buildRust") {
-    rustCompilation("powersync_loadable", "./android/build/intermediates/jniLibs")
+val buildRust by tasks.registering(Exec::class) {
+    rustCompilation("libpowersync.so", "./android/build/intermediates/jniLibs")
+}
+
+val buildRustStandalone by tasks.registering(Exec::class) {
+    rustCompilation("libpowersync_core.so", "./android/build/standalone")
 }
 
 val prefabAar = tasks.register<Zip>("prefabAar") {
