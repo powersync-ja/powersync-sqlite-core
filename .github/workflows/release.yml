@@ -125,6 +125,8 @@ jobs:
     name: Publish iOS
     needs: [ draft_release, libs_xcframework ]
     runs-on: macos-latest
+    permissions:
+      contents: write # Needed to upload the XCFramework to the draft release.
     steps:
       - uses: actions/checkout@v7
         with:
