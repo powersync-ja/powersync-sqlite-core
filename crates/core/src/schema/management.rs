@@ -37,65 +37,62 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
         map
     };
 
-    {
-        // In a block so that all statements are finalized before dropping tables.
-        for table in &schema.tables {
-            if let Some(existing) = existing_tables.remove(&*table.name) {
-                if existing.local_only != table.local_only() {
-                    // Migrating between local-only and synced tables. This works by deleting
-                    // existing and re-creating the table from scratch. We can re-create first and
-                    // delete the old table afterwards because they have a different name
-                    // (local-only tables have a ps_data_local prefix).
+    for table in &schema.tables {
+        if let Some(existing) = existing_tables.remove(&*table.name) {
+            if existing.local_only != table.local_only() {
+                // Migrating between local-only and synced tables. This works by deleting
+                // existing and re-creating the table from scratch. We can re-create first and
+                // delete the old table afterwards because they have a different name
+                // (local-only tables have a ps_data_local prefix).
 
-                    // To delete the old existing table in the end.
-                    existing_tables.insert(&existing.name, existing);
-                } else {
-                    // Compatible table exists already, nothing to do.
-                    continue;
-                }
-            }
-
-            // New table.
-            let quoted_internal_name = SqlBuffer::quote_identifier(&table.internal_name());
-
-            db.exec_safe(&format!(
-                "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
-                quoted_internal_name
-            ))
-            .into_db_result(db)?;
-
-            if !table.local_only() {
-                // MOVE data if any
-                db.exec_text(
-                    &format!(
-                        "INSERT INTO {:}(id, data)
-    SELECT id, data
-    FROM ps_untyped
-    WHERE type = ?",
-                        quoted_internal_name
-                    ),
-                    &table.name,
-                )
-                .into_db_result(db)?;
-
-                // language=SQLite
-                db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
+                // To delete the old existing table in the end.
+                existing_tables.insert(&existing.name, existing);
+            } else {
+                // Compatible table exists already, nothing to do.
+                continue;
             }
         }
 
-        // Remaining tables need to be dropped. But first, we want to move their contents to
-        // ps_untyped.
-        for remaining in existing_tables.values() {
-            if !remaining.local_only {
-                db.exec_text(
-                    &format!(
-                        "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}",
-                        SqlBuffer::quote_identifier(&remaining.internal_name)
-                    ),
-                    &remaining.name,
-                )
-                .into_db_result(db)?;
-            }
+        // New table.
+        let quoted_internal_name = SqlBuffer::quote_identifier(&table.internal_name());
+
+        db.exec_safe(&format!(
+            "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
+            quoted_internal_name
+        ))
+        .into_db_result(db)?;
+
+        if !table.local_only() {
+            // MOVE data if any
+            db.exec_text(
+                &format!(
+                    "INSERT INTO {:}(id, data)
+    SELECT id, data
+    FROM ps_untyped
+    WHERE type = ?",
+                    quoted_internal_name
+                ),
+                &table.name,
+            )
+            .into_db_result(db)?;
+
+            // language=SQLite
+            db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
+        }
+    }
+
+    // Remaining tables need to be dropped. But first, we want to move their contents to
+    // ps_untyped.
+    for remaining in existing_tables.values() {
+        if !remaining.local_only {
+            db.exec_text(
+                &format!(
+                    "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}",
+                    SqlBuffer::quote_identifier(&remaining.internal_name)
+                ),
+                &remaining.name,
+            )
+            .into_db_result(db)?;
         }
     }
 
