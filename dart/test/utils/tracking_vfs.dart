@@ -53,7 +53,7 @@ final class TrackingFileSystem extends BaseVirtualFileSystem {
   }
 }
 
-class TrackingFile implements VirtualFileSystemFile {
+class TrackingFile implements VirtualFileSystemFileV1 {
   final TrackingFileSystem vfs;
   final VirtualFileSystemFile parentFile;
   final bool deleteOnClose;
@@ -118,4 +118,12 @@ class TrackingFile implements VirtualFileSystemFile {
 
   @override
   int get xDeviceCharacteristics => parentFile.xDeviceCharacteristics;
+
+  @override
+  int get xSectorSize => 4096;
+
+  @override
+  int xFileControl(SqliteFileControl op, int ptr) {
+    return SqlError.SQLITE_NOTFOUND;
+  }
 }
