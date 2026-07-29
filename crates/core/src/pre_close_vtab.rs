@@ -111,9 +111,7 @@ extern "C" fn eof(_cursor: *mut sqlite::vtab_cursor) -> c_int {
     1
 }
 
-// Insert-only virtual table.
-// The primary functionality here is in connect and disconnect - selecting from it is a no-op
-// used to trigger those at the right times, and writes are rejected in update.
+// Select-only virtual table, the primary functionality here is in disconnect.
 static MODULE: sqlite::module = sqlite::module {
     iVersion: 0,
     xCreate: None,
