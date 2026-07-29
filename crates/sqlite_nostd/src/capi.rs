@@ -49,12 +49,13 @@ mod aliased {
         sqlite3_column_value as column_value, sqlite3_commit_hook as commit_hook,
         sqlite3_context_db_handle as context_db_handle,
         sqlite3_create_function_v2 as create_function_v2,
-        sqlite3_create_module_v2 as create_module_v2, sqlite3_declare_vtab as declare_vtab,
-        sqlite3_errcode as errcode, sqlite3_errmsg as errmsg, sqlite3_error_offset as error_offset,
-        sqlite3_exec as exec, sqlite3_finalize as finalize, sqlite3_free as free,
-        sqlite3_get_autocommit as get_autocommit, sqlite3_get_auxdata as get_auxdata,
-        sqlite3_libversion as libversion, sqlite3_libversion_number as libversion_number,
-        sqlite3_malloc as malloc, sqlite3_malloc64 as malloc64, sqlite3_mutex_alloc as mutex_alloc,
+        sqlite3_create_module_v2 as create_module_v2, sqlite3_db_readonly as db_readonly,
+        sqlite3_declare_vtab as declare_vtab, sqlite3_errcode as errcode, sqlite3_errmsg as errmsg,
+        sqlite3_error_offset as error_offset, sqlite3_exec as exec, sqlite3_finalize as finalize,
+        sqlite3_free as free, sqlite3_get_autocommit as get_autocommit,
+        sqlite3_get_auxdata as get_auxdata, sqlite3_libversion as libversion,
+        sqlite3_libversion_number as libversion_number, sqlite3_malloc as malloc,
+        sqlite3_malloc64 as malloc64, sqlite3_mutex_alloc as mutex_alloc,
         sqlite3_mutex_enter as mutex_enter, sqlite3_mutex_free as mutex_free,
         sqlite3_mutex_leave as mutex_leave, sqlite3_mutex_try as mutex_try,
         sqlite3_next_stmt as next_stmt, sqlite3_open as open, sqlite3_prepare_v2 as prepare_v2,
@@ -145,6 +146,16 @@ pub fn bind_blob(
                 Destructor::CUSTOM(f) => Some(f),
             }
         )
+    }
+}
+
+pub fn db_readonly(connection: *mut sqlite3, db: &CStr) -> Option<bool> {
+    let res = unsafe { invoke_sqlite!(db_readonly, connection, db.as_ptr()) };
+
+    match res {
+        1 => Some(true),  // Readonly
+        0 => Some(false), // Read/write
+        _ => None,        // Not the name of a database on the connection.
     }
 }
 

@@ -36,13 +36,17 @@ fn powersync_init_impl(
     _args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let db = ctx.db_handle();
-    verify_in_transaction(db)?;
-    powersync_migrate(ctx, LATEST_VERSION)?;
+    if let Some(true) = sqlite::db_readonly(db, c"main") {
+        // Called on readonly connection, don't try to migrate.
+    } else {
+        verify_in_transaction(db)?;
+        powersync_migrate(ctx, LATEST_VERSION)?;
+    }
 
     // Register the powersync_internal_close vtab to implement a "pre-close hook".
     // See `pre_close_vtab.rs` for more details on how that works.
     ctx.db_handle()
-        .exec(c"INSERT INTO powersync_internal_close(_) VALUES (null)")?;
+        .exec(c"SELECT 1 FROM powersync_internal_close;")?;
 
     Ok(String::from(""))
 }

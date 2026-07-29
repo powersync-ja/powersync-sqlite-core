@@ -17,8 +17,11 @@ var didLoadExtension = false;
 
 String? testingWithSanitizers = null;
 
-CommonDatabase openTestDatabase(
-    {VirtualFileSystem? vfs, String fileName = ':memory:'}) {
+CommonDatabase openTestDatabase({
+  VirtualFileSystem? vfs,
+  String fileName = ':memory:',
+  OpenMode mode = OpenMode.readWriteCreate,
+}) {
   if (!didLoadExtension) {
     loadExtension();
   }
@@ -35,7 +38,7 @@ CommonDatabase openTestDatabase(
     vfs = inMemory;
   }
 
-  final db = sqlite3.open(fileName, vfs: vfs?.name);
+  final db = sqlite3.open(fileName, vfs: vfs?.name, mode: mode);
   addTearDown(db.close);
   return db;
 }
