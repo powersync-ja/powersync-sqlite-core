@@ -140,6 +140,11 @@ static MODULE: sqlite::module = sqlite::module {
     xIntegrity: None,
 };
 
+pub fn ensure_has_internal_close_vtab(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+    db.exec(c"SELECT 1 FROM powersync_internal_close;")?;
+    Ok(())
+}
+
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     db.create_module_v2(
         "powersync_internal_close",

@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::{
     error::{PSResult, PowerSyncError},
     ext::SafeManagedStmt,
+    pre_close_vtab::ensure_has_internal_close_vtab,
     schema::Schema,
     state::DatabaseState,
     sync::{
@@ -53,7 +54,7 @@ impl StorageAdapter {
         // The cached statements here prevent sqlite3_close to complete. sqlite3_close invokes
         // the xDisconnect callback on attached virtual tables, which we use to implement a
         // "pre-close hook". See `pre_close_vtab.rs` for more details on how that works.
-        db.exec(c"SELECT 1 FROM powersync_internal_close;")?;
+        ensure_has_internal_close_vtab(db)?;
 
         // language=SQLite
         let progress = db
