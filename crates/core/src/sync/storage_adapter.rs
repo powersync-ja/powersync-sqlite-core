@@ -50,6 +50,11 @@ pub struct StorageAdapter {
 
 impl StorageAdapter {
     pub fn new(db: *mut sqlite::sqlite3) -> Result<Self, PowerSyncError> {
+        // The cached statements here prevent sqlite3_close to complete. sqlite3_close invokes
+        // the xDisconnect callback on attached virtual tables, which we use to implement a
+        // "pre-close hook". See `pre_close_vtab.rs` for more details on how that works.
+        db.exec(c"SELECT 1 FROM powersync_internal_close;")?;
+
         // language=SQLite
         let progress = db
             .prepare_v2("SELECT name, count_at_last, count_since_last FROM ps_buckets")
