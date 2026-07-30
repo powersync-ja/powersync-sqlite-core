@@ -2132,6 +2132,30 @@ CREATE TRIGGER users_ref_delete
     expect(vfs.openFiles, isZero);
   });
 
+  test('resolving the offline sync status allows closing the database', () {
+    final vfs = TrackingFileSystem(
+        parent: InMemoryFileSystem(), name: 'sync-test-resolve-offline');
+    sqlite3.registerVirtualFileSystem(vfs);
+    addTearDown(() => sqlite3.unregisterVirtualFileSystem(vfs));
+
+    {
+      db = openTestDatabase(vfs: vfs, fileName: '/test.db')
+        ..executeInTx('select powersync_init();');
+      expect(vfs.openFiles, isNonZero);
+      db.close();
+      expect(vfs.openFiles, isZero);
+    }
+
+    db = openTestDatabase(
+        vfs: vfs, fileName: '/test.db', mode: OpenMode.readOnly)
+      ..executeInTx('select powersync_init();');
+
+    db.execute('SELECT powersync_offline_sync_status();');
+    expect(vfs.openFiles, isNonZero);
+    db.close();
+    expect(vfs.openFiles, isZero);
+  });
+
   test('tracks download size', () {
     invokeControl('start', null);
     pushCheckpoint(buckets: [bucketDescription('a', count: 2)]);

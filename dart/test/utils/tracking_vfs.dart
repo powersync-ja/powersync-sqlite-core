@@ -32,7 +32,7 @@ final class TrackingFileSystem extends BaseVirtualFileSystem {
     final result = parent.xOpen(path, flags);
     openFiles++;
     return (
-      outFlags: result.outFlags,
+      outFlags: flags,
       file: TrackingFile(
           result.file, this, flags & SqlFlag.SQLITE_OPEN_DELETEONCLOSE != 0),
     );

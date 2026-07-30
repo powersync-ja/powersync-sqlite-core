@@ -71,24 +71,59 @@ extern "C" fn update(
     _argv: *mut *mut sqlite::value,
     _p_row_id: *mut sqlite::int64,
 ) -> c_int {
-    0
+    // This table isn't meant to be written to.
+    ResultCode::MISUSE as c_int
 }
 
-// Insert-only virtual table.
-// The primary functionality here is in update.
-// connect and disconnect configures the table and allocates the required resources.
+#[repr(transparent)]
+struct EmptyCursor(sqlite::vtab_cursor);
+
+extern "C" fn best_index(_vtab: *mut sqlite::vtab, _index_info: *mut sqlite::index_info) -> c_int {
+    // No rows are ever returned, so there's nothing to plan for.
+    ResultCode::OK as c_int
+}
+
+extern "C" fn open(vtab: *mut sqlite::vtab, cursor: *mut *mut sqlite::vtab_cursor) -> c_int {
+    let c = Box::into_raw(Box::new(EmptyCursor(sqlite::vtab_cursor { pVtab: vtab })));
+    unsafe { *cursor = c.cast::<sqlite::vtab_cursor>() };
+
+    ResultCode::OK as c_int
+}
+
+extern "C" fn close(cursor: *mut sqlite::vtab_cursor) -> c_int {
+    unsafe {
+        drop(Box::from_raw(cursor as *mut EmptyCursor));
+    }
+    ResultCode::OK as c_int
+}
+
+extern "C" fn filter(
+    _cursor: *mut sqlite::vtab_cursor,
+    _idx_num: c_int,
+    _idx_str: *const c_char,
+    _argc: c_int,
+    _argv: *mut *mut sqlite::value,
+) -> c_int {
+    ResultCode::OK as c_int
+}
+
+extern "C" fn eof(_cursor: *mut sqlite::vtab_cursor) -> c_int {
+    1
+}
+
+// Select-only virtual table, the primary functionality here is in disconnect.
 static MODULE: sqlite::module = sqlite::module {
     iVersion: 0,
     xCreate: None,
     xConnect: Some(connect),
-    xBestIndex: Some(vtab_no_best_index),
+    xBestIndex: Some(best_index),
     xDisconnect: Some(disconnect),
     xDestroy: None,
-    xOpen: Some(vtab_no_open),
-    xClose: Some(vtab_no_close),
-    xFilter: Some(vtab_no_filter),
+    xOpen: Some(open),
+    xClose: Some(close),
+    xFilter: Some(filter),
     xNext: Some(vtab_no_next),
-    xEof: Some(vtab_no_eof),
+    xEof: Some(eof),
     xColumn: Some(vtab_no_column),
     xRowid: Some(vtab_no_rowid),
     xUpdate: Some(update),
@@ -104,6 +139,11 @@ static MODULE: sqlite::module = sqlite::module {
     xShadowName: None,
     xIntegrity: None,
 };
+
+pub fn ensure_has_internal_close_vtab(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+    db.exec(c"SELECT 1 FROM powersync_internal_close;")?;
+    Ok(())
+}
 
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     db.create_module_v2(

@@ -8,7 +8,10 @@ use powersync_sqlite_nostd::{
     self as sqlite, Connection, Context, ResultCode, Value, bindings::SQLITE_RESULT_SUBTYPE,
 };
 
-use crate::{constants::SUBTYPE_JSON, error::PowerSyncError, state::DatabaseState};
+use crate::{
+    constants::SUBTYPE_JSON, error::PowerSyncError, pre_close_vtab::ensure_has_internal_close_vtab,
+    state::DatabaseState,
+};
 
 /// The `powersync_update_hooks` methods works like this:
 ///
@@ -57,6 +60,11 @@ extern "C" fn powersync_update_hooks(
 
     match op {
         "install" => {
+            if let Err(e) = ensure_has_internal_close_vtab(db) {
+                ctx.result_error_code(e);
+                return;
+            };
+
             let state = unsafe { user_data.as_ref().unwrap_unchecked() };
             let db_state = &state.state;
 
