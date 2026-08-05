@@ -93,9 +93,13 @@ pub struct Statement {
 impl Statement {
     pub fn map_error(&self, code: ResultCode) -> PowerSyncError {
         let sql_ptr = sqlite::sql(self.stmt.stmt);
-        let str = unsafe { CStr::from_ptr(sql_ptr) };
+        let str = if sql_ptr.is_null() {
+            None
+        } else {
+            Some(unsafe { CStr::from_ptr(sql_ptr) })
+        };
 
-        self.db.map_error_cstr(code, Some(str))
+        self.db.map_error_cstr(code, str)
     }
 
     pub fn step(&self) -> Result<bool> {
