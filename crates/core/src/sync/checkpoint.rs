@@ -1,7 +1,7 @@
 use alloc::{rc::Rc, string::String, vec::Vec};
 use num_traits::Zero;
 
-use crate::error::PowerSyncError;
+use crate::error::Result;
 use crate::sync::line::{BucketChecksum, BucketSubscriptionReason};
 use crate::sync::{BucketPriority, Checksum};
 use crate::utils::database::Database;
@@ -50,7 +50,7 @@ pub fn validate_checkpoint<'a>(
     buckets: impl Iterator<Item = &'a OwnedBucketChecksum>,
     priority: Option<BucketPriority>,
     db: Database,
-) -> Result<Vec<ChecksumMismatch>, PowerSyncError> {
+) -> Result<Vec<ChecksumMismatch>> {
     // language=SQLite
     let statement = db.prepare_v2(
         "

@@ -5,7 +5,7 @@ use alloc::vec;
 use core::fmt::{Write, from_fn};
 use core::mem;
 
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use crate::schema::{ColumnFilter, SchemaTable, Table};
 use crate::utils::{InsertIntoCrud, SqlBuffer, WriteType};
 
@@ -58,7 +58,7 @@ pub fn powersync_view_sql(table_info: &Table) -> String {
     return sql.sql;
 }
 
-pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String, PowerSyncError> {
+pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String> {
     if table_info.options.flags.insert_only() {
         // Insert-only tables have no DELETE triggers
         return Ok(String::new());
@@ -116,7 +116,7 @@ pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String, PowerS
     return Ok(sql.sql);
 }
 
-pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String, PowerSyncError> {
+pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String> {
     let name = &table_info.name;
     let view_name = table_info.view_name();
     let local_only = table_info.options.flags.local_only();
@@ -167,7 +167,7 @@ pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String, PowerS
     Ok(sql.sql)
 }
 
-pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String, PowerSyncError> {
+pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
     if table_info.options.flags.insert_only() {
         // Insert-only tables have no UPDATE triggers
         return Ok(String::new());
@@ -232,7 +232,7 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String, PowerS
 pub fn table_columns_to_json_object<'a>(
     prefix: &str,
     table: &'a SchemaTable<'a>,
-) -> Result<String, PowerSyncError> {
+) -> Result<String> {
     table_columns_to_json_object_with_filter(prefix, table, None)
 }
 
@@ -240,7 +240,7 @@ pub fn table_columns_to_json_object_with_filter<'a>(
     prefix: &str,
     table: &'a SchemaTable<'a>,
     filter: Option<&'a ColumnFilter>,
-) -> Result<String, PowerSyncError> {
+) -> Result<String> {
     // floor(SQLITE_MAX_FUNCTION_ARG / 2).
     // To keep databases portable, we use the default limit of 100 args for this,
     // and don't try to query the limit dynamically.

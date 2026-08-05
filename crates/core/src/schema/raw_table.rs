@@ -14,7 +14,7 @@ use alloc::{
 use powersync_sqlite_nostd::Destructor;
 
 use crate::{
-    error::PowerSyncError,
+    error::{PowerSyncError, Result},
     schema::{ColumnFilter, PendingStatement, PendingStatementValue, RawTable, SchemaTable},
     utils::{InsertIntoCrud, SqlBuffer, WriteType, database::Database},
     views::table_columns_to_json_object,
@@ -30,7 +30,7 @@ impl InferredTableStructure {
         table_name: &str,
         db: Database,
         synced_columns: &Option<ColumnFilter>,
-    ) -> Result<Self, PowerSyncError> {
+    ) -> Result<Self> {
         let stmt = db.prepare_v2("select name from pragma_table_info(?)")?;
         stmt.bind_text(1, table_name, Destructor::STATIC)?;
 
@@ -128,7 +128,7 @@ pub struct InferredSchemaCache {
 }
 
 impl InferredSchemaCache {
-    pub fn current_schema_version(db: Database) -> Result<usize, PowerSyncError> {
+    pub fn current_schema_version(db: Database) -> Result<usize> {
         let version = db.prepare_v2("PRAGMA schema_version")?;
         version.step()?;
         let version = version.column_int64(0) as usize;
@@ -140,7 +140,7 @@ impl InferredSchemaCache {
         db: Database,
         schema_version: usize,
         tbl: &RawTable,
-    ) -> Result<Rc<PendingStatement>, PowerSyncError> {
+    ) -> Result<Rc<PendingStatement>> {
         self.with_entry(db, schema_version, tbl, SchemaCacheEntry::put)
     }
 
@@ -149,7 +149,7 @@ impl InferredSchemaCache {
         db: Database,
         schema_version: usize,
         tbl: &RawTable,
-    ) -> Result<Rc<PendingStatement>, PowerSyncError> {
+    ) -> Result<Rc<PendingStatement>> {
         self.with_entry(db, schema_version, tbl, SchemaCacheEntry::delete)
     }
 
@@ -159,7 +159,7 @@ impl InferredSchemaCache {
         schema_version: usize,
         tbl: &RawTable,
         f: impl FnOnce(&mut SchemaCacheEntry) -> Rc<PendingStatement>,
-    ) -> Result<Rc<PendingStatement>, PowerSyncError> {
+    ) -> Result<Rc<PendingStatement>> {
         let mut entries = self.entries.borrow_mut();
         if let Some(value) = entries.get_mut(&tbl.name) {
             if value.schema_version != schema_version {
@@ -185,11 +185,7 @@ pub struct SchemaCacheEntry {
 }
 
 impl SchemaCacheEntry {
-    fn infer(
-        db: Database,
-        schema_version: usize,
-        table: &RawTable,
-    ) -> Result<Self, PowerSyncError> {
+    fn infer(db: Database, schema_version: usize, table: &RawTable) -> Result<Self> {
         let local_table_name = table.require_table_name()?;
         let structure = InferredTableStructure::read_from_database(
             local_table_name,
@@ -225,7 +221,7 @@ pub fn generate_raw_table_trigger(
     table: &RawTable,
     trigger_name: &str,
     write: WriteType,
-) -> Result<String, PowerSyncError> {
+) -> Result<String> {
     let local_table_name = table.require_table_name()?;
     let synced_columns = &table.schema.synced_columns;
     let resolved_table =

@@ -5,7 +5,7 @@ use core::ffi::c_int;
 
 use crate::constants::SUBTYPE_JSON;
 use crate::create_sqlite_text_fn;
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use powersync_sqlite_nostd as sqlite;
 use powersync_sqlite_nostd::bindings::{SQLITE_RESULT_SUBTYPE, SQLITE_SUBTYPE};
 use powersync_sqlite_nostd::{Connection, Context, Value};
@@ -32,7 +32,7 @@ extern "C" fn powersync_strip_subtype(
 fn powersync_json_merge_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
+) -> Result<String> {
     if args.is_empty() {
         return Ok("{}".to_string());
     }
@@ -67,7 +67,7 @@ create_sqlite_text_fn!(
     "powersync_json_merge"
 );
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3) -> core::result::Result<(), ResultCode> {
     db.create_function_v2(
         "powersync_json_merge",
         -1,

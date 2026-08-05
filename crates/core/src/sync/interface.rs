@@ -6,7 +6,7 @@ use super::streaming_sync::SyncClient;
 use super::sync_status::DownloadSyncStatus;
 use crate::constants::SUBTYPE_JSON;
 use crate::create_sqlite_text_fn;
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use crate::schema::Schema;
 use crate::state::DatabaseState;
 use crate::sync::diagnostics::{DiagnosticOptions, DiagnosticsEvent};
@@ -245,13 +245,16 @@ pub struct BucketRequest {
     pub after: String,
 }
 
-pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(
+    db: *mut sqlite::sqlite3,
+    state: Rc<DatabaseState>,
+) -> core::result::Result<(), ResultCode> {
     extern "C" fn control(
         ctx: *mut sqlite::context,
         argc: c_int,
         argv: *mut *mut sqlite::value,
     ) -> () {
-        let result = (|| -> Result<(), PowerSyncError> {
+        let result = (|| -> Result<()> {
             let db = Database::from(ctx.db_handle());
             verify_in_transaction(db)?;
 
@@ -428,7 +431,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
 fn powersync_offline_sync_status_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
+) -> Result<String> {
     let db_state = unsafe { DatabaseState::from_context(&ctx) };
     let adapter = db_state.storage_adapter(ctx.db_handle().into())?;
 
@@ -447,7 +450,7 @@ create_sqlite_text_fn!(
 /// Errors with a state error unless a sync iteration is currently active.
 ///
 /// Checkpoint request ids can only be seeded or allocated in the context of a running iteration.
-fn require_active_sync_iteration(state: &DatabaseState) -> Result<(), PowerSyncError> {
+fn require_active_sync_iteration(state: &DatabaseState) -> Result<()> {
     let has_sync_iteration = state
         .sync_client
         .borrow()
@@ -466,7 +469,7 @@ fn parse_optional_i64_payload(
     payload: *mut sqlite::value,
     name: &'static str,
     type_error: &'static str,
-) -> Result<Option<i64>, PowerSyncError> {
+) -> Result<Option<i64>> {
     let value = match payload.value_type() {
         ColumnType::Null => return Ok(None),
         ColumnType::Integer => payload.int64(),
@@ -492,7 +495,7 @@ fn parse_positive_i64_payload(
     payload: *mut sqlite::value,
     name: &'static str,
     type_error: &'static str,
-) -> Result<NonZeroI64, PowerSyncError> {
+) -> Result<NonZeroI64> {
     let Some(value) = parse_optional_i64_payload(payload, name, type_error)? else {
         return Err(PowerSyncError::argument_error(type_error));
     };

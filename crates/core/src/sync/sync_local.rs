@@ -5,7 +5,7 @@ use alloc::string::{String, ToString};
 use serde::Serialize;
 use serde::ser::SerializeMap;
 
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use crate::schema::inspection::ExistingTable;
 use crate::schema::{
     InferredSchemaCache, PendingStatement, PendingStatementValue, RawTable, Schema,
@@ -57,7 +57,7 @@ impl<'a> SyncOperation<'a> {
         self.schema.add_from_schema(schema);
     }
 
-    fn can_apply_sync_changes(&self) -> Result<bool, PowerSyncError> {
+    fn can_apply_sync_changes(&self) -> Result<bool> {
         // Don't publish downloaded data until the upload queue is empty (except for downloaded data
         // in priority 0, which is published earlier).
 
@@ -89,7 +89,7 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
         Ok(true)
     }
 
-    pub fn apply(&mut self) -> Result<i64, PowerSyncError> {
+    pub fn apply(&mut self) -> Result<i64> {
         let guard = self.state.sync_local_guard();
 
         if !self.can_apply_sync_changes()? {
@@ -245,11 +245,11 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
         Ok(1)
     }
 
-    fn collect_tables(&mut self) -> Result<(), PowerSyncError> {
+    fn collect_tables(&mut self) -> Result<()> {
         self.schema.add_from_db(self.db)
     }
 
-    fn collect_full_operations(&self) -> Result<Statement, PowerSyncError> {
+    fn collect_full_operations(&self) -> Result<Statement> {
         Ok(match &self.partial {
             None => {
                 // Complete sync
@@ -321,7 +321,7 @@ SELECT
         })
     }
 
-    fn set_last_applied_op(&self) -> Result<(), PowerSyncError> {
+    fn set_last_applied_op(&self) -> Result<()> {
         match &self.partial {
             Some(partial) => {
                 // language=SQLite
@@ -349,7 +349,7 @@ SELECT
         Ok(())
     }
 
-    fn mark_completed(&self) -> Result<(), PowerSyncError> {
+    fn mark_completed(&self) -> Result<()> {
         let priority_code: i32 = match &self.partial {
             None => {
                 // language=SQLite
@@ -400,7 +400,7 @@ impl<'a> ParsedDatabaseSchema<'a> {
         }
     }
 
-    fn add_from_db(&mut self, db: Database) -> Result<(), PowerSyncError> {
+    fn add_from_db(&mut self, db: Database) -> Result<()> {
         let tables = ExistingTable::list(db)?;
         for table in tables {
             if !table.local_only {
@@ -430,7 +430,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
         db: Database,
         slot: &mut Option<PreparedPendingStatement>,
         def: Rc<PendingStatement>,
-    ) -> Result<&PreparedPendingStatement, PowerSyncError> {
+    ) -> Result<&PreparedPendingStatement> {
         Ok(match slot {
             Some(stmt) => stmt,
             None => {
@@ -445,7 +445,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
         db: Database,
         schema_version: usize,
         cache: &InferredSchemaCache,
-    ) -> Result<&'_ PreparedPendingStatement, PowerSyncError> {
+    ) -> Result<&'_ PreparedPendingStatement> {
         Self::prepare_lazily(
             db,
             &mut self.cached_put,
@@ -461,7 +461,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
         db: Database,
         schema_version: usize,
         cache: &InferredSchemaCache,
-    ) -> Result<&'_ PreparedPendingStatement, PowerSyncError> {
+    ) -> Result<&'_ PreparedPendingStatement> {
         Self::prepare_lazily(
             db,
             &mut self.cached_delete,
@@ -495,7 +495,7 @@ struct PreparedPendingStatement {
 }
 
 impl PreparedPendingStatement {
-    pub fn prepare(db: Database, pending: Rc<PendingStatement>) -> Result<Self, PowerSyncError> {
+    pub fn prepare(db: Database, pending: Rc<PendingStatement>) -> Result<Self> {
         let stmt = db.prepare_v2(&pending.sql)?;
         if stmt.bind_parameter_count() != pending.params.len() {
             return Err(PowerSyncError::argument_error(format!(
@@ -517,7 +517,7 @@ impl PreparedPendingStatement {
     pub fn render_rest_object(
         &self,
         json_data: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<Option<String>, PowerSyncError> {
+    ) -> Result<Option<String>> {
         use serde_json::Value;
 
         let Some(ref index) = self.definition.named_parameters_index else {
@@ -527,7 +527,7 @@ impl PreparedPendingStatement {
         struct UnmatchedValues<'a>(BTreeMap<&'a String, &'a Value>);
 
         impl<'a> Serialize for UnmatchedValues<'a> {
-            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
             where
                 S: serde::Serializer,
             {
@@ -564,7 +564,7 @@ impl PreparedPendingStatement {
         id: &str,
         json_data: &serde_json::Map<String, serde_json::Value>,
         rest: &Option<String>,
-    ) -> Result<(), PowerSyncError> {
+    ) -> Result<()> {
         use serde_json::Value;
 
         for (i, source) in self.definition.params.iter().enumerate() {
@@ -614,7 +614,7 @@ impl PreparedPendingStatement {
         Ok(())
     }
 
-    pub fn bind_for_delete(&self, id: &str) -> Result<(), PowerSyncError> {
+    pub fn bind_for_delete(&self, id: &str) -> Result<()> {
         for (i, source) in self.definition.params.iter().enumerate() {
             if let PendingStatementValue::Id = source {
                 self.stmt
@@ -631,12 +631,7 @@ impl PreparedPendingStatement {
 
     /// Executes the prepared statement, contextualizing errors with the id / data that we've tried
     /// to insert.
-    pub fn exec(
-        &self,
-        table: &str,
-        id: &str,
-        data: Option<&serde_json::Value>,
-    ) -> Result<(), PowerSyncError> {
+    pub fn exec(&self, table: &str, id: &str, data: Option<&serde_json::Value>) -> Result<()> {
         self.stmt.exec().map_err(|e| {
             let context = match data {
                 None => format!("deleting from {table}, id = {id}"),

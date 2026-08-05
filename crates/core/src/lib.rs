@@ -7,7 +7,11 @@ use alloc::{ffi::CString, format, rc::Rc};
 use powersync_sqlite_nostd as sqlite;
 use sqlite::ResultCode;
 
-use crate::{error::PowerSyncError, state::DatabaseState, utils::database::Database};
+use crate::{
+    error::{PowerSyncError, Result},
+    state::DatabaseState,
+    utils::database::Database,
+};
 
 mod bson;
 mod constants;
@@ -58,7 +62,7 @@ pub extern "C" fn sqlite3_powersync_init(
     };
 }
 
-fn init_extension(db: Database) -> Result<(), PowerSyncError> {
+fn init_extension(db: Database) -> Result<()> {
     PowerSyncError::check_sqlite3_version()?;
 
     let state = Rc::new(DatabaseState::new());

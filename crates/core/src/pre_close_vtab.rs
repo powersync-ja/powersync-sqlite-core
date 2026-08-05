@@ -7,7 +7,7 @@ use core::ffi::{c_char, c_int, c_void};
 use powersync_sqlite_nostd as sqlite;
 use sqlite::{Connection, ResultCode};
 
-use crate::error::PowerSyncError;
+use crate::error::Result;
 use crate::state::DatabaseState;
 use crate::update_hooks::uninstall_update_hooks;
 use crate::utils::database::Database;
@@ -142,12 +142,15 @@ static MODULE: sqlite::module = sqlite::module {
     xIntegrity: None,
 };
 
-pub fn ensure_has_internal_close_vtab(db: Database) -> Result<(), PowerSyncError> {
+pub fn ensure_has_internal_close_vtab(db: Database) -> Result<()> {
     db.exec_safe(c"SELECT 1 FROM powersync_internal_close;")?;
     Ok(())
 }
 
-pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(
+    db: *mut sqlite::sqlite3,
+    state: Rc<DatabaseState>,
+) -> core::result::Result<(), ResultCode> {
     db.create_module_v2(
         "powersync_internal_close",
         &MODULE,
