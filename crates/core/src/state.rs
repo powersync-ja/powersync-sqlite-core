@@ -12,7 +12,7 @@ use powersync_sqlite_nostd::{self as sqlite, Context};
 use sqlite::{Connection, ResultCode};
 
 use crate::{
-    error::PowerSyncError,
+    error::Result,
     schema::{InferredSchemaCache, Schema},
     sync::{SyncClient, storage_adapter::StorageAdapter},
     utils::database::Database,
@@ -102,7 +102,7 @@ impl DatabaseState {
         core::mem::replace(&mut *committed, Default::default())
     }
 
-    pub fn storage_adapter(&self, db: Database) -> Result<Rc<StorageAdapter>, PowerSyncError> {
+    pub fn storage_adapter(&self, db: Database) -> Result<Rc<StorageAdapter>> {
         let mut adapter = self.storage_adapter.borrow_mut();
         Ok(match *adapter {
             Some(ref adapter) => {
@@ -159,7 +159,10 @@ impl DatabaseState {
     }
 }
 
-pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(
+    db: *mut sqlite::sqlite3,
+    state: Rc<DatabaseState>,
+) -> core::result::Result<(), ResultCode> {
     unsafe extern "C" fn func(
         ctx: *mut sqlite::context,
         _argc: c_int,

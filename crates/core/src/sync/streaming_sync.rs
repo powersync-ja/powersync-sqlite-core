@@ -18,7 +18,7 @@ use alloc::{
 use futures_lite::FutureExt;
 
 use crate::{
-    error::{PowerSyncError, PowerSyncErrorCause},
+    error::{PowerSyncError, PowerSyncErrorCause, Result},
     kv::client_id,
     state::DatabaseState,
     sync::{
@@ -61,7 +61,7 @@ pub struct SyncClient {
 }
 
 impl SyncClient {
-    pub fn new(db: Database, state: &Rc<DatabaseState>) -> Result<Self, PowerSyncError> {
+    pub fn new(db: Database, state: &Rc<DatabaseState>) -> Result<Self> {
         let adapter = state.storage_adapter(db)?;
 
         Ok(Self {
@@ -72,10 +72,7 @@ impl SyncClient {
         })
     }
 
-    pub fn push_event<'a>(
-        &mut self,
-        event: SyncControlRequest<'a>,
-    ) -> Result<Vec<Instruction>, PowerSyncError> {
+    pub fn push_event<'a>(&mut self, event: SyncControlRequest<'a>) -> Result<Vec<Instruction>> {
         match event {
             SyncControlRequest::StartSyncStream(options) => {
                 self.state.tear_down()?;
@@ -134,7 +131,7 @@ enum ClientState {
 }
 
 impl ClientState {
-    fn tear_down(&mut self) -> Result<Vec<Instruction>, PowerSyncError> {
+    fn tear_down(&mut self) -> Result<Vec<Instruction>> {
         let mut event = ActiveEvent::new(SyncEvent::TearDown);
 
         if let ClientState::IterationActive(old) = self {
@@ -153,7 +150,7 @@ impl ClientState {
 /// At each invocation, the future is polled once (and gets access to context that allows it to
 /// render [Instruction]s to return from the function).
 struct SyncIterationHandle {
-    future: Pin<Box<dyn Future<Output = Result<CloseSyncStream, PowerSyncError>>>>,
+    future: Pin<Box<dyn Future<Output = Result<CloseSyncStream>>>>,
 }
 
 impl SyncIterationHandle {
@@ -180,7 +177,7 @@ impl SyncIterationHandle {
 
     /// Forwards a [SyncEvent::Initialize] to the current sync iteration, returning the initial
     /// instructions generated.
-    fn initialize(&mut self) -> Result<Vec<Instruction>, PowerSyncError> {
+    fn initialize(&mut self) -> Result<Vec<Instruction>> {
         let mut event = ActiveEvent::new(SyncEvent::Initialize);
         let result = self.run(&mut event)?;
         assert!(!result, "Stream client aborted initialization");
@@ -188,7 +185,7 @@ impl SyncIterationHandle {
         Ok(event.instructions)
     }
 
-    fn run(&mut self, active: &mut ActiveEvent) -> Result<bool, PowerSyncError> {
+    fn run(&mut self, active: &mut ActiveEvent) -> Result<bool> {
         // Using a noop waker because the only event thing StreamingSyncIteration::run polls on is
         // the next incoming sync event.
         let waker = unsafe {
@@ -288,7 +285,7 @@ impl StreamingSyncIteration {
         target: &SyncTarget,
         event: &mut ActiveEvent,
         line: &'a SyncLineWithSource<'a>,
-    ) -> Result<SyncStateMachineTransition<'a>, PowerSyncError> {
+    ) -> Result<SyncStateMachineTransition<'a>> {
         let SyncLineWithSource { source, line } = line;
 
         Ok(match line {
@@ -538,14 +535,14 @@ impl StreamingSyncIteration {
         target: &mut SyncTarget,
         event: &mut ActiveEvent,
         line: &SyncLineWithSource,
-    ) -> Result<Option<CloseSyncStream>, PowerSyncError> {
+    ) -> Result<Option<CloseSyncStream>> {
         let transition = self.prepare_handling_sync_line(target, event, line)?;
         Ok(self.apply_transition(target, event, transition))
     }
 
     /// Runs a full sync iteration, returning nothing when it completes regularly or an error when
     /// the sync iteration should be interrupted.
-    async fn run(mut self) -> Result<CloseSyncStream, PowerSyncError> {
+    async fn run(mut self) -> Result<CloseSyncStream> {
         let mut target = SyncTarget::BeforeCheckpoint(self.prepare_request().await?);
 
         let hide_disconnect = loop {
@@ -621,10 +618,7 @@ impl StreamingSyncIteration {
         Ok(CloseSyncStream { hide_disconnect })
     }
 
-    fn load_progress(
-        &self,
-        checkpoint: &OwnedCheckpoint,
-    ) -> Result<SyncDownloadProgress, PowerSyncError> {
+    fn load_progress(&self, checkpoint: &OwnedCheckpoint) -> Result<SyncDownloadProgress> {
         let SyncProgressFromCheckpoint {
             progress,
             needs_counter_reset,
@@ -637,10 +631,7 @@ impl StreamingSyncIteration {
         Ok(progress)
     }
 
-    fn try_applying_write_after_completed_upload(
-        &mut self,
-        event: &mut ActiveEvent,
-    ) -> Result<(), PowerSyncError> {
+    fn try_applying_write_after_completed_upload(&mut self, event: &mut ActiveEvent) -> Result<()> {
         let Some(checkpoint) = self.validated_but_not_applied.take() else {
             return Ok(());
         };
@@ -691,7 +682,7 @@ impl StreamingSyncIteration {
         &self,
         tracked: &TrackedCheckpoint,
         event: &mut ActiveEvent,
-    ) -> Result<Vec<ActiveStreamSubscription>, PowerSyncError> {
+    ) -> Result<Vec<ActiveStreamSubscription>> {
         struct LocalAndServerSubscription<'a, T> {
             local: T,
             /// If this subscription has an acknowledged stream included in the checkpoint, the
@@ -861,7 +852,7 @@ impl StreamingSyncIteration {
         &self,
         target: &OwnedCheckpoint,
         priority: Option<BucketPriority>,
-    ) -> Result<SyncLocalResult, PowerSyncError> {
+    ) -> Result<SyncLocalResult> {
         let state = match self.state.upgrade() {
             Some(state) => state,
             None => return Err(PowerSyncError::unknown_internal()),
@@ -902,7 +893,7 @@ impl StreamingSyncIteration {
     /// This returns local bucket names (used to delete buckets that don't appear in checkpoints
     /// anymore) and the [LocallyTrackedSubscription::id] of explicitly-requested stream
     /// subscriptions, used to associate [BucketSubscriptionReason::DerivedFromExplicitSubscription].
-    async fn prepare_request(&mut self) -> Result<BeforeCheckpoint, PowerSyncError> {
+    async fn prepare_request(&mut self) -> Result<BeforeCheckpoint> {
         let event = Self::receive_event().await;
         let SyncEvent::Initialize = event.event else {
             return Err(PowerSyncError::argument_error(

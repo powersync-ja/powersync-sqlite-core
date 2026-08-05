@@ -14,7 +14,7 @@ use powersync_sqlite_nostd::Context;
 use sqlite::{Connection, ResultCode, Value};
 
 use crate::create_sqlite_text_fn;
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use crate::schema::inspection::{ExistingTable, ExistingView};
 use crate::schema::table_info::Index;
 use crate::state::DatabaseState;
@@ -27,7 +27,7 @@ use crate::views::{
 
 use super::Schema;
 
-fn update_tables(db: Database, schema: &Schema) -> Result<(), PowerSyncError> {
+fn update_tables(db: Database, schema: &Schema) -> Result<()> {
     let existing_tables = ExistingTable::list(db)?;
     let mut existing_tables = {
         let mut map = BTreeMap::new();
@@ -129,7 +129,7 @@ fn create_index_stmt(table_name: &str, index_name: &str, index: &Index) -> Strin
     sql.sql
 }
 
-fn update_indexes(db: Database, schema: &Schema) -> Result<(), PowerSyncError> {
+fn update_indexes(db: Database, schema: &Schema) -> Result<()> {
     let mut statements: Vec<String> = alloc::vec![];
     let mut expected_index_names: Vec<String> = vec![];
 
@@ -205,7 +205,7 @@ SELECT
     Ok(())
 }
 
-fn update_views(db: Database, schema: &Schema) -> Result<(), PowerSyncError> {
+fn update_views(db: Database, schema: &Schema) -> Result<()> {
     // First, find all existing views and index them by name.
     let existing = ExistingView::list(db)?;
     let mut existing = {
@@ -256,7 +256,7 @@ fn update_views(db: Database, schema: &Schema) -> Result<(), PowerSyncError> {
 fn powersync_replace_schema_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
+) -> Result<String> {
     let db = Database::from(ctx.db_handle());
     verify_in_transaction(db)?;
 
@@ -282,7 +282,10 @@ create_sqlite_text_fn!(
     "powersync_replace_schema"
 );
 
-pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(
+    db: *mut sqlite::sqlite3,
+    state: Rc<DatabaseState>,
+) -> core::result::Result<(), ResultCode> {
     db.create_function_v2(
         "powersync_replace_schema",
         1,

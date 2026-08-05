@@ -10,7 +10,7 @@ use serde::Serialize;
 use serde_json::json;
 use sqlite::ResultCode;
 
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use crate::fix_data::apply_v035_fix;
 use crate::schema::inspection::ExistingView;
 use crate::sync::BucketPriority;
@@ -18,10 +18,7 @@ use crate::utils::database::Database;
 
 pub const LATEST_VERSION: i32 = 14;
 
-pub fn powersync_migrate(
-    ctx: *mut sqlite::context,
-    target_version: i32,
-) -> Result<(), PowerSyncError> {
+pub fn powersync_migrate(ctx: *mut sqlite::context, target_version: i32) -> Result<()> {
     let local_db = Database::from(ctx.db_handle());
 
     // language=SQLite
@@ -582,11 +579,11 @@ ON CONFLICT(name) DO UPDATE SET
     Ok(())
 }
 
-fn serialize_down_statements(statements: &[&'static str]) -> Result<String, PowerSyncError> {
+fn serialize_down_statements(statements: &[&'static str]) -> Result<String> {
     struct DownStatements<'a>(&'a [&'static str]);
 
     impl<'a> Serialize for DownStatements<'a> {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
         {

@@ -9,14 +9,11 @@ use sqlite::ResultCode;
 
 use crate::constants::SUBTYPE_JSON;
 use crate::create_sqlite_text_fn;
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use powersync_sqlite_nostd::bindings::SQLITE_RESULT_SUBTYPE;
 use serde_json as json;
 
-fn powersync_diff_impl(
-    ctx: *mut sqlite::context,
-    args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
+fn powersync_diff_impl(ctx: *mut sqlite::context, args: &[*mut sqlite::value]) -> Result<String> {
     let data_old = args[0].text();
     let data_new = args[1].text();
 
@@ -24,7 +21,7 @@ fn powersync_diff_impl(
     diff_objects(data_old, data_new)
 }
 
-pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, PowerSyncError> {
+pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String> {
     let v_new: json::Value = json::from_str(data_new).map_err(PowerSyncError::as_argument_error)?;
     let v_old: json::Value = json::from_str(data_old).map_err(PowerSyncError::as_argument_error)?;
 
@@ -64,7 +61,7 @@ pub fn diff_objects(data_old: &str, data_new: &str) -> Result<String, PowerSyncE
 
 create_sqlite_text_fn!(powersync_diff, powersync_diff_impl, "powersync_diff");
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3) -> core::result::Result<(), ResultCode> {
     db.create_function_v2(
         "powersync_diff",
         2,

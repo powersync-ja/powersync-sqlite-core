@@ -3,7 +3,7 @@ use alloc::string::String;
 use num_traits::Zero;
 use powersync_sqlite_nostd::{self as sqlite};
 
-use crate::error::PowerSyncError;
+use crate::error::Result;
 
 use super::Checksum;
 use super::line::OplogData;
@@ -17,7 +17,7 @@ pub fn insert_bucket_operations(
     adapter: &StorageAdapter,
     data: &DataLine,
     size: usize,
-) -> Result<(), PowerSyncError> {
+) -> Result<()> {
     let db = adapter.db;
     let BucketInfo {
         id: bucket_id,

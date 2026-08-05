@@ -5,7 +5,7 @@ use powersync_sqlite_nostd::{self as sqlite};
 use serde::Serialize;
 
 use crate::{
-    error::PowerSyncError,
+    error::{PowerSyncError, Result},
     pre_close_vtab::ensure_has_internal_close_vtab,
     schema::Schema,
     state::DatabaseState,
@@ -52,7 +52,7 @@ pub struct StorageAdapter {
 }
 
 impl StorageAdapter {
-    pub fn new(db: Database) -> Result<Self, PowerSyncError> {
+    pub fn new(db: Database) -> Result<Self> {
         // The cached statements here prevent sqlite3_close from completing. sqlite3_close invokes
         // the xDisconnect callback on attached virtual tables, which we use to implement a
         // "pre-close hook". See `pre_close_vtab.rs` for more details on how that works.
@@ -82,7 +82,7 @@ impl StorageAdapter {
         })
     }
 
-    pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>, PowerSyncError> {
+    pub fn collect_bucket_requests(&self) -> Result<Vec<BucketRequest>> {
         // language=SQLite
         let statement = self
             .db
@@ -103,7 +103,7 @@ impl StorageAdapter {
         Ok(requests)
     }
 
-    pub fn offline_sync_state(&self) -> Result<DownloadSyncStatus, PowerSyncError> {
+    pub fn offline_sync_state(&self) -> Result<DownloadSyncStatus> {
         let priority_items = {
             // language=SQLite
             let statement = self.db.prepare_v2(
@@ -143,10 +143,7 @@ impl StorageAdapter {
         })
     }
 
-    pub fn delete_buckets<'a>(
-        &self,
-        buckets: impl IntoIterator<Item = &'a str>,
-    ) -> Result<(), PowerSyncError> {
+    pub fn delete_buckets<'a>(&self, buckets: impl IntoIterator<Item = &'a str>) -> Result<()> {
         // Prepare statements lazily, this method may be called without any buckets to delete.
         let mut delete_bucket_returning_id = None::<Statement>;
         let mut mark_updated = None::<Statement>;
@@ -194,7 +191,7 @@ WHERE bucket = ?1",
         Ok(())
     }
 
-    pub fn step_progress(&'_ self) -> Result<Option<PersistedBucketProgress<'_>>, PowerSyncError> {
+    pub fn step_progress(&'_ self) -> Result<Option<PersistedBucketProgress<'_>>> {
         if self.progress_stmt.step()? {
             let bucket = self.progress_stmt.column_text(0)?;
             let count_at_last = self.progress_stmt.column_int64(1);
@@ -212,13 +209,13 @@ WHERE bucket = ?1",
         }
     }
 
-    pub fn reset_progress(&self) -> Result<(), PowerSyncError> {
+    pub fn reset_progress(&self) -> Result<()> {
         self.db
             .exec_safe(c"UPDATE ps_buckets SET count_since_last = 0, count_at_last = 0;")?;
         Ok(())
     }
 
-    pub fn lookup_bucket(&self, bucket: &str) -> Result<BucketInfo, PowerSyncError> {
+    pub fn lookup_bucket(&self, bucket: &str) -> Result<BucketInfo> {
         // We do an ON CONFLICT UPDATE simply so that the RETURNING bit works for existing rows.
         // We can consider splitting this into separate SELECT and INSERT statements.
         // language=SQLite
@@ -248,7 +245,7 @@ WHERE bucket = ?1",
         checkpoint: &OwnedCheckpoint,
         priority: Option<BucketPriority>,
         schema: &Schema,
-    ) -> Result<SyncLocalResult, PowerSyncError> {
+    ) -> Result<SyncLocalResult> {
         let mismatched_checksums =
             validate_checkpoint(checkpoint.buckets.values(), priority, self.db)?;
 
@@ -351,7 +348,7 @@ WHERE bucket = ?1",
     pub fn collect_subscription_requests(
         &self,
         include_defaults: bool,
-    ) -> Result<RequestedStreamSubscriptions, PowerSyncError> {
+    ) -> Result<RequestedStreamSubscriptions> {
         self.delete_outdated_subscriptions()?;
 
         let mut subscriptions: Vec<RequestedStreamSubscription> = Vec::new();
@@ -383,7 +380,7 @@ WHERE bucket = ?1",
         })
     }
 
-    pub fn now(&self) -> Result<TimestampMicros, PowerSyncError> {
+    pub fn now(&self) -> Result<TimestampMicros> {
         self.time_stmt.step()?;
         let res = TimestampMicros(self.time_stmt.column_int64(0));
         self.time_stmt.reset()?;
@@ -391,9 +388,7 @@ WHERE bucket = ?1",
         Ok(res)
     }
 
-    fn read_stream_subscription(
-        stmt: &Statement,
-    ) -> Result<LocallyTrackedSubscription, PowerSyncError> {
+    fn read_stream_subscription(stmt: &Statement) -> Result<LocallyTrackedSubscription> {
         let raw_params = stmt.column_text(5)?;
 
         Ok(LocallyTrackedSubscription {
@@ -414,7 +409,7 @@ WHERE bucket = ?1",
         })
     }
 
-    fn delete_outdated_subscriptions(&self) -> Result<(), PowerSyncError> {
+    fn delete_outdated_subscriptions(&self) -> Result<()> {
         let now = self.now()?;
         let stmt = self.db.prepare_v2("DELETE FROM ps_stream_subscriptions WHERE (expires_at < ?) OR (ttl IS NULL AND NOT active)")?;
         stmt.bind_int64(1, now.0)?;
@@ -423,7 +418,7 @@ WHERE bucket = ?1",
     }
 
     /// Increases the TTL for explicit subscriptions that are currently marked as active.
-    pub fn increase_ttl(&self, streams: &[StreamKey]) -> Result<(), PowerSyncError> {
+    pub fn increase_ttl(&self, streams: &[StreamKey]) -> Result<()> {
         let now = self.now()?;
         let stmt = self.db.prepare_v2(
             "UPDATE ps_stream_subscriptions SET expires_at = ? + ttl * 1000000 WHERE stream_name = ? AND local_params = ? AND ttl IS NOT NULL",
@@ -442,7 +437,7 @@ WHERE bucket = ?1",
     pub fn iterate_local_subscriptions<F: FnMut(LocallyTrackedSubscription) -> ()>(
         &self,
         mut action: F,
-    ) -> Result<(), PowerSyncError> {
+    ) -> Result<()> {
         let stmt = self
             .db
             .prepare_v2("SELECT * FROM ps_stream_subscriptions ORDER BY id ASC")?;
@@ -456,7 +451,7 @@ WHERE bucket = ?1",
     pub fn create_default_subscription(
         &self,
         stream: &OwnedStreamDescription,
-    ) -> Result<LocallyTrackedSubscription, PowerSyncError> {
+    ) -> Result<LocallyTrackedSubscription> {
         debug_assert!(stream.is_default);
         let stmt = self.db.prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, active, is_default) VALUES (?, TRUE, TRUE) RETURNING *;")?;
         stmt.bind_text(1, &stream.name, sqlite::Destructor::STATIC)?;
@@ -468,10 +463,7 @@ WHERE bucket = ?1",
         }
     }
 
-    pub fn update_subscription(
-        &self,
-        subscription: &LocallyTrackedSubscription,
-    ) -> Result<(), PowerSyncError> {
+    pub fn update_subscription(&self, subscription: &LocallyTrackedSubscription) -> Result<()> {
         let _ = self.update_subscription.reset();
 
         self.update_subscription.bind_int64(1, subscription.id)?;
@@ -501,14 +493,14 @@ WHERE bucket = ?1",
         Ok(())
     }
 
-    pub fn delete_subscription(&self, id: i64) -> Result<(), PowerSyncError> {
+    pub fn delete_subscription(&self, id: i64) -> Result<()> {
         let _ = self.delete_subscription.reset();
         self.delete_subscription.bind_int64(1, id)?;
         self.delete_subscription.exec()?;
         Ok(())
     }
 
-    pub fn target_checkpoint_request_id(&self) -> Result<Option<i64>, PowerSyncError> {
+    pub fn target_checkpoint_request_id(&self) -> Result<Option<i64>> {
         self.read_i64_kv(TARGET_CHECKPOINT_REQUEST_ID_KEY)
     }
 
@@ -533,10 +525,7 @@ WHERE bucket = ?1",
     ///
     /// Negative values are rejected when parsing the `powersync_control` payload, before this is
     /// called.
-    pub fn probe_target_checkpoint_request_id(
-        &self,
-        target: Option<i64>,
-    ) -> Result<Option<i64>, PowerSyncError> {
+    pub fn probe_target_checkpoint_request_id(&self, target: Option<i64>) -> Result<Option<i64>> {
         let previous_target = self.target_checkpoint_request_id()?;
 
         let Some(target) = target else {
@@ -556,10 +545,7 @@ WHERE bucket = ?1",
     /// Persists the checkpoint request id observed in a complete sync checkpoint.
     ///
     /// This is used to decide whether downloaded data can be applied after local uploads complete.
-    pub fn persist_last_seen_checkpoint_request_id(
-        &self,
-        request_id: i64,
-    ) -> Result<(), PowerSyncError> {
+    pub fn persist_last_seen_checkpoint_request_id(&self, request_id: i64) -> Result<()> {
         self.write_i64_kv(LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY, request_id)
     }
 
@@ -569,15 +555,12 @@ WHERE bucket = ?1",
     /// overwrite with no monotonicity enforced by core. External code owns consistency of these
     /// ids; waiters should rely on `DidCompleteSync.applied_checkpoint_request_id` rather than
     /// comparing this value across reconnects.
-    pub fn persist_last_applied_checkpoint_request_id(
-        &self,
-        request_id: i64,
-    ) -> Result<(), PowerSyncError> {
+    pub fn persist_last_applied_checkpoint_request_id(&self, request_id: i64) -> Result<()> {
         self.write_i64_kv(LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY, request_id)
     }
 
     /// Increments, persists and returns the next client-created checkpoint request id.
-    pub fn next_checkpoint_request_id(&self) -> Result<i64, PowerSyncError> {
+    pub fn next_checkpoint_request_id(&self) -> Result<i64> {
         let statement = self.db.prepare_v2(
             "INSERT INTO ps_kv(key, value)
 VALUES(?1, 1)
@@ -598,12 +581,12 @@ RETURNING value",
     }
 
     /// Returns whether the local checkpoint request counter has been initialized.
-    pub fn has_checkpoint_request_id(&self) -> Result<bool, PowerSyncError> {
+    pub fn has_checkpoint_request_id(&self) -> Result<bool> {
         Ok(self.last_checkpoint_request_id()?.is_some())
     }
 
     /// Returns the latest checkpoint request id known locally.
-    pub fn last_checkpoint_request_id(&self) -> Result<Option<i64>, PowerSyncError> {
+    pub fn last_checkpoint_request_id(&self) -> Result<Option<i64>> {
         self.read_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY)
     }
 
@@ -613,7 +596,7 @@ RETURNING value",
     /// legacy-to-request-mode transition or after migrating unusual state, so include it as a
     /// lower bound. The max-op sentinel represents pending local writes without a concrete request
     /// id and must not be sent to the service.
-    pub fn initial_checkpoint_request_id(&self) -> Result<i64, PowerSyncError> {
+    pub fn initial_checkpoint_request_id(&self) -> Result<i64> {
         let last_requested = self.last_checkpoint_request_id()?.unwrap_or(0);
         let concrete_target = self
             .target_checkpoint_request_id()?
@@ -628,11 +611,11 @@ RETURNING value",
     /// The value is stored verbatim: core does not enforce monotonicity here. SDKs are
     /// responsible for posting the initial payload to the service and seeding its accepted
     /// response, and cannot allocate new checkpoint request ids until that seeding has completed.
-    pub fn seed_checkpoint_request_id(&self, request_id: i64) -> Result<(), PowerSyncError> {
+    pub fn seed_checkpoint_request_id(&self, request_id: i64) -> Result<()> {
         self.write_i64_kv(LAST_REQUESTED_CHECKPOINT_REQUEST_ID_KEY, request_id)
     }
 
-    fn read_i64_kv(&self, key: &'static str) -> Result<Option<i64>, PowerSyncError> {
+    fn read_i64_kv(&self, key: &'static str) -> Result<Option<i64>> {
         let statement = self
             .db
             .prepare_v2("SELECT value FROM ps_kv WHERE key = ?1")?;
@@ -645,7 +628,7 @@ RETURNING value",
         })
     }
 
-    fn write_i64_kv(&self, key: &'static str, value: i64) -> Result<(), PowerSyncError> {
+    fn write_i64_kv(&self, key: &'static str, value: i64) -> Result<()> {
         let stmt = self.db.prepare_v2(
             "INSERT INTO ps_kv(key, value)
 VALUES(?1, ?2)
@@ -657,7 +640,7 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         Ok(())
     }
 
-    fn delete_kv(&self, key: &'static str) -> Result<(), PowerSyncError> {
+    fn delete_kv(&self, key: &'static str) -> Result<()> {
         let stmt = self.db.prepare_v2("DELETE FROM ps_kv WHERE key = ?1")?;
         stmt.bind_text(1, key, sqlite::Destructor::STATIC)?;
         stmt.exec()?;

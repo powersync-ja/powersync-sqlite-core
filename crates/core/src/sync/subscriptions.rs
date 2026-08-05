@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_with::{DurationSeconds, serde_as};
 
 use crate::{
-    error::PowerSyncError,
+    error::Result,
     sync::{BucketPriority, storage_adapter::StorageAdapter},
     utils::JsonString,
 };
@@ -80,7 +80,7 @@ pub struct SubscribeToStream {
 pub fn apply_subscriptions(
     adapter: &StorageAdapter,
     subscription: SubscriptionChangeRequest,
-) -> Result<(), PowerSyncError> {
+) -> Result<()> {
     let db = adapter.db;
 
     match subscription {

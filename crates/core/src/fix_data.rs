@@ -4,7 +4,7 @@ use alloc::format;
 use alloc::string::String;
 
 use crate::create_sqlite_optional_text_fn;
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use crate::schema::inspection::ExistingTable;
 use crate::utils::SqlBuffer;
 use crate::utils::database::Database;
@@ -20,7 +20,7 @@ use powersync_sqlite_nostd::{Connection, Context, ResultCode};
 //
 // The fix here is to find these dangling rows, and add them to ps_updated_rows.
 // The next time the sync_local operation is run, these rows will be removed.
-pub fn apply_v035_fix(db: Database) -> Result<i64, PowerSyncError> {
+pub fn apply_v035_fix(db: Database) -> Result<i64> {
     // language=SQLite
     let statement = db.prepare_v2(
         "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data__*'",
@@ -122,7 +122,7 @@ fn remove_duplicate_key_encoding(key: &str) -> Option<String> {
 fn powersync_remove_duplicate_key_encoding_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
-) -> Result<Option<String>, PowerSyncError> {
+) -> Result<Option<String>> {
     fn unexpected_argument() -> PowerSyncError {
         PowerSyncError::argument_error("Expected a text argument")
     }
@@ -142,7 +142,7 @@ create_sqlite_optional_text_fn!(
     "powersync_remove_duplicate_key_encoding"
 );
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3) -> core::result::Result<(), ResultCode> {
     db.create_function_v2(
         "powersync_remove_duplicate_key_encoding",
         1,

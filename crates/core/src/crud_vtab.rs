@@ -10,7 +10,7 @@ use serde_json::value::RawValue;
 use powersync_sqlite_nostd::{self as sqlite, ColumnType};
 use sqlite::{ResultCode, Value};
 
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use crate::schema::TableInfoFlags;
 use crate::state::DatabaseState;
 use crate::sync::storage_adapter::{
@@ -83,7 +83,7 @@ impl VirtualTable {
         }
     }
 
-    fn handle_insert(&mut self, args: &[*mut sqlite::value]) -> Result<(), PowerSyncError> {
+    fn handle_insert(&mut self, args: &[*mut sqlite::value]) -> Result<()> {
         let current_tx = self
             .current_tx
             .as_mut()
@@ -181,7 +181,7 @@ impl VirtualTable {
         Ok(())
     }
 
-    fn begin(&mut self) -> Result<(), PowerSyncError> {
+    fn begin(&mut self) -> Result<()> {
         let db = self.db;
 
         // language=SQLite
@@ -211,7 +211,7 @@ impl VirtualTable {
 }
 
 impl ManualCrudTransactionMode {
-    fn raw_crud_statement(&mut self, db: Database) -> Result<&Statement, PowerSyncError> {
+    fn raw_crud_statement(&mut self, db: Database) -> Result<&Statement> {
         prepare_lazy(&mut self.stmt, || {
             const SQL: &str = formatcp!(
                 "\
@@ -228,21 +228,21 @@ SELECT * FROM insertion WHERE (NOT (?3 & {})) OR data->>'op' != 'PATCH' OR data-
 }
 
 impl SimpleCrudTransactionMode {
-    fn raw_crud_statement(&mut self, db: Database) -> Result<&Statement, PowerSyncError> {
+    fn raw_crud_statement(&mut self, db: Database) -> Result<&Statement> {
         prepare_lazy(&mut self.stmt, || {
             // language=SQLite
             db.prepare_v2("INSERT INTO ps_crud(tx_id, data) VALUES (?, ?)")
         })
     }
 
-    fn set_updated_rows_statement(&mut self, db: Database) -> Result<&Statement, PowerSyncError> {
+    fn set_updated_rows_statement(&mut self, db: Database) -> Result<&Statement> {
         prepare_lazy(&mut self.set_updated_rows, || {
             // language=SQLite
             db.prepare_v2("INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?, ?)")
         })
     }
 
-    fn record_local_write(&mut self, db: Database) -> Result<(), PowerSyncError> {
+    fn record_local_write(&mut self, db: Database) -> Result<()> {
         if !self.had_writes {
             // Also clear the seen/applied high-water marks: checkpoint request ids observed before
             // this write can't acknowledge it, and stale values may predate a request counter
@@ -262,8 +262,8 @@ DELETE FROM ps_kv WHERE key IN ('{LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY}', '{LAST_
 /// A variant of `Option.get_or_insert` that handles insertions returning errors.
 fn prepare_lazy(
     stmt: &mut Option<Statement>,
-    prepare: impl FnOnce() -> Result<Statement, PowerSyncError>,
-) -> Result<&Statement, PowerSyncError> {
+    prepare: impl FnOnce() -> Result<Statement>,
+) -> Result<&Statement> {
     if let None = stmt {
         *stmt = Some(prepare()?);
     }
@@ -396,7 +396,10 @@ static MODULE: sqlite::module = sqlite::module {
     xIntegrity: None,
 };
 
-pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
+pub fn register(
+    db: *mut sqlite::sqlite3,
+    state: Rc<DatabaseState>,
+) -> core::result::Result<(), ResultCode> {
     sqlite::convert_rc(sqlite::create_module_v2(
         db,
         SIMPLE_NAME.as_ptr(),

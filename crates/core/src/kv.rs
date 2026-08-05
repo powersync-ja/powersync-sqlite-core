@@ -8,19 +8,19 @@ use powersync_sqlite_nostd::{Connection, Context};
 use sqlite::ResultCode;
 
 use crate::create_sqlite_text_fn;
-use crate::error::PowerSyncError;
+use crate::error::{PowerSyncError, Result};
 use crate::utils::database::Database;
 
 fn powersync_client_id_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
-) -> Result<String, PowerSyncError> {
+) -> Result<String> {
     let db = ctx.db_handle();
 
     client_id(db.into())
 }
 
-pub fn client_id(db: Database) -> Result<String, PowerSyncError> {
+pub fn client_id(db: Database) -> Result<String> {
     // language=SQLite
     let statement = db.prepare_v2("select value from ps_kv where key = 'client_id'")?;
 
@@ -38,7 +38,7 @@ create_sqlite_text_fn!(
     "powersync_client_id"
 );
 
-pub fn register(db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+pub fn register(db: *mut sqlite::sqlite3) -> core::result::Result<(), ResultCode> {
     db.create_function_v2(
         "powersync_client_id",
         0,

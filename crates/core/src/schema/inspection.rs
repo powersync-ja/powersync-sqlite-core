@@ -2,7 +2,7 @@ use alloc::borrow::ToOwned;
 use alloc::{format, vec};
 use alloc::{string::String, vec::Vec};
 
-use crate::error::PowerSyncError;
+use crate::error::Result;
 use crate::utils::SqlBuffer;
 use crate::utils::database::Database;
 
@@ -23,7 +23,7 @@ pub struct ExistingView {
 }
 
 impl ExistingView {
-    pub fn list(db: Database) -> Result<Vec<Self>, PowerSyncError> {
+    pub fn list(db: Database) -> Result<Vec<Self>> {
         let mut results = vec![];
         let stmt = db.prepare_v2("
 SELECT
@@ -62,13 +62,13 @@ SELECT
         Ok(results)
     }
 
-    pub fn drop_by_name(db: Database, name: &str) -> Result<(), PowerSyncError> {
+    pub fn drop_by_name(db: Database, name: &str) -> Result<()> {
         let q = format!("DROP VIEW IF EXISTS {:}", SqlBuffer::quote_identifier(name));
         db.exec_safe_str(&q)?;
         Ok(())
     }
 
-    pub fn create(&self, db: Database) -> Result<(), PowerSyncError> {
+    pub fn create(&self, db: Database) -> Result<()> {
         Self::drop_by_name(db, &self.name)?;
         db.exec_safe_str(&self.sql)?;
         db.exec_safe_str(&self.delete_trigger_sql)?;
@@ -86,7 +86,7 @@ pub struct ExistingTable {
 }
 
 impl ExistingTable {
-    pub fn list(db: Database) -> Result<Vec<Self>, PowerSyncError> {
+    pub fn list(db: Database) -> Result<Vec<Self>> {
         let mut results = vec![];
         let stmt = db.prepare_v2(
             "
