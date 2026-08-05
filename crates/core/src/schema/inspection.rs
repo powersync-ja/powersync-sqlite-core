@@ -1,11 +1,10 @@
 use alloc::borrow::ToOwned;
 use alloc::{format, vec};
 use alloc::{string::String, vec::Vec};
-use powersync_sqlite_nostd::Connection;
-use powersync_sqlite_nostd::{self as sqlite, ResultCode};
 
-use crate::error::{PSResult, PowerSyncError};
+use crate::error::PowerSyncError;
 use crate::utils::SqlBuffer;
+use crate::utils::database::Database;
 
 /// An existing PowerSync-managed view that was found in the schema.
 #[derive(PartialEq)]
@@ -24,7 +23,7 @@ pub struct ExistingView {
 }
 
 impl ExistingView {
-    pub fn list(db: *mut sqlite::sqlite3) -> Result<Vec<Self>, PowerSyncError> {
+    pub fn list(db: Database) -> Result<Vec<Self>, PowerSyncError> {
         let mut results = vec![];
         let stmt = db.prepare_v2("
 SELECT
@@ -42,9 +41,9 @@ SELECT
         ON trigger3.tbl_name = view.name AND trigger3.type = 'trigger' AND trigger3.name GLOB 'ps_view_update*'
     WHERE view.type = 'view' AND view.sql GLOB  '*-- powersync-auto-generated'
     GROUP BY view.name;
-        ").into_db_result(db)?;
+        ")?;
 
-        while stmt.step()? == ResultCode::ROW {
+        while stmt.step()? {
             let name = stmt.column_text(0)?.to_owned();
             let sql = stmt.column_text(1)?.to_owned();
             let delete = stmt.column_text(2)?.to_owned();
@@ -63,18 +62,18 @@ SELECT
         Ok(results)
     }
 
-    pub fn drop_by_name(db: *mut sqlite::sqlite3, name: &str) -> Result<(), PowerSyncError> {
+    pub fn drop_by_name(db: Database, name: &str) -> Result<(), PowerSyncError> {
         let q = format!("DROP VIEW IF EXISTS {:}", SqlBuffer::quote_identifier(name));
-        db.exec_safe(&q)?;
+        db.exec_safe_str(&q)?;
         Ok(())
     }
 
-    pub fn create(&self, db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
+    pub fn create(&self, db: Database) -> Result<(), PowerSyncError> {
         Self::drop_by_name(db, &self.name)?;
-        db.exec_safe(&self.sql).into_db_result(db)?;
-        db.exec_safe(&self.delete_trigger_sql).into_db_result(db)?;
-        db.exec_safe(&self.insert_trigger_sql).into_db_result(db)?;
-        db.exec_safe(&self.update_trigger_sql).into_db_result(db)?;
+        db.exec_safe_str(&self.sql)?;
+        db.exec_safe_str(&self.delete_trigger_sql)?;
+        db.exec_safe_str(&self.insert_trigger_sql)?;
+        db.exec_safe_str(&self.update_trigger_sql)?;
 
         Ok(())
     }
@@ -87,17 +86,15 @@ pub struct ExistingTable {
 }
 
 impl ExistingTable {
-    pub fn list(db: *mut sqlite::sqlite3) -> Result<Vec<Self>, PowerSyncError> {
+    pub fn list(db: Database) -> Result<Vec<Self>, PowerSyncError> {
         let mut results = vec![];
-        let stmt = db
-            .prepare_v2(
-                "
+        let stmt = db.prepare_v2(
+            "
 SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'ps_data_*';
         ",
-            )
-            .into_db_result(db)?;
+        )?;
 
-        while stmt.step()? == ResultCode::ROW {
+        while stmt.step()? {
             let internal_name = stmt.column_text(0)?;
             let Some((name, local_only)) = Self::external_name(internal_name) else {
                 continue;

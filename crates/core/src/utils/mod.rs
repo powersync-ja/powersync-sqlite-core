@@ -1,14 +1,17 @@
+pub mod database;
 mod sql_buffer;
 
 use core::{cmp::Ordering, fmt::Display, hash::Hash};
 
 use alloc::{boxed::Box, string::String};
-use powersync_sqlite_nostd::{ColumnType, Connection, ManagedStmt, sqlite3};
 use serde::Serialize;
 use serde_json::value::RawValue;
 pub use sql_buffer::{InsertIntoCrud, SqlBuffer, WriteType};
 
-use crate::error::{PowerSyncError, RawPowerSyncError};
+use crate::{
+    error::{PowerSyncError, RawPowerSyncError},
+    utils::database::Database,
+};
 use uuid::Uuid;
 
 #[cold]
@@ -17,26 +20,12 @@ fn must_be_in_tx_error() -> PowerSyncError {
 }
 
 #[inline]
-pub fn verify_in_transaction(db: *mut sqlite3) -> Result<(), PowerSyncError> {
+pub fn verify_in_transaction(db: Database) -> Result<(), PowerSyncError> {
     if db.get_autocommit() {
         return Err(must_be_in_tx_error());
     }
 
     Ok(())
-}
-
-/// Calls [read] to read a column if it's not null, otherwise returns [None].
-#[inline]
-pub fn column_nullable<T, R: FnOnce() -> Result<T, PowerSyncError>>(
-    stmt: &ManagedStmt,
-    index: i32,
-    read: R,
-) -> Result<Option<T>, PowerSyncError> {
-    if stmt.column_type(index)? == ColumnType::Null {
-        Ok(None)
-    } else {
-        Ok(Some(read()?))
-    }
 }
 
 /// An opaque wrapper around a JSON-serialized value.

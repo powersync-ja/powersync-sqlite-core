@@ -15,7 +15,7 @@ use crate::utils::gen_uuid;
 fn uuid_v4_impl(
     _ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
-) -> Result<String, ResultCode> {
+) -> Result<String, PowerSyncError> {
     let id = gen_uuid();
     Ok(id.hyphenated().to_string())
 }

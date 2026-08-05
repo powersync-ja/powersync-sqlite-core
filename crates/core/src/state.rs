@@ -15,6 +15,7 @@ use crate::{
     error::PowerSyncError,
     schema::{InferredSchemaCache, Schema},
     sync::{SyncClient, storage_adapter::StorageAdapter},
+    utils::database::Database,
 };
 
 /// State that is shared for a SQLite database connection after the core extension has been
@@ -101,10 +102,7 @@ impl DatabaseState {
         core::mem::replace(&mut *committed, Default::default())
     }
 
-    pub fn storage_adapter(
-        &self,
-        db: *mut sqlite::sqlite3,
-    ) -> Result<Rc<StorageAdapter>, PowerSyncError> {
+    pub fn storage_adapter(&self, db: Database) -> Result<Rc<StorageAdapter>, PowerSyncError> {
         let mut adapter = self.storage_adapter.borrow_mut();
         Ok(match *adapter {
             Some(ref adapter) => {

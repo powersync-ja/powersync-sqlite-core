@@ -15,7 +15,7 @@ use crate::error::PowerSyncError;
 fn powersync_rs_version_impl(
     _ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
-) -> Result<String, ResultCode> {
+) -> Result<String, PowerSyncError> {
     let version = format!("{}/{}", CORE_PKG_VERSION, short_git_hash());
     Ok(version)
 }

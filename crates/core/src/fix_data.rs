@@ -4,13 +4,12 @@ use alloc::format;
 use alloc::string::String;
 
 use crate::create_sqlite_optional_text_fn;
-use crate::error::{PSResult, PowerSyncError};
+use crate::error::PowerSyncError;
 use crate::schema::inspection::ExistingTable;
 use crate::utils::SqlBuffer;
+use crate::utils::database::Database;
 use powersync_sqlite_nostd::{self as sqlite, ColumnType, Value};
 use powersync_sqlite_nostd::{Connection, Context, ResultCode};
-
-use crate::ext::SafeManagedStmt;
 
 // Apply a data migration to fix any existing data affected by the issue
 // fixed in v0.3.5.
@@ -21,13 +20,13 @@ use crate::ext::SafeManagedStmt;
 //
 // The fix here is to find these dangling rows, and add them to ps_updated_rows.
 // The next time the sync_local operation is run, these rows will be removed.
-pub fn apply_v035_fix(db: *mut sqlite::sqlite3) -> Result<i64, PowerSyncError> {
+pub fn apply_v035_fix(db: Database) -> Result<i64, PowerSyncError> {
     // language=SQLite
-    let statement = db
-        .prepare_v2("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data__*'")
-        .into_db_result(db)?;
+    let statement = db.prepare_v2(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'ps_data__*'",
+    )?;
 
-    while statement.step()? == ResultCode::ROW {
+    while statement.step()? {
         let full_name = statement.column_text(0)?;
         let Some((short_name, _)) = ExistingTable::external_name(full_name) else {
             continue;
@@ -124,10 +123,14 @@ fn powersync_remove_duplicate_key_encoding_impl(
     _ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<Option<String>, PowerSyncError> {
-    let arg = args.get(0).ok_or(ResultCode::MISUSE)?;
+    fn unexpected_argument() -> PowerSyncError {
+        PowerSyncError::argument_error("Expected a text argument")
+    }
+
+    let arg = args.get(0).ok_or_else(unexpected_argument)?;
 
     if arg.value_type() != ColumnType::Text {
-        return Err(ResultCode::MISMATCH.into());
+        return Err(unexpected_argument());
     }
 
     return Ok(remove_duplicate_key_encoding(arg.text()));

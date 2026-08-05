@@ -1,13 +1,12 @@
 use core::time::Duration;
 
 use alloc::{boxed::Box, string::String};
-use powersync_sqlite_nostd::{self as sqlite, Connection};
+use powersync_sqlite_nostd::{self as sqlite};
 use serde::Deserialize;
 use serde_with::{DurationSeconds, serde_as};
 
 use crate::{
-    error::{PSResult, PowerSyncError},
-    ext::SafeManagedStmt,
+    error::PowerSyncError,
     sync::{BucketPriority, storage_adapter::StorageAdapter},
     utils::JsonString,
 };
@@ -88,9 +87,8 @@ pub fn apply_subscriptions(
         SubscriptionChangeRequest::Subscribe(subscription) => {
             let now = adapter.now()?;
 
-            let stmt = db
-                .prepare_v2(
-                    "
+            let stmt = db.prepare_v2(
+                "
 INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, ttl, expires_at)
     VALUES (?, ?2, ?, ?4, ?5)
     ON CONFLICT DO UPDATE SET
@@ -99,8 +97,7 @@ INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, 
         ttl = ?4,
         expires_at = ?5
                 ",
-                )
-                .into_db_result(db)?;
+            )?;
 
             stmt.bind_text(1, &subscription.stream.name, sqlite::Destructor::STATIC)?;
             match &subscription.priority {
@@ -124,8 +121,7 @@ INSERT INTO ps_stream_subscriptions (stream_name, local_priority, local_params, 
         }
         SubscriptionChangeRequest::Unsubscribe(subscription) => {
             let stmt = db
-                .prepare_v2("UPDATE ps_stream_subscriptions SET ttl = NULL WHERE stream_name = ? AND local_params = ?")
-                .into_db_result(db)?;
+                .prepare_v2("UPDATE ps_stream_subscriptions SET ttl = NULL WHERE stream_name = ? AND local_params = ?")?;
             stmt.bind_text(1, &subscription.name, sqlite::Destructor::STATIC)?;
             stmt.bind_text(
                 2,

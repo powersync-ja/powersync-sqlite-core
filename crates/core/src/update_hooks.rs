@@ -60,8 +60,8 @@ extern "C" fn powersync_update_hooks(
 
     match op {
         "install" => {
-            if let Err(e) = ensure_has_internal_close_vtab(db) {
-                ctx.result_error_code(e);
+            if let Err(e) = ensure_has_internal_close_vtab(db.into()) {
+                e.apply_to_ctx("powersync_update_hooks", ctx);
                 return;
             };
 

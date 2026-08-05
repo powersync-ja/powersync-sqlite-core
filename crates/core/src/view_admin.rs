@@ -11,10 +11,11 @@ use powersync_sqlite_nostd::{Connection, Context};
 use sqlite::{ResultCode, Value};
 
 use crate::create_sqlite_text_fn;
-use crate::error::{PSResult, PowerSyncError};
+use crate::error::PowerSyncError;
 use crate::migrations::{LATEST_VERSION, powersync_migrate};
 use crate::schema::inspection::ExistingView;
 use crate::state::DatabaseState;
+use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
 
 // Used in old down migrations, do not remove.
@@ -26,7 +27,7 @@ extern "C" fn powersync_drop_view(
     let args = sqlite::args!(argc, argv);
     let name = args[0].text();
 
-    if let Err(e) = ExistingView::drop_by_name(ctx.db_handle(), name) {
+    if let Err(e) = ExistingView::drop_by_name(ctx.db_handle().into(), name) {
         e.apply_to_ctx("powersync_drop_view", ctx);
     }
 }
@@ -35,7 +36,7 @@ fn powersync_init_impl(
     ctx: *mut sqlite::context,
     _args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let db = ctx.db_handle();
+    let db = Database::from(ctx.db_handle());
     verify_in_transaction(db)?;
     powersync_migrate(ctx, LATEST_VERSION)?;
 
@@ -48,7 +49,7 @@ fn powersync_test_migration_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let db = ctx.db_handle();
+    let db = Database::from(ctx.db_handle());
     verify_in_transaction(db)?;
 
     let target_version = args[0].int();
@@ -67,7 +68,7 @@ fn powersync_clear_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let local_db = ctx.db_handle();
+    let local_db = Database::from(ctx.db_handle());
     verify_in_transaction(local_db)?;
     let state = unsafe { DatabaseState::from_context(&ctx) };
 
@@ -77,14 +78,14 @@ fn powersync_clear_impl(
         // With a soft clear, we want to delete public data while keeping internal data around. When
         // connect() is called with compatible JWTs yielding a large overlap of buckets, this can
         // speed up the next sync.
-        local_db.exec_safe("DELETE FROM ps_oplog; DELETE FROM ps_buckets")?;
+        local_db.exec_safe(c"DELETE FROM ps_oplog; DELETE FROM ps_buckets")?;
     } else {
         trigger_resync(local_db, state)?;
     }
 
     // language=SQLite
     local_db.exec_safe(
-        "\
+        c"\
 DELETE FROM ps_crud;
 DELETE FROM ps_untyped;
 DELETE FROM ps_updated_rows;
@@ -106,7 +107,7 @@ DELETE FROM ps_stream_subscriptions;
 
     let mut tables: Vec<String> = alloc::vec![];
 
-    while tables_stmt.step()? == ResultCode::ROW {
+    while tables_stmt.step()? {
         let name = tables_stmt.column_text(0)?;
         tables.push(name.to_string());
     }
@@ -121,7 +122,7 @@ DELETE FROM {table} WHERE rowid IN (SELECT rowid FROM {table} LIMIT 1);
 DELETE FROM {table};",
             table = quoted
         );
-        local_db.exec_safe(&delete_sql)?;
+        local_db.exec_safe_str(&delete_sql)?;
     }
 
     if let Some(schema) = state.view_schema() {
@@ -132,13 +133,9 @@ DELETE FROM {table};",
 
         for raw_table in &schema.raw_tables {
             if let Some(stmt) = &raw_table.clear {
-                local_db.exec_safe(&stmt).map_err(|e| {
-                    PowerSyncError::from_sqlite(
-                        local_db,
-                        e,
-                        format!("Clearing raw table {}", raw_table.name),
-                    )
-                })?;
+                local_db
+                    .exec_safe_str(&stmt)
+                    .map_err(|e| e.context(format!("Clearing raw table {}", raw_table.name)))?;
             }
         }
     }
@@ -146,7 +143,7 @@ DELETE FROM {table};",
     Ok(String::from(""))
 }
 
-fn trigger_resync(db: *mut sqlite::sqlite3, state: &DatabaseState) -> Result<(), PowerSyncError> {
+fn trigger_resync(db: Database, state: &DatabaseState) -> Result<(), PowerSyncError> {
     {
         let client = state.sync_client.borrow();
         if let Some(client) = client.as_ref()
@@ -158,14 +155,13 @@ fn trigger_resync(db: *mut sqlite::sqlite3, state: &DatabaseState) -> Result<(),
         }
     }
 
-    db.exec_safe("UPDATE ps_buckets SET last_applied_op = 0")
-        .into_db_result(db)?;
+    db.exec_safe(c"UPDATE ps_buckets SET last_applied_op = 0")?;
     Ok(Default::default())
 }
 
-fn clear_has_synced(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
-    db.exec_safe("DELETE FROM ps_sync_state;")?;
-    db.exec_safe("UPDATE ps_stream_subscriptions SET last_synced_at = NULL")?;
+fn clear_has_synced(db: Database) -> Result<(), PowerSyncError> {
+    db.exec_safe(c"DELETE FROM ps_sync_state;")?;
+    db.exec_safe(c"UPDATE ps_stream_subscriptions SET last_synced_at = NULL")?;
     Ok(())
 }
 
@@ -173,7 +169,7 @@ fn powersync_trigger_resync_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let local_db = ctx.db_handle();
+    let local_db = Database::from(ctx.db_handle());
     verify_in_transaction(local_db)?;
 
     let state = unsafe { DatabaseState::from_context(&ctx) };

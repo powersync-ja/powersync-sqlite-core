@@ -50,7 +50,7 @@ void main() {
         () => db.executeInTx('SELECT powersync_init()'),
         throwsA(isSqliteException(
           1,
-          'powersync_init: internal SQLite call returned ERROR: no such column: id',
+          'powersync_init: statement SELECT ifnull(max(id), 0) as version FROM ps_migration: internal SQLite call returned ERROR: no such column: id',
         )),
       );
     });

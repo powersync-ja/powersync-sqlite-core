@@ -19,7 +19,6 @@ use futures_lite::FutureExt;
 
 use crate::{
     error::{PowerSyncError, PowerSyncErrorCause},
-    ext::SafeManagedStmt,
     kv::client_id,
     state::DatabaseState,
     sync::{
@@ -37,8 +36,8 @@ use crate::{
         subscriptions::LocallyTrackedSubscription,
         sync_status::{ActiveStreamSubscription, TimestampMicros},
     },
+    utils::database::Database,
 };
-use powersync_sqlite_nostd::{self as sqlite, Connection};
 
 use super::{
     interface::{Instruction, LogSeverity, StreamingSyncRequest, SyncControlRequest, SyncEvent},
@@ -54,7 +53,7 @@ use super::{
 /// The client consumes no resources and prepares no statements until a sync iteration is
 /// initialized.
 pub struct SyncClient {
-    db: *mut sqlite::sqlite3,
+    db: Database,
     adapter: Rc<StorageAdapter>,
     db_state: Weak<DatabaseState>,
     /// The current [ClientState] (essentially an optional [StreamingSyncIteration]).
@@ -62,10 +61,7 @@ pub struct SyncClient {
 }
 
 impl SyncClient {
-    pub fn new(
-        db: *mut sqlite::sqlite3,
-        state: &Rc<DatabaseState>,
-    ) -> Result<Self, PowerSyncError> {
+    pub fn new(db: Database, state: &Rc<DatabaseState>) -> Result<Self, PowerSyncError> {
         let adapter = state.storage_adapter(db)?;
 
         Ok(Self {
@@ -164,7 +160,7 @@ impl SyncIterationHandle {
     /// Creates a new sync iteration in a pending state by preparing statements for
     /// [StorageAdapter] and setting up the initial downloading state for [StorageAdapter] .
     fn new(
-        db: *mut sqlite::sqlite3,
+        db: Database,
         options: StartSyncStream,
         adapter: Rc<StorageAdapter>,
         state: Weak<DatabaseState>,
@@ -245,7 +241,7 @@ impl<'a> ActiveEvent<'a> {
 }
 
 struct StreamingSyncIteration {
-    db: *mut sqlite::sqlite3,
+    db: Database,
     state: Weak<DatabaseState>,
     adapter: Rc<StorageAdapter>,
     options: StartSyncStream,

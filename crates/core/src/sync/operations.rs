@@ -1,13 +1,9 @@
 use alloc::format;
 use alloc::string::String;
 use num_traits::Zero;
-use powersync_sqlite_nostd::Connection;
-use powersync_sqlite_nostd::{self as sqlite, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite};
 
-use crate::{
-    error::{PSResult, PowerSyncError},
-    ext::SafeManagedStmt,
-};
+use crate::error::PowerSyncError;
 
 use super::Checksum;
 use super::line::OplogData;
@@ -84,7 +80,7 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
 
             let mut superseded = false;
 
-            while supersede_statement.step()? == ResultCode::ROW {
+            while supersede_statement.step()? {
                 // Superseded (deleted) a previous operation, add the checksum
                 let supersede_checksum = Checksum::from_i32(supersede_statement.column_int(1));
                 add_checksum += supersede_checksum;
@@ -156,20 +152,16 @@ INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?1, ?2)",
         } else if op == OpType::CLEAR {
             // Any remaining PUT operations should get an implicit REMOVE
             // language=SQLite
-            let clear_statement1 = db
-                .prepare_v2(
-                    "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
+            let clear_statement1 = db.prepare_v2(
+                "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id)
 SELECT row_type, row_id
 FROM ps_oplog
 WHERE bucket = ?1",
-                )
-                .into_db_result(db)?;
+            )?;
             clear_statement1.bind_int64(1, bucket_id)?;
             clear_statement1.exec()?;
 
-            let clear_statement2 = db
-                .prepare_v2("DELETE FROM ps_oplog WHERE bucket = ?1")
-                .into_db_result(db)?;
+            let clear_statement2 = db.prepare_v2("DELETE FROM ps_oplog WHERE bucket = ?1")?;
             clear_statement2.bind_int64(1, bucket_id)?;
             clear_statement2.exec()?;
 
