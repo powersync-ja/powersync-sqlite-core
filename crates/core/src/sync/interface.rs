@@ -11,6 +11,7 @@ use crate::schema::Schema;
 use crate::state::DatabaseState;
 use crate::sync::diagnostics::{DiagnosticOptions, DiagnosticsEvent};
 use crate::sync::subscriptions::{StreamKey, apply_subscriptions};
+use crate::utils::database::Database;
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::format;
@@ -251,7 +252,7 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
         argv: *mut *mut sqlite::value,
     ) -> () {
         let result = (|| -> Result<(), PowerSyncError> {
-            let db = ctx.db_handle();
+            let db = Database::from(ctx.db_handle());
             verify_in_transaction(db)?;
 
             let state = unsafe { DatabaseState::from_context(&ctx) };
@@ -429,7 +430,7 @@ fn powersync_offline_sync_status_impl(
     _args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
     let db_state = unsafe { DatabaseState::from_context(&ctx) };
-    let adapter = db_state.storage_adapter(ctx.db_handle())?;
+    let adapter = db_state.storage_adapter(ctx.db_handle().into())?;
 
     let state = adapter.offline_sync_state()?;
     let serialized = serde_json::to_string(&state).map_err(PowerSyncError::internal)?;

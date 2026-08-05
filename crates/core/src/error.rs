@@ -1,8 +1,13 @@
-use core::{error::Error, ffi::c_int, fmt::Display};
+use core::{
+    error::Error,
+    ffi::{CStr, c_int},
+    fmt::Display,
+};
 
 use alloc::{
-    borrow::Cow,
+    borrow::{Cow, ToOwned},
     boxed::Box,
+    ffi::{CString, NulError},
     string::{String, ToString},
 };
 use num_traits::FromPrimitive;
@@ -13,6 +18,8 @@ use crate::{
     bson::BsonError,
     constants::{CORE_PKG_VERSION, MIN_SQLITE_VERSION_NUMBER},
 };
+
+pub type Result<T> = core::result::Result<T, PowerSyncError>;
 
 /// A [RawPowerSyncError], but boxed.
 ///
@@ -36,12 +43,12 @@ impl PowerSyncError {
     pub fn from_sqlite(
         db: *mut sqlite3,
         code: ResultCode,
-        context: impl Into<Cow<'static, str>>,
+        stmt: Option<impl Into<SqlText>>,
     ) -> Self {
         RawPowerSyncError::Sqlite(SqliteError {
             code,
             errstr: Self::errstr(db),
-            context: Some(context.into()),
+            statement: stmt.map(|e| e.into()),
         })
         .into()
     }
@@ -108,6 +115,14 @@ impl PowerSyncError {
         return RawPowerSyncError::DownMigrationDidNotUpdateVersion { current_version }.into();
     }
 
+    pub fn context(self, context: String) -> Self {
+        RawPowerSyncError::Context {
+            inner: self,
+            context,
+        }
+        .into()
+    }
+
     /// Applies this error to a function result context, setting the error code and a descriptive
     /// text.
     pub fn apply_to_ctx(self, description: &str, ctx: *mut context) {
@@ -132,6 +147,8 @@ impl PowerSyncError {
             | SqliteVersionMismatch { .. } => ResultCode::ABORT,
             LocalDataError { .. } => ResultCode::CORRUPT,
             Internal { .. } => ResultCode::INTERNAL,
+            CString { .. } => ResultCode::FORMAT,
+            Context { inner, context: _ } => inner.sqlite_error_code(),
         }
     }
 
@@ -149,7 +166,7 @@ impl PowerSyncError {
         }
     }
 
-    pub fn check_sqlite3_version() -> Result<(), PowerSyncError> {
+    pub fn check_sqlite3_version() -> Result<()> {
         let actual_version = sqlite::libversion_number();
 
         if actual_version < MIN_SQLITE_VERSION_NUMBER {
@@ -180,14 +197,9 @@ impl From<RawPowerSyncError> for PowerSyncError {
     }
 }
 
-impl From<ResultCode> for PowerSyncError {
-    fn from(value: ResultCode) -> Self {
-        return RawPowerSyncError::Sqlite(SqliteError {
-            code: value,
-            errstr: None,
-            context: None,
-        })
-        .into();
+impl From<NulError> for PowerSyncError {
+    fn from(value: NulError) -> Self {
+        RawPowerSyncError::CString { inner: value }.into()
     }
 }
 
@@ -250,19 +262,47 @@ pub enum RawPowerSyncError {
     },
     #[error("This function may only be called in transactions.")]
     MustBeCalledInTransaction,
+    #[error("Allocating c string: {inner}")]
+    CString {
+        #[from]
+        inner: NulError,
+    },
+    #[error("{inner} (context: {context})")]
+    Context {
+        inner: PowerSyncError,
+        context: String,
+    },
 }
 
 #[derive(Debug)]
 pub struct SqliteError {
     code: ResultCode,
     errstr: Option<String>,
-    context: Option<Cow<'static, str>>,
+    statement: Option<SqlText>,
+}
+
+#[derive(Debug)]
+pub enum SqlText {
+    Rust(String),
+    C(CString),
+}
+
+impl From<&str> for SqlText {
+    fn from(value: &str) -> Self {
+        Self::Rust(value.to_string())
+    }
+}
+
+impl From<&CStr> for SqlText {
+    fn from(value: &CStr) -> Self {
+        Self::C(value.to_owned())
+    }
 }
 
 impl Display for SqliteError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(context) = &self.context {
-            write!(f, "{}: ", context)?;
+        if let Some(stmt) = &self.statement {
+            write!(f, "statement {}: ", stmt)?;
         }
 
         write!(f, "internal SQLite call returned {}", self.code)?;
@@ -274,20 +314,12 @@ impl Display for SqliteError {
     }
 }
 
-pub trait PSResult<T> {
-    fn into_db_result(self, db: *mut sqlite3) -> Result<T, PowerSyncError>;
-}
-
-impl<T> PSResult<T> for Result<T, ResultCode> {
-    fn into_db_result(self, db: *mut sqlite3) -> Result<T, PowerSyncError> {
-        self.map_err(|code| {
-            RawPowerSyncError::Sqlite(SqliteError {
-                code,
-                errstr: PowerSyncError::errstr(db),
-                context: None,
-            })
-            .into()
-        })
+impl Display for SqlText {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            SqlText::Rust(s) => f.write_str(s),
+            SqlText::C(cstring) => f.write_str(&cstring.to_string_lossy()),
+        }
     }
 }
 

@@ -11,12 +11,12 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use powersync_sqlite_nostd::{self as sqlite, Connection, Destructor, ResultCode};
+use powersync_sqlite_nostd::Destructor;
 
 use crate::{
     error::PowerSyncError,
     schema::{ColumnFilter, PendingStatement, PendingStatementValue, RawTable, SchemaTable},
-    utils::{InsertIntoCrud, SqlBuffer, WriteType},
+    utils::{InsertIntoCrud, SqlBuffer, WriteType, database::Database},
     views::table_columns_to_json_object,
 };
 
@@ -28,7 +28,7 @@ pub struct InferredTableStructure {
 impl InferredTableStructure {
     pub fn read_from_database(
         table_name: &str,
-        db: impl Connection,
+        db: Database,
         synced_columns: &Option<ColumnFilter>,
     ) -> Result<Self, PowerSyncError> {
         let stmt = db.prepare_v2("select name from pragma_table_info(?)")?;
@@ -37,7 +37,7 @@ impl InferredTableStructure {
         let mut has_id_column = false;
         let mut columns = vec![];
 
-        while let ResultCode::ROW = stmt.step()? {
+        while stmt.step()? {
             let name = stmt.column_text(0)?;
             if name == "id" {
                 has_id_column = true;
@@ -128,7 +128,7 @@ pub struct InferredSchemaCache {
 }
 
 impl InferredSchemaCache {
-    pub fn current_schema_version(db: *mut sqlite::sqlite3) -> Result<usize, PowerSyncError> {
+    pub fn current_schema_version(db: Database) -> Result<usize, PowerSyncError> {
         let version = db.prepare_v2("PRAGMA schema_version")?;
         version.step()?;
         let version = version.column_int64(0) as usize;
@@ -137,7 +137,7 @@ impl InferredSchemaCache {
 
     pub fn infer_put_statement(
         &self,
-        db: *mut sqlite::sqlite3,
+        db: Database,
         schema_version: usize,
         tbl: &RawTable,
     ) -> Result<Rc<PendingStatement>, PowerSyncError> {
@@ -146,7 +146,7 @@ impl InferredSchemaCache {
 
     pub fn infer_delete_statement(
         &self,
-        db: *mut sqlite::sqlite3,
+        db: Database,
         schema_version: usize,
         tbl: &RawTable,
     ) -> Result<Rc<PendingStatement>, PowerSyncError> {
@@ -155,7 +155,7 @@ impl InferredSchemaCache {
 
     fn with_entry(
         &self,
-        db: *mut sqlite::sqlite3,
+        db: Database,
         schema_version: usize,
         tbl: &RawTable,
         f: impl FnOnce(&mut SchemaCacheEntry) -> Rc<PendingStatement>,
@@ -186,7 +186,7 @@ pub struct SchemaCacheEntry {
 
 impl SchemaCacheEntry {
     fn infer(
-        db: *mut sqlite::sqlite3,
+        db: Database,
         schema_version: usize,
         table: &RawTable,
     ) -> Result<Self, PowerSyncError> {
@@ -221,7 +221,7 @@ impl SchemaCacheEntry {
 /// Generates a `CREATE TRIGGER` statement to capture writes on raw tables and to forward them to
 /// ps-crud.
 pub fn generate_raw_table_trigger(
-    db: impl Connection,
+    db: Database,
     table: &RawTable,
     trigger_name: &str,
     write: WriteType,

@@ -4,17 +4,17 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use powersync_sqlite_nostd::Context;
 use powersync_sqlite_nostd::{self as sqlite, Destructor};
-use powersync_sqlite_nostd::{Connection, Context};
 use serde::Serialize;
 use serde_json::json;
 use sqlite::ResultCode;
 
-use crate::error::{PSResult, PowerSyncError};
-use crate::ext::SafeManagedStmt;
+use crate::error::PowerSyncError;
 use crate::fix_data::apply_v035_fix;
 use crate::schema::inspection::ExistingView;
 use crate::sync::BucketPriority;
+use crate::utils::database::Database;
 
 pub const LATEST_VERSION: i32 = 14;
 
@@ -22,20 +22,18 @@ pub fn powersync_migrate(
     ctx: *mut sqlite::context,
     target_version: i32,
 ) -> Result<(), PowerSyncError> {
-    let local_db = ctx.db_handle();
+    let local_db = Database::from(ctx.db_handle());
 
     // language=SQLite
     local_db.exec_safe(
-        "\
+        c"\
 CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations TEXT)",
     )?;
 
     // language=SQLite
-    let current_version_stmt = local_db
-        .prepare_v2("SELECT ifnull(max(id), 0) as version FROM ps_migration")
-        .into_db_result(local_db)?;
-    let rc = current_version_stmt.step()?;
-    if rc != ResultCode::ROW {
+    let current_version_stmt =
+        local_db.prepare_v2("SELECT ifnull(max(id), 0) as version FROM ps_migration")?;
+    if !current_version_stmt.step()? {
         return Err(PowerSyncError::unknown_internal());
     }
 
@@ -52,38 +50,23 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
 
         let mut down_sql: Vec<String> = alloc::vec![];
 
-        while down_migrations_stmt.step()? == ResultCode::ROW {
+        while down_migrations_stmt.step()? {
             let sql = down_migrations_stmt.column_text(0)?;
             down_sql.push(sql.to_string());
         }
 
         for sql in down_sql {
-            let rs = local_db.exec_safe(&sql);
-            if let Err(code) = rs {
-                return Err(PowerSyncError::from_sqlite(
-                    local_db,
-                    code,
-                    format!(
-                        "Down migration failed for {:} {:} {:}",
-                        current_version,
-                        sql,
-                        local_db
-                            .errmsg()
-                            .unwrap_or(String::from("Conversion error"))
-                    ),
-                ));
-            }
+            local_db
+                .exec_safe_str(&sql)
+                .map_err(|e| e.context(format!("Down migration failed from {current_version}")))?;
         }
 
         // Refresh the version
         current_version_stmt.reset()?;
-        let rc = current_version_stmt.step()?;
-        if rc != ResultCode::ROW {
-            return Err(PowerSyncError::from_sqlite(
-                local_db,
-                rc,
-                "Down migration failed - could not get version",
-            ));
+        if !current_version_stmt.step()? {
+            return Err(current_version_stmt
+                .map_error(ResultCode::DONE)
+                .context("Down migration failed - could not get version".to_string()));
         }
         let new_version = current_version_stmt.column_int(0);
         if new_version >= current_version {
@@ -98,9 +81,8 @@ CREATE TABLE IF NOT EXISTS ps_migration(id INTEGER PRIMARY KEY, down_migrations 
 
     if current_version < 1 {
         // language=SQLite
-        local_db
-            .exec_safe(
-                "
+        local_db.exec_safe(
+            c"
 CREATE TABLE ps_oplog(
 bucket TEXT NOT NULL,
 op_id INTEGER NOT NULL,
@@ -131,35 +113,34 @@ CREATE TABLE ps_crud (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT);
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(1, NULL);
 ",
-            )
-            .into_db_result(local_db)?;
+        )?;
     }
 
     if current_version < 2 && target_version >= 2 {
         // language=SQLite
-        local_db.exec_safe("\
+        local_db.exec_safe(c"\
 CREATE TABLE ps_tx(id INTEGER PRIMARY KEY NOT NULL, current_tx INTEGER, next_tx INTEGER);
 INSERT INTO ps_tx(id, current_tx, next_tx) VALUES(1, NULL, 1);
 
 ALTER TABLE ps_crud ADD COLUMN tx_id INTEGER;
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(2, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 2', 'params', json_array()), json_object('sql', 'DROP TABLE ps_tx', 'params', json_array()), json_object('sql', 'ALTER TABLE ps_crud DROP COLUMN tx_id', 'params', json_array())));
-").into_db_result(local_db)?;
+")?;
     }
 
     if current_version < 3 && target_version >= 3 {
         // language=SQLite
-        local_db.exec_safe("\
+        local_db.exec_safe(c"\
 CREATE TABLE ps_kv(key TEXT PRIMARY KEY NOT NULL, value BLOB);
 INSERT INTO ps_kv(key, value) values('client_id', uuid());
 
 INSERT INTO ps_migration(id, down_migrations) VALUES(3, json_array(json_object('sql', 'DELETE FROM ps_migration WHERE id >= 3'), json_object('sql', 'DROP TABLE ps_kv')));
-  ").into_db_result(local_db)?;
+  ")?;
     }
 
     if current_version < 4 && target_version >= 4 {
         // language=SQLite
-        local_db.exec_safe("\
+        local_db.exec_safe(c"\
 ALTER TABLE ps_buckets ADD COLUMN op_checksum INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ps_buckets ADD COLUMN remove_operations INTEGER NOT NULL DEFAULT 0;
 
@@ -174,7 +155,7 @@ VALUES(4,
     json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN op_checksum'),
     json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN remove_operations')
   ));
-  ").into_db_result(local_db)?;
+  ")?;
     }
 
     if current_version < 5 && target_version >= 5 {
@@ -204,7 +185,7 @@ VALUES(4,
         // language=SQLite
         local_db
           .exec_safe(
-              "\
+              c"\
 ALTER TABLE ps_buckets RENAME TO ps_buckets_old;
 ALTER TABLE ps_oplog RENAME TO ps_oplog_old;
 
@@ -297,8 +278,7 @@ VALUES(5,
     json_object('sql', 'DELETE FROM ps_migration WHERE id >= 5')
   ));
   ",
-          )
-          .into_db_result(local_db)?;
+          )?;
     }
 
     if current_version < 6 && target_version >= 6 {
@@ -307,17 +287,15 @@ VALUES(5,
             apply_v035_fix(local_db)?;
         }
 
-        local_db
-            .exec_safe(
-                "\
+        local_db.exec_safe(
+            c"\
 INSERT INTO ps_migration(id, down_migrations)
 VALUES(6,
 json_array(
   json_object('sql', 'DELETE FROM ps_migration WHERE id >= 6')
 ));
 ",
-            )
-            .into_db_result(local_db)?;
+        )?;
     }
 
     if current_version < 7 && target_version >= 7 {
@@ -339,11 +317,11 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 7')
 ));
 ", SENTINEL_PRIORITY, SENTINEL_PRIORITY);
 
-        local_db.exec_safe(&stmt).into_db_result(local_db)?;
+        local_db.exec_safe_str(&stmt)?;
     }
 
     if current_version < 8 && target_version >= 8 {
-        let stmt = "\
+        let stmt = c"\
 ALTER TABLE ps_sync_state RENAME TO ps_sync_state_old;
 CREATE TABLE ps_sync_state (
   priority INTEGER NOT NULL PRIMARY KEY,
@@ -360,11 +338,11 @@ json_object('sql', 'DROP TABLE ps_sync_state_new'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 8')
 ));
 ";
-        local_db.exec_safe(&stmt).into_db_result(local_db)?;
+        local_db.exec_safe(&stmt)?;
     }
 
     if current_version < 9 && target_version >= 9 {
-        let stmt = "\
+        let stmt = c"\
 ALTER TABLE ps_buckets ADD COLUMN count_at_last INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE ps_buckets ADD COLUMN count_since_last INTEGER NOT NULL DEFAULT 0;
 INSERT INTO ps_migration(id, down_migrations) VALUES(9, json_array(
@@ -374,7 +352,7 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 9')
 ));
 ";
 
-        local_db.exec_safe(stmt).into_db_result(local_db)?;
+        local_db.exec_safe(stmt)?;
     }
 
     if current_version < 10 && target_version >= 10 {
@@ -383,18 +361,17 @@ json_object('sql', 'DELETE FROM ps_migration WHERE id >= 9')
         // by applying the PowerSync user schema after these internal migrations finish.
         local_db
             .exec_safe(
-                "\
+                c"\
 INSERT INTO ps_migration(id, down_migrations) VALUES (10, json_array(
   json_object('sql', 'SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated'''),
   json_object('sql', 'DELETE FROM ps_migration WHERE id >= 10')
 ));
         ",
-            )
-            .into_db_result(local_db)?;
+            )?;
     }
 
     if current_version < 11 && target_version >= 11 {
-        let stmt = "\
+        let stmt = c"\
 CREATE TABLE ps_stream_subscriptions (
   id INTEGER NOT NULL PRIMARY KEY,
   stream_name TEXT NOT NULL,
@@ -413,22 +390,22 @@ json_object('sql', 'DROP TABLE ps_stream_subscriptions'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 11')
 ));
 ";
-        local_db.exec_safe(stmt).into_db_result(local_db)?;
+        local_db.exec_safe(stmt)?;
     }
 
     if current_version < 12 && target_version >= 12 {
-        let stmt = "\
+        let stmt = c"\
 ALTER TABLE ps_buckets ADD COLUMN downloaded_size INTEGER NOT NULL DEFAULT 0;
 INSERT INTO ps_migration(id, down_migrations) VALUES(12, json_array(
 json_object('sql', 'ALTER TABLE ps_buckets DROP COLUMN downloaded_size'),
 json_object('sql', 'DELETE FROM ps_migration WHERE id >= 12')
 ));
 ";
-        local_db.exec_safe(stmt).into_db_result(local_db)?;
+        local_db.exec_safe(stmt)?;
     }
 
     if current_version < 13 && target_version >= 13 {
-        let up = "\
+        let up = c"\
 UPDATE ps_stream_subscriptions SET expires_at = expires_at * 1000000, last_synced_at = last_synced_at * 1000000;
 ALTER TABLE ps_sync_state RENAME TO ps_sync_state_old;
 CREATE TABLE ps_sync_state (
@@ -439,7 +416,7 @@ INSERT INTO ps_sync_state (priority, last_synced_at)
   SELECT priority, unixepoch(last_synced_at) * 1000000 FROM ps_sync_state_old;
 DROP TABLE ps_sync_state_old;
 ";
-        local_db.exec_safe(up).into_db_result(local_db)?;
+        local_db.exec_safe(up)?;
 
         const DOWN_STATEMENTS: &[&str] = &[
             "UPDATE ps_stream_subscriptions SET expires_at = expires_at / 1000000, last_synced_at = last_synced_at / 1000000",
@@ -491,7 +468,7 @@ DROP TABLE ps_sync_state_old;
         //
         // DROP COLUMN requires SQLite 3.35+; the extension already refuses to load below
         // MIN_SQLITE_VERSION_NUMBER (3.44), so this is safe in the up path.
-        let up = "\
+        let up = c"\
 DELETE FROM ps_kv
  WHERE key IN (
    'last_applied_checkpoint_request_id',
@@ -521,7 +498,7 @@ DELETE FROM ps_buckets WHERE name = '$local';
 
 ALTER TABLE ps_buckets DROP COLUMN target_op;
 ";
-        local_db.exec_safe(up).into_db_result(local_db)?;
+        local_db.exec_safe(up)?;
 
         // Downgrading needs to rebuild the old `$local` row from the new ps_kv state so older SDKs
         // can keep using their target-op based blocking behavior. In that model, `$local.last_op`

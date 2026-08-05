@@ -9,6 +9,7 @@ use sqlite::ResultCode;
 
 use crate::create_sqlite_text_fn;
 use crate::error::PowerSyncError;
+use crate::utils::database::Database;
 
 fn powersync_client_id_impl(
     ctx: *mut sqlite::context,
@@ -16,14 +17,14 @@ fn powersync_client_id_impl(
 ) -> Result<String, PowerSyncError> {
     let db = ctx.db_handle();
 
-    client_id(db)
+    client_id(db.into())
 }
 
-pub fn client_id(db: *mut sqlite::sqlite3) -> Result<String, PowerSyncError> {
+pub fn client_id(db: Database) -> Result<String, PowerSyncError> {
     // language=SQLite
     let statement = db.prepare_v2("select value from ps_kv where key = 'client_id'")?;
 
-    if statement.step()? == ResultCode::ROW {
+    if statement.step()? {
         let client_id = statement.column_text(0)?;
         Ok(client_id.to_string())
     } else {

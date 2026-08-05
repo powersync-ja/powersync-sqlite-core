@@ -7,14 +7,13 @@ use alloc::{ffi::CString, format, rc::Rc};
 use powersync_sqlite_nostd as sqlite;
 use sqlite::ResultCode;
 
-use crate::{error::PowerSyncError, state::DatabaseState};
+use crate::{error::PowerSyncError, state::DatabaseState, utils::database::Database};
 
 mod bson;
 mod constants;
 mod crud_vtab;
 mod diff;
 mod error;
-mod ext;
 mod fix_data;
 mod json_util;
 mod kv;
@@ -45,7 +44,7 @@ pub extern "C" fn sqlite3_powersync_init(
     debug_assert!(unsafe { *err_msg }.is_null());
     sqlite::EXTENSION_INIT2(api);
 
-    let result = init_extension(db);
+    let result = init_extension(Database::from(db));
 
     return if let Err(code) = result {
         if let Ok(desc) = CString::new(format!("Could not initialize PowerSync: {}", code)) {
@@ -59,27 +58,29 @@ pub extern "C" fn sqlite3_powersync_init(
     };
 }
 
-fn init_extension(db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
+fn init_extension(db: Database) -> Result<(), PowerSyncError> {
     PowerSyncError::check_sqlite3_version()?;
 
     let state = Rc::new(DatabaseState::new());
 
-    crate::version::register(db)?;
-    crate::uuid::register(db)?;
-    crate::diff::register(db)?;
-    crate::fix_data::register(db)?;
-    crate::json_util::register(db)?;
-    crate::view_admin::register(db, state.clone())?;
-    crate::kv::register(db)?;
-    crate::state::register(db, state.clone())?;
-    sync::register(db, state.clone())?;
-    update_hooks::register(db, state.clone())?;
+    db.use_inner(|db| {
+        crate::version::register(db)?;
+        crate::uuid::register(db)?;
+        crate::diff::register(db)?;
+        crate::fix_data::register(db)?;
+        crate::json_util::register(db)?;
+        crate::view_admin::register(db, state.clone())?;
+        crate::kv::register(db)?;
+        crate::state::register(db, state.clone())?;
+        sync::register(db, state.clone())?;
+        update_hooks::register(db, state.clone())?;
 
-    crate::schema::register(db, state.clone())?;
-    crate::pre_close_vtab::register(db, state.clone())?;
-    crate::crud_vtab::register(db, state)?;
+        crate::schema::register(db, state.clone())?;
+        crate::pre_close_vtab::register(db, state.clone())?;
+        crate::crud_vtab::register(db, state)?;
 
-    Ok(())
+        Ok(())
+    })
 }
 
 unsafe extern "C" {

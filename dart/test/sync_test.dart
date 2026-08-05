@@ -1509,8 +1509,8 @@ void _syncTests<T>({
         expect(
           () => syncLine(checkpoint),
           throwsA(
-            isSqliteException(
-                5, 'powersync_control: internal SQLite call returned BUSY'),
+            isSqliteException(5,
+                'powersync_control: statement DELETE FROM ps_buckets WHERE name = ?1 RETURNING id: internal SQLite call returned BUSY: database is locked'),
           ),
         );
         secondary.execute('commit');
@@ -1533,7 +1533,7 @@ void _syncTests<T>({
         expect(
           () => pushSyncData('a', '1', '1', 'PUT', {'col': 'hi'}),
           throwsA(isSqliteException(
-              5, 'powersync_control: internal SQLite call returned BUSY')),
+              5, contains('internal SQLite call returned BUSY'))),
         );
 
         // But we should be able to retry
@@ -1572,7 +1572,7 @@ void _syncTests<T>({
           () => pushCheckpointComplete(),
           throwsA(
             isSqliteException(
-                5, 'powersync_control: internal SQLite call returned BUSY'),
+                5, contains('internal SQLite call returned BUSY')),
           ),
         );
         secondary.execute('commit');
@@ -1867,9 +1867,9 @@ SELECT
         throwsA(
           isSqliteException(
             1299,
-            'powersync_control: replacing into users, id = my_user, data = {}: '
-            'internal SQLite call returned CONSTRAINT_NOTNULL: '
-            'NOT NULL constraint failed: users.name',
+            'powersync_control: statement INSERT OR REPLACE INTO users (id, name) VALUES (?, ?);: '
+            'internal SQLite call returned CONSTRAINT_NOTNULL: NOT NULL constraint failed: users.name '
+            '(context: replacing into users, id = my_user, data = {})',
           ),
         ),
       );

@@ -227,17 +227,6 @@ pub enum ColumnType {
     Null = 5,
 }
 
-pub fn open(filename: *const c_char) -> Result<ManagedConnection, ResultCode> {
-    let mut db = core::ptr::null_mut();
-    let rc =
-        ResultCode::from_i32(sqlite3_capi::open(filename, &mut db as *mut *mut sqlite3)).unwrap();
-    if rc == ResultCode::OK {
-        Ok(ManagedConnection { db })
-    } else {
-        Err(rc)
-    }
-}
-
 pub fn libversion() -> &'static str {
     unsafe { CStr::from_ptr(sqlite3_capi::libversion()) }
         .to_str()
@@ -250,10 +239,6 @@ pub fn libversion_number() -> c_int {
 
 pub fn randomness(blob: &mut [u8]) {
     sqlite3_capi::randomness(blob.len() as c_int, blob.as_mut_ptr() as *mut c_void)
-}
-
-pub struct ManagedConnection {
-    pub db: *mut sqlite3,
 }
 
 pub trait Connection {
@@ -285,144 +270,9 @@ pub trait Connection {
     fn errmsg(&self) -> Result<String, IntoStringError>;
     fn error_offset(&self) -> Option<usize>;
 
-    fn exec(&self, sql: &CStr) -> Result<ResultCode, ResultCode>;
-
-    fn exec_safe(&self, sql: &str) -> Result<ResultCode, ResultCode>;
-
-    fn next_stmt(&self, s: Option<*mut stmt>) -> Option<*mut stmt>;
-
-    fn prepare_v2(&self, sql: &str) -> Result<ManagedStmt, ResultCode>;
-
-    fn prepare_v3(&self, sql: &str, flags: u32) -> Result<ManagedStmt, ResultCode>;
-
-    fn set_authorizer(
-        &self,
-        x_auth: Option<XAuthorizer>,
-        user_data: *mut c_void,
-    ) -> Result<ResultCode, ResultCode>;
-
     fn rollback_hook(&self, callback: Option<xRollbackHook>, ctx: *mut c_void) -> *mut c_void;
 
     fn update_hook(&self, callback: Option<xUpdateHook>, ctx: *mut c_void) -> *mut c_void;
-
-    fn get_autocommit(&self) -> bool;
-}
-
-impl Connection for ManagedConnection {
-    fn changes64(&self) -> i64 {
-        self.db.changes64()
-    }
-
-    fn commit_hook(&self, callback: Option<xCommitHook>, user_data: *mut c_void) -> *mut c_void {
-        self.db.commit_hook(callback, user_data)
-    }
-
-    /// TODO: create_function is infrequent enough that we can pay the cost of the copy rather than
-    /// take a c_char
-    fn create_function_v2(
-        &self,
-        name: &str,
-        n_arg: i32,
-        flags: u32,
-        user_data: Option<*mut c_void>,
-        func: Option<xFunc>,
-        step: Option<xStep>,
-        final_func: Option<xFinal>,
-        destroy: Option<xDestroy>,
-    ) -> Result<ResultCode, ResultCode> {
-        self.db.create_function_v2(
-            name, n_arg, flags, user_data, func, step, final_func, destroy,
-        )
-    }
-
-    fn set_authorizer(
-        &self,
-        x_auth: Option<XAuthorizer>,
-        user_data: *mut c_void,
-    ) -> Result<ResultCode, ResultCode> {
-        self.db.set_authorizer(x_auth, user_data)
-    }
-
-    fn create_module_v2(
-        &self,
-        name: &str,
-        module: *const module,
-        user_data: Option<*mut c_void>,
-        destroy: Option<xDestroy>,
-    ) -> Result<ResultCode, ResultCode> {
-        self.db.create_module_v2(name, module, user_data, destroy)
-    }
-
-    #[inline]
-    fn next_stmt(&self, s: Option<*mut stmt>) -> Option<*mut stmt> {
-        self.db.next_stmt(s)
-    }
-
-    #[inline]
-    fn prepare_v2(&self, sql: &str) -> Result<ManagedStmt, ResultCode> {
-        self.db.prepare_v2(sql)
-    }
-
-    #[inline]
-    fn prepare_v3(&self, sql: &str, flags: u32) -> Result<ManagedStmt, ResultCode> {
-        self.db.prepare_v3(sql, flags)
-    }
-
-    #[inline]
-    fn exec(&self, sql: &CStr) -> Result<ResultCode, ResultCode> {
-        self.db.exec(sql)
-    }
-
-    #[inline]
-    fn exec_safe(&self, sql: &str) -> Result<ResultCode, ResultCode> {
-        self.db.exec_safe(sql)
-    }
-
-    #[inline]
-    fn errmsg(&self) -> Result<String, IntoStringError> {
-        self.db.errmsg()
-    }
-
-    #[inline]
-    fn errcode(&self) -> ResultCode {
-        self.db.errcode()
-    }
-
-    fn error_offset(&self) -> Option<usize> {
-        self.db.error_offset()
-    }
-
-    #[inline]
-    fn get_autocommit(&self) -> bool {
-        self.db.get_autocommit()
-    }
-
-    fn rollback_hook(&self, callback: Option<xRollbackHook>, ctx: *mut c_void) -> *mut c_void {
-        self.db.rollback_hook(callback, ctx)
-    }
-
-    fn update_hook(&self, callback: Option<xUpdateHook>, ctx: *mut c_void) -> *mut c_void {
-        self.db.update_hook(callback, ctx)
-    }
-}
-
-impl Drop for ManagedConnection {
-    fn drop(&mut self) {
-        // todo: iterate over all stmts and finalize them?
-        let rc = sqlite3_capi::close(self.db);
-        if rc != 0 {
-            // This seems aggressive...
-            // The alternative is to make users manually drop connections and manually finalize
-            // stmts :/
-            // Or we could not panic.. but then you will unknowningly have memory
-            // leaks in your app. The reason being that a failure to close the db
-            // does not release the memory of that db.
-            panic!(
-                "SQLite returned error {:?} when trying to close the db!",
-                rc
-            );
-        }
-    }
 }
 
 impl Connection for *mut sqlite3 {
@@ -482,79 +332,6 @@ impl Connection for *mut sqlite3 {
         }
     }
 
-    #[inline]
-    fn prepare_v2(&self, sql: &str) -> Result<ManagedStmt, ResultCode> {
-        let mut stmt = core::ptr::null_mut();
-        let mut tail = core::ptr::null();
-        let rc = ResultCode::from_i32(prepare_v2(
-            *self,
-            sql.as_ptr() as *const c_char,
-            sql.len() as i32,
-            &mut stmt as *mut *mut stmt,
-            &mut tail as *mut *const c_char,
-        ))
-        .unwrap();
-        if rc == ResultCode::OK {
-            Ok(ManagedStmt { stmt: stmt })
-        } else {
-            Err(rc)
-        }
-    }
-
-    #[inline]
-    fn prepare_v3(&self, sql: &str, flags: u32) -> Result<ManagedStmt, ResultCode> {
-        let mut stmt = core::ptr::null_mut();
-        let mut tail = core::ptr::null();
-        let rc = ResultCode::from_i32(prepare_v3(
-            *self,
-            sql.as_ptr() as *const c_char,
-            sql.len() as i32,
-            flags,
-            &mut stmt as *mut *mut stmt,
-            &mut tail as *mut *const c_char,
-        ))
-        .unwrap();
-        if rc == ResultCode::OK {
-            Ok(ManagedStmt { stmt: stmt })
-        } else {
-            Err(rc)
-        }
-    }
-
-    #[inline]
-    fn exec(&self, sql: &CStr) -> Result<ResultCode, ResultCode> {
-        convert_rc(exec(*self, sql.as_ptr()))
-    }
-
-    #[inline]
-    fn exec_safe(&self, sql: &str) -> Result<ResultCode, ResultCode> {
-        if let Ok(sql) = CString::new(sql) {
-            convert_rc(exec(*self, sql.as_ptr()))
-        } else {
-            return Err(ResultCode::NOMEM);
-        }
-    }
-
-    #[inline]
-    fn next_stmt(&self, s: Option<*mut stmt>) -> Option<*mut stmt> {
-        let s = if let Some(s) = s {
-            s
-        } else {
-            core::ptr::null_mut()
-        };
-
-        let ptr = next_stmt(*self, s);
-        if ptr.is_null() { None } else { Some(ptr) }
-    }
-
-    fn set_authorizer(
-        &self,
-        x_auth: Option<XAuthorizer>,
-        user_data: *mut c_void,
-    ) -> Result<ResultCode, ResultCode> {
-        convert_rc(set_authorizer(*self, x_auth, user_data))
-    }
-
     fn errmsg(&self) -> Result<String, IntoStringError> {
         errmsg(*self).into_string()
     }
@@ -568,10 +345,6 @@ impl Connection for *mut sqlite3 {
             -1 => None,
             other => Some(other as usize),
         }
-    }
-
-    fn get_autocommit(&self) -> bool {
-        get_autocommit(*self) != 0
     }
 
     fn rollback_hook(&self, callback: Option<xRollbackHook>, ctx: *mut c_void) -> *mut c_void {
@@ -638,8 +411,8 @@ impl ManagedStmt {
     }
 
     #[inline]
-    pub fn column_type(&self, i: i32) -> Result<ColumnType, ResultCode> {
-        ColumnType::from_i32(column_type(self.stmt, i)).ok_or(ResultCode::NULL)
+    pub fn column_type(&self, i: i32) -> ColumnType {
+        ColumnType::from_i32(column_type(self.stmt, i)).unwrap_or(ColumnType::Null)
     }
 
     #[inline]

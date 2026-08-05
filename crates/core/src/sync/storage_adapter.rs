@@ -1,12 +1,11 @@
 use core::fmt::Display;
 
 use alloc::{rc::Rc, string::ToString, vec::Vec};
-use powersync_sqlite_nostd::{self as sqlite, Connection, ManagedStmt, ResultCode};
+use powersync_sqlite_nostd::{self as sqlite};
 use serde::Serialize;
 
 use crate::{
-    error::{PSResult, PowerSyncError},
-    ext::SafeManagedStmt,
+    error::PowerSyncError,
     pre_close_vtab::ensure_has_internal_close_vtab,
     schema::Schema,
     state::DatabaseState,
@@ -20,7 +19,10 @@ use crate::{
             ActiveStreamSubscription, DownloadSyncStatus, SyncPriorityStatus, TimestampMicros,
         },
     },
-    utils::{JsonString, column_nullable},
+    utils::{
+        JsonString,
+        database::{Database, Statement},
+    },
 };
 
 use super::{
@@ -42,24 +44,23 @@ pub const TARGET_CHECKPOINT_REQUEST_ID_KEY: &str = "target_checkpoint_request_id
 /// in `streaming_sync.rs` easier to read. It also allows caching some prepared statements that are
 /// used frequently as an optimization, but we're not taking advantage of that yet.
 pub struct StorageAdapter {
-    pub db: *mut sqlite::sqlite3,
-    pub progress_stmt: ManagedStmt,
-    time_stmt: ManagedStmt,
-    delete_subscription: ManagedStmt,
-    update_subscription: ManagedStmt,
+    pub db: Database,
+    pub progress_stmt: Statement,
+    time_stmt: Statement,
+    delete_subscription: Statement,
+    update_subscription: Statement,
 }
 
 impl StorageAdapter {
-    pub fn new(db: *mut sqlite::sqlite3) -> Result<Self, PowerSyncError> {
+    pub fn new(db: Database) -> Result<Self, PowerSyncError> {
         // The cached statements here prevent sqlite3_close from completing. sqlite3_close invokes
         // the xDisconnect callback on attached virtual tables, which we use to implement a
         // "pre-close hook". See `pre_close_vtab.rs` for more details on how that works.
         ensure_has_internal_close_vtab(db)?;
 
         // language=SQLite
-        let progress = db
-            .prepare_v2("SELECT name, count_at_last, count_since_last FROM ps_buckets")
-            .into_db_result(db)?;
+        let progress =
+            db.prepare_v2("SELECT name, count_at_last, count_since_last FROM ps_buckets")?;
 
         // language=SQLite
         let time = db.prepare_v2("SELECT CAST(unixepoch('subsec') * 1000000 as integer)")?;
@@ -85,12 +86,11 @@ impl StorageAdapter {
         // language=SQLite
         let statement = self
             .db
-            .prepare_v2("SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0")
-            .into_db_result(self.db)?;
+            .prepare_v2("SELECT name, last_op FROM ps_buckets WHERE pending_delete = 0")?;
 
         let mut requests = Vec::<BucketRequest>::new();
 
-        while statement.step()? == ResultCode::ROW {
+        while statement.step()? {
             let bucket_name = statement.column_text(0)?.to_string();
             let last_op = statement.column_int64(1);
 
@@ -106,13 +106,12 @@ impl StorageAdapter {
     pub fn offline_sync_state(&self) -> Result<DownloadSyncStatus, PowerSyncError> {
         let priority_items = {
             // language=SQLite
-            let statement = self
-                .db
-                .prepare_v2("SELECT priority, last_synced_at FROM ps_sync_state ORDER BY priority")
-                .into_db_result(self.db)?;
+            let statement = self.db.prepare_v2(
+                "SELECT priority, last_synced_at FROM ps_sync_state ORDER BY priority",
+            )?;
 
             let mut items = Vec::<SyncPriorityStatus>::new();
-            while statement.step()? == ResultCode::ROW {
+            while statement.step()? {
                 let priority = BucketPriority {
                     number: statement.column_int(0),
                 };
@@ -147,11 +146,11 @@ impl StorageAdapter {
     pub fn delete_buckets<'a>(
         &self,
         buckets: impl IntoIterator<Item = &'a str>,
-    ) -> Result<(), ResultCode> {
+    ) -> Result<(), PowerSyncError> {
         // Prepare statements lazily, this method may be called without any buckets to delete.
-        let mut delete_bucket_returning_id = None::<ManagedStmt>;
-        let mut mark_updated = None::<ManagedStmt>;
-        let mut delete_oplog = None::<ManagedStmt>;
+        let mut delete_bucket_returning_id = None::<Statement>;
+        let mut mark_updated = None::<Statement>;
+        let mut delete_oplog = None::<Statement>;
 
         for bucket in buckets {
             let delete_bucket_returning_id = match delete_bucket_returning_id {
@@ -163,7 +162,7 @@ impl StorageAdapter {
             };
 
             delete_bucket_returning_id.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
-            if let ResultCode::ROW = delete_bucket_returning_id.step()? {
+            if delete_bucket_returning_id.step()? {
                 let bucket_id = delete_bucket_returning_id.column_int64(0);
 
                 let mark_updated = match mark_updated {
@@ -195,8 +194,8 @@ WHERE bucket = ?1",
         Ok(())
     }
 
-    pub fn step_progress(&'_ self) -> Result<Option<PersistedBucketProgress<'_>>, ResultCode> {
-        if self.progress_stmt.step()? == ResultCode::ROW {
+    pub fn step_progress(&'_ self) -> Result<Option<PersistedBucketProgress<'_>>, PowerSyncError> {
+        if self.progress_stmt.step()? {
             let bucket = self.progress_stmt.column_text(0)?;
             let count_at_last = self.progress_stmt.column_int64(1);
             let count_since_last = self.progress_stmt.column_int64(2);
@@ -215,8 +214,7 @@ WHERE bucket = ?1",
 
     pub fn reset_progress(&self) -> Result<(), PowerSyncError> {
         self.db
-            .exec_safe("UPDATE ps_buckets SET count_since_last = 0, count_at_last = 0;")
-            .into_db_result(self.db)?;
+            .exec_safe(c"UPDATE ps_buckets SET count_since_last = 0, count_at_last = 0;")?;
         Ok(())
     }
 
@@ -224,19 +222,16 @@ WHERE bucket = ?1",
         // We do an ON CONFLICT UPDATE simply so that the RETURNING bit works for existing rows.
         // We can consider splitting this into separate SELECT and INSERT statements.
         // language=SQLite
-        let bucket_statement = self
-            .db
-            .prepare_v2(
-                "INSERT INTO ps_buckets(name)
+        let bucket_statement = self.db.prepare_v2(
+            "INSERT INTO ps_buckets(name)
                             VALUES(?)
                         ON CONFLICT DO UPDATE
                             SET last_applied_op = last_applied_op
                         RETURNING id, last_applied_op",
-            )
-            .into_db_result(self.db)?;
+        )?;
         bucket_statement.bind_text(1, bucket, sqlite::Destructor::STATIC)?;
-        let res = bucket_statement.step()?;
-        debug_assert_eq!(res, ResultCode::ROW);
+        let has_row = bucket_statement.step()?;
+        debug_assert!(has_row);
 
         let bucket_id = bucket_statement.column_int64(0);
         let last_applied_op = bucket_statement.column_int64(1);
@@ -267,8 +262,7 @@ WHERE bucket = ?1",
 
         let update_bucket = self
             .db
-            .prepare_v2("UPDATE ps_buckets SET last_op = ? WHERE name = ?")
-            .into_db_result(self.db)?;
+            .prepare_v2("UPDATE ps_buckets SET last_op = ? WHERE name = ?")?;
 
         for bucket in checkpoint.buckets.values() {
             if bucket.is_in_priority(priority) {
@@ -335,7 +329,7 @@ WHERE bucket = ?1",
                 // partial completions.
                 let update = self.db.prepare_v2(
                     "UPDATE ps_buckets SET count_since_last = 0, count_at_last = ? WHERE name = ?",
-                ).into_db_result(self.db)?;
+                )?;
 
                 for bucket in checkpoint.buckets.values() {
                     if let Some(count) = bucket.count {
@@ -369,7 +363,7 @@ WHERE bucket = ?1",
             .db
             .prepare_v2("SELECT * FROM ps_stream_subscriptions WHERE ttl IS NOT NULL;")?;
 
-        while let ResultCode::ROW = stmt.step()? {
+        while stmt.step()? {
             let subscription = Self::read_stream_subscription(&stmt)?;
 
             subscriptions.push(RequestedStreamSubscription {
@@ -389,7 +383,7 @@ WHERE bucket = ?1",
         })
     }
 
-    pub fn now(&self) -> Result<TimestampMicros, ResultCode> {
+    pub fn now(&self) -> Result<TimestampMicros, PowerSyncError> {
         self.time_stmt.step()?;
         let res = TimestampMicros(self.time_stmt.column_int64(0));
         self.time_stmt.reset()?;
@@ -398,7 +392,7 @@ WHERE bucket = ?1",
     }
 
     fn read_stream_subscription(
-        stmt: &ManagedStmt,
+        stmt: &Statement,
     ) -> Result<LocallyTrackedSubscription, PowerSyncError> {
         let raw_params = stmt.column_text(5)?;
 
@@ -407,17 +401,16 @@ WHERE bucket = ?1",
             stream_name: stmt.column_text(1)?.to_string(),
             active: stmt.column_int(2) != 0,
             is_default: stmt.column_int(3) != 0,
-            local_priority: column_nullable(&stmt, 4, || {
-                BucketPriority::try_from(stmt.column_int(4))
-            })?,
+            local_priority: stmt
+                .column_nullable(4, || BucketPriority::try_from(stmt.column_int(4)))?,
             local_params: if raw_params == "null" {
                 None
             } else {
                 Some(JsonString::from_string(stmt.column_text(5)?.to_string())?)
             },
-            ttl: column_nullable(&stmt, 6, || Ok(stmt.column_int64(6)))?,
-            expires_at: column_nullable(&stmt, 7, || Ok(stmt.column_int64(7)))?,
-            last_synced_at: column_nullable(&stmt, 8, || Ok(stmt.column_int64(8)))?,
+            ttl: stmt.column_nullable(6, || Ok(stmt.column_int64(6)))?,
+            expires_at: stmt.column_nullable(7, || Ok(stmt.column_int64(7)))?,
+            last_synced_at: stmt.column_nullable(8, || Ok(stmt.column_int64(8)))?,
         })
     }
 
@@ -454,7 +447,7 @@ WHERE bucket = ?1",
             .db
             .prepare_v2("SELECT * FROM ps_stream_subscriptions ORDER BY id ASC")?;
 
-        while stmt.step()? == ResultCode::ROW {
+        while stmt.step()? {
             action(Self::read_stream_subscription(&stmt)?);
         }
         Ok(())
@@ -468,7 +461,7 @@ WHERE bucket = ?1",
         let stmt = self.db.prepare_v2("INSERT INTO ps_stream_subscriptions (stream_name, active, is_default) VALUES (?, TRUE, TRUE) RETURNING *;")?;
         stmt.bind_text(1, &stream.name, sqlite::Destructor::STATIC)?;
 
-        if stmt.step()? == ResultCode::ROW {
+        if stmt.step()? {
             Self::read_stream_subscription(&stmt)
         } else {
             Err(PowerSyncError::unknown_internal())
@@ -597,7 +590,7 @@ RETURNING value",
             sqlite::Destructor::STATIC,
         )?;
 
-        if statement.step()? == ResultCode::ROW {
+        if statement.step()? {
             Ok(statement.column_int64(0))
         } else {
             Err(PowerSyncError::unknown_internal())
@@ -642,11 +635,10 @@ RETURNING value",
     fn read_i64_kv(&self, key: &'static str) -> Result<Option<i64>, PowerSyncError> {
         let statement = self
             .db
-            .prepare_v2("SELECT value FROM ps_kv WHERE key = ?1")
-            .into_db_result(self.db)?;
+            .prepare_v2("SELECT value FROM ps_kv WHERE key = ?1")?;
         statement.bind_text(1, key, sqlite::Destructor::STATIC)?;
 
-        Ok(if statement.step()? == ResultCode::ROW {
+        Ok(if statement.step()? {
             Some(statement.column_int64(0))
         } else {
             None

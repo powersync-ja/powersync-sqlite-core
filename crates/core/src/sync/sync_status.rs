@@ -12,7 +12,6 @@ use core::{
     hash::{BuildHasher, Hash},
     ops::AddAssign,
 };
-use powersync_sqlite_nostd::ResultCode;
 use rustc_hash::FxBuildHasher;
 use serde::{
     Serialize,
@@ -20,6 +19,7 @@ use serde::{
 };
 
 use crate::{
+    error::PowerSyncError,
     sync::{
         checkpoint::OwnedBucketChecksum, storage_adapter::StorageAdapter,
         subscriptions::LocallyTrackedSubscription,
@@ -358,7 +358,7 @@ impl SyncDownloadProgress {
     pub fn for_checkpoint<'a>(
         checkpoint: &OwnedCheckpoint,
         adapter: &StorageAdapter,
-    ) -> Result<SyncProgressFromCheckpoint, ResultCode> {
+    ) -> Result<SyncProgressFromCheckpoint, PowerSyncError> {
         let mut buckets = BTreeMap::<String, BucketProgress>::new();
         let mut needs_reset = false;
         for bucket in checkpoint.buckets.values() {

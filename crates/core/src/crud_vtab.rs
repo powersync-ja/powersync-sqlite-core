@@ -7,12 +7,10 @@ use core::ffi::{CStr, c_char, c_int, c_void};
 use serde::Serialize;
 use serde_json::value::RawValue;
 
-use powersync_sqlite_nostd::ManagedStmt;
 use powersync_sqlite_nostd::{self as sqlite, ColumnType};
-use sqlite::{Connection, ResultCode, Value};
+use sqlite::{ResultCode, Value};
 
 use crate::error::PowerSyncError;
-use crate::ext::SafeManagedStmt;
 use crate::schema::TableInfoFlags;
 use crate::state::DatabaseState;
 use crate::sync::storage_adapter::{
@@ -20,6 +18,7 @@ use crate::sync::storage_adapter::{
     TARGET_CHECKPOINT_REQUEST_ID_KEY,
 };
 use crate::utils::MAX_OP_ID;
+use crate::utils::database::{Database, Statement};
 use crate::vtab_util::*;
 
 const MANUAL_NAME: &CStr = c"powersync_crud_";
@@ -42,7 +41,7 @@ const SIMPLE_NAME: &CStr = c"powersync_crud";
 #[repr(C)]
 struct VirtualTable {
     base: sqlite::vtab,
-    db: *mut sqlite::sqlite3,
+    db: Database,
     current_tx: Option<ActiveCrudTransaction>,
     is_simple: bool,
     state: Rc<DatabaseState>,
@@ -60,13 +59,13 @@ enum CrudTransactionMode {
 
 #[derive(Default)]
 struct ManualCrudTransactionMode {
-    stmt: Option<ManagedStmt>,
+    stmt: Option<Statement>,
 }
 
 #[derive(Default)]
 struct SimpleCrudTransactionMode {
-    stmt: Option<ManagedStmt>,
-    set_updated_rows: Option<ManagedStmt>,
+    stmt: Option<Statement>,
+    set_updated_rows: Option<Statement>,
     had_writes: bool,
 }
 
@@ -188,7 +187,7 @@ impl VirtualTable {
         // language=SQLite
         let statement =
             db.prepare_v2("UPDATE ps_tx SET next_tx = next_tx + 1 WHERE id = 1 RETURNING next_tx")?;
-        let tx_id = if statement.step()? == ResultCode::ROW {
+        let tx_id = if statement.step()? {
             statement.column_int64(0) - 1
         } else {
             return Err(PowerSyncError::unknown_internal());
@@ -212,7 +211,7 @@ impl VirtualTable {
 }
 
 impl ManualCrudTransactionMode {
-    fn raw_crud_statement(&mut self, db: *mut sqlite::sqlite3) -> Result<&ManagedStmt, ResultCode> {
+    fn raw_crud_statement(&mut self, db: Database) -> Result<&Statement, PowerSyncError> {
         prepare_lazy(&mut self.stmt, || {
             const SQL: &str = formatcp!(
                 "\
@@ -223,39 +222,33 @@ SELECT * FROM insertion WHERE (NOT (?3 & {})) OR data->>'op' != 'PATCH' OR data-
                 TableInfoFlags::IGNORE_EMPTY_UPDATE
             );
 
-            db.prepare_v3(SQL, 0)
+            db.prepare_v2(SQL)
         })
     }
 }
 
 impl SimpleCrudTransactionMode {
-    fn raw_crud_statement(&mut self, db: *mut sqlite::sqlite3) -> Result<&ManagedStmt, ResultCode> {
+    fn raw_crud_statement(&mut self, db: Database) -> Result<&Statement, PowerSyncError> {
         prepare_lazy(&mut self.stmt, || {
             // language=SQLite
-            db.prepare_v3("INSERT INTO ps_crud(tx_id, data) VALUES (?, ?)", 0)
+            db.prepare_v2("INSERT INTO ps_crud(tx_id, data) VALUES (?, ?)")
         })
     }
 
-    fn set_updated_rows_statement(
-        &mut self,
-        db: *mut sqlite::sqlite3,
-    ) -> Result<&ManagedStmt, ResultCode> {
+    fn set_updated_rows_statement(&mut self, db: Database) -> Result<&Statement, PowerSyncError> {
         prepare_lazy(&mut self.set_updated_rows, || {
             // language=SQLite
-            db.prepare_v3(
-                "INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?, ?)",
-                0,
-            )
+            db.prepare_v2("INSERT OR IGNORE INTO ps_updated_rows(row_type, row_id) VALUES(?, ?)")
         })
     }
 
-    fn record_local_write(&mut self, db: *mut sqlite::sqlite3) -> Result<(), ResultCode> {
+    fn record_local_write(&mut self, db: Database) -> Result<(), PowerSyncError> {
         if !self.had_writes {
             // Also clear the seen/applied high-water marks: checkpoint request ids observed before
             // this write can't acknowledge it, and stale values may predate a request counter
             // restart. Keeping them around could open the apply gate for a newly allocated target
             // id that compares below a stale seen value.
-            db.exec_safe(formatcp!(
+            db.exec_safe_str(formatcp!(
                 "INSERT OR REPLACE INTO ps_kv(key, value) VALUES('{TARGET_CHECKPOINT_REQUEST_ID_KEY}', {MAX_OP_ID});
 DELETE FROM ps_kv WHERE key IN ('{LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY}', '{LAST_APPLIED_CHECKPOINT_REQUEST_ID_KEY}')"
             ))?;
@@ -268,9 +261,9 @@ DELETE FROM ps_kv WHERE key IN ('{LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY}', '{LAST_
 
 /// A variant of `Option.get_or_insert` that handles insertions returning errors.
 fn prepare_lazy(
-    stmt: &mut Option<ManagedStmt>,
-    prepare: impl FnOnce() -> Result<ManagedStmt, ResultCode>,
-) -> Result<&ManagedStmt, ResultCode> {
+    stmt: &mut Option<Statement>,
+    prepare: impl FnOnce() -> Result<Statement, PowerSyncError>,
+) -> Result<&Statement, PowerSyncError> {
     if let None = stmt {
         *stmt = Some(prepare()?);
     }
@@ -312,7 +305,7 @@ extern "C" fn connect(
                 zErrMsg: core::ptr::null_mut(),
             },
             state: DatabaseState::clone_from(aux),
-            db,
+            db: db.into(),
             current_tx: None,
             is_simple,
         }));

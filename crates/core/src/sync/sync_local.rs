@@ -5,7 +5,7 @@ use alloc::string::{String, ToString};
 use serde::Serialize;
 use serde::ser::SerializeMap;
 
-use crate::error::{PSResult, PowerSyncError};
+use crate::error::PowerSyncError;
 use crate::schema::inspection::ExistingTable;
 use crate::schema::{
     InferredSchemaCache, PendingStatement, PendingStatementValue, RawTable, Schema,
@@ -17,11 +17,9 @@ use crate::sync::storage_adapter::{
 };
 use crate::sync::sync_status::TimestampMicros;
 use crate::utils::SqlBuffer;
+use crate::utils::database::{Database, Statement};
 use const_format::formatcp;
-use powersync_sqlite_nostd::{self as sqlite, Destructor, ManagedStmt};
-use powersync_sqlite_nostd::{Connection, ResultCode};
-
-use crate::ext::SafeManagedStmt;
+use powersync_sqlite_nostd::{self as sqlite, Destructor};
 
 pub struct PartialSyncOperation<'a> {
     /// The lowest priority part of the partial sync operation.
@@ -33,7 +31,7 @@ pub struct PartialSyncOperation<'a> {
 
 pub struct SyncOperation<'a> {
     state: &'a DatabaseState,
-    db: *mut sqlite::sqlite3,
+    db: Database,
     schema: ParsedDatabaseSchema<'a>,
     partial: Option<PartialSyncOperation<'a>>,
     time: TimestampMicros,
@@ -42,7 +40,7 @@ pub struct SyncOperation<'a> {
 impl<'a> SyncOperation<'a> {
     pub fn new(
         state: &'a DatabaseState,
-        db: *mut sqlite::sqlite3,
+        db: Database,
         partial: Option<PartialSyncOperation<'a>>,
         time: TimestampMicros,
     ) -> Self {
@@ -78,12 +76,12 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
   AND CAST(target.value AS INTEGER) > COALESCE(CAST(seen.value AS INTEGER), 0)"
             ))?;
 
-            if statement.step()? == ResultCode::ROW {
+            if statement.step()? {
                 return Ok(false);
             }
 
             let statement = self.db.prepare_v2("SELECT 1 FROM ps_crud LIMIT 1")?;
-            if statement.step()? != ResultCode::DONE {
+            if statement.step()? {
                 return Ok(false);
             }
         }
@@ -107,16 +105,16 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
         // We cache the last insert and delete statements for each row
         struct CachedStatement {
             table: String,
-            statement: ManagedStmt,
+            statement: Statement,
         }
 
         let mut last_insert = None::<CachedStatement>;
         let mut last_delete = None::<CachedStatement>;
 
-        let mut untyped_delete_statement: Option<ManagedStmt> = None;
-        let mut untyped_insert_statement: Option<ManagedStmt> = None;
+        let mut untyped_delete_statement: Option<Statement> = None;
+        let mut untyped_insert_statement: Option<Statement> = None;
 
-        while statement.step().into_db_result(self.db)? == ResultCode::ROW {
+        while statement.step()? {
             let type_name = statement.column_text(0)?;
             let id = statement.column_text(1)?;
             let data = statement.column_text(2);
@@ -136,13 +134,13 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
 
                             let rest = stmt.render_rest_object(json_object)?;
                             stmt.bind_for_put(id, &json_object, &rest)?;
-                            stmt.exec(self.db, type_name, id, Some(&parsed))?;
+                            stmt.exec(type_name, id, Some(&parsed))?;
                         }
                         Err(_) => {
                             let stmt =
                                 raw.delete_statement(self.db, schema_version, schema_cache)?;
                             stmt.bind_for_delete(id)?;
-                            stmt.exec(self.db, type_name, id, None)?;
+                            stmt.exec(type_name, id, None)?;
                         }
                     }
                 } else {
@@ -159,8 +157,7 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
                                 statement.quote_internal_name(type_name, false);
                                 statement.push_str(" WHERE id = ?");
 
-                                let statement =
-                                    self.db.prepare_v2(&statement.sql).into_db_result(self.db)?;
+                                let statement = self.db.prepare_v2(&statement.sql)?;
 
                                 &last_delete
                                     .insert(CachedStatement {
@@ -185,8 +182,7 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
                                 statement.quote_internal_name(type_name, false);
                                 statement.push_str("(id, data) VALUES (?, ?)");
 
-                                let statement =
-                                    self.db.prepare_v2(&statement.sql).into_db_result(self.db)?;
+                                let statement = self.db.prepare_v2(&statement.sql)?;
 
                                 &last_insert
                                     .insert(CachedStatement {
@@ -206,17 +202,16 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
             } else {
                 if data.is_err() {
                     // DELETE
-                    let delete_statement = match &untyped_delete_statement {
-                        Some(stmt) => stmt,
-                        None => {
-                            // Prepare statement on first use
-                            untyped_delete_statement.insert(
-                                self.db
-                                    .prepare_v2("DELETE FROM ps_untyped WHERE type = ? AND id = ?")
-                                    .into_db_result(self.db)?,
-                            )
-                        }
-                    };
+                    let delete_statement =
+                        match &untyped_delete_statement {
+                            Some(stmt) => stmt,
+                            None => {
+                                // Prepare statement on first use
+                                untyped_delete_statement.insert(self.db.prepare_v2(
+                                    "DELETE FROM ps_untyped WHERE type = ? AND id = ?",
+                                )?)
+                            }
+                        };
 
                     delete_statement.reset()?;
                     delete_statement.bind_text(1, type_name, sqlite::Destructor::STATIC)?;
@@ -228,13 +223,9 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
                         Some(stmt) => stmt,
                         None => {
                             // Prepare statement on first use
-                            untyped_insert_statement.insert(
-                                self.db
-                                    .prepare_v2(
-                                        "REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)",
-                                    )
-                                    .into_db_result(self.db)?,
-                            )
+                            untyped_insert_statement.insert(self.db.prepare_v2(
+                                "REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)",
+                            )?)
                         }
                     };
 
@@ -258,14 +249,13 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
         self.schema.add_from_db(self.db)
     }
 
-    fn collect_full_operations(&self) -> Result<ManagedStmt, PowerSyncError> {
+    fn collect_full_operations(&self) -> Result<Statement, PowerSyncError> {
         Ok(match &self.partial {
             None => {
                 // Complete sync
                 // See dart/test/sync_local_performance_test.dart for an annotated version of this query.
-                self.db
-                    .prepare_v2(
-                        "\
+                self.db.prepare_v2(
+                    "\
 WITH updated_rows AS (
     SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
         CROSS JOIN ps_oplog AS b ON b.bucket = buckets.id
@@ -285,14 +275,11 @@ SELECT
     ) as data
     FROM updated_rows b
     GROUP BY b.row_type, b.row_id;",
-                    )
-                    .into_db_result(self.db)?
+                )?
             }
             Some(partial) => {
-                let stmt = self
-                    .db
-                    .prepare_v2(
-                        "\
+                let stmt = self.db.prepare_v2(
+                    "\
 -- 1. Filter oplog by the ops added but not applied yet (oplog b).
 --    We do not do any DISTINCT operation here, since that introduces a temp b-tree.
 --    We filter out duplicates using the GROUP BY below.
@@ -326,8 +313,7 @@ SELECT
     FROM updated_rows b
     -- Group for (2)
     GROUP BY b.row_type, b.row_id;",
-                    )
-                    .into_db_result(self.db)?;
+                )?;
                 stmt.bind_text(1, partial.args, Destructor::STATIC)?;
 
                 stmt
@@ -346,19 +332,17 @@ SELECT
                             SET last_applied_op = last_op
                             WHERE last_applied_op != last_op AND
                                 name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))",
-                    )                            .into_db_result(self.db)?;
+                    )?;
                 updated.bind_text(1, partial.args, Destructor::STATIC)?;
                 updated.exec()?;
             }
             None => {
                 // language=SQLite
-                self.db
-                    .exec_safe(
-                        "UPDATE ps_buckets
+                self.db.exec_safe(
+                    c"UPDATE ps_buckets
                                 SET last_applied_op = last_op
                                 WHERE last_applied_op != last_op",
-                    )
-                    .into_db_result(self.db)?;
+                )?;
             }
         }
 
@@ -369,9 +353,7 @@ SELECT
         let priority_code: i32 = match &self.partial {
             None => {
                 // language=SQLite
-                self.db
-                    .exec_safe("DELETE FROM ps_updated_rows")
-                    .into_db_result(self.db)?;
+                self.db.exec_safe(c"DELETE FROM ps_updated_rows")?;
                 BucketPriority::SENTINEL
             }
             Some(partial) => partial.priority,
@@ -384,18 +366,14 @@ SELECT
         // language=SQLite
         let stmt = self
             .db
-            .prepare_v2("DELETE FROM ps_sync_state WHERE priority < ?1;")
-            .into_db_result(self.db)?;
+            .prepare_v2("DELETE FROM ps_sync_state WHERE priority < ?1;")?;
         stmt.bind_int(1, priority_code)?;
         stmt.exec()?;
 
         // language=SQLite
-        let stmt = self
-            .db
-            .prepare_v2(
-                "INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, ?);",
-            )
-            .into_db_result(self.db)?;
+        let stmt = self.db.prepare_v2(
+            "INSERT OR REPLACE INTO ps_sync_state (priority, last_synced_at) VALUES (?, ?);",
+        )?;
         stmt.bind_int(1, priority_code)?;
         stmt.bind_int64(2, self.time.0)?;
         stmt.exec()?;
@@ -422,7 +400,7 @@ impl<'a> ParsedDatabaseSchema<'a> {
         }
     }
 
-    fn add_from_db(&mut self, db: *mut sqlite::sqlite3) -> Result<(), PowerSyncError> {
+    fn add_from_db(&mut self, db: Database) -> Result<(), PowerSyncError> {
         let tables = ExistingTable::list(db)?;
         for table in tables {
             if !table.local_only {
@@ -449,7 +427,7 @@ struct RawTableWithCachedStatements<'a> {
 
 impl<'a> RawTableWithCachedStatements<'a> {
     fn prepare_lazily(
-        db: *mut sqlite::sqlite3,
+        db: Database,
         slot: &mut Option<PreparedPendingStatement>,
         def: Rc<PendingStatement>,
     ) -> Result<&PreparedPendingStatement, PowerSyncError> {
@@ -464,7 +442,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
 
     fn put_statement(
         &'_ mut self,
-        db: *mut sqlite::sqlite3,
+        db: Database,
         schema_version: usize,
         cache: &InferredSchemaCache,
     ) -> Result<&'_ PreparedPendingStatement, PowerSyncError> {
@@ -480,7 +458,7 @@ impl<'a> RawTableWithCachedStatements<'a> {
 
     fn delete_statement(
         &'_ mut self,
-        db: *mut sqlite::sqlite3,
+        db: Database,
         schema_version: usize,
         cache: &InferredSchemaCache,
     ) -> Result<&'_ PreparedPendingStatement, PowerSyncError> {
@@ -512,17 +490,14 @@ impl<'a> ParsedSchemaTable<'a> {
 }
 
 struct PreparedPendingStatement {
-    stmt: ManagedStmt,
+    stmt: Statement,
     definition: Rc<PendingStatement>,
 }
 
 impl PreparedPendingStatement {
-    pub fn prepare(
-        db: *mut sqlite::sqlite3,
-        pending: Rc<PendingStatement>,
-    ) -> Result<Self, PowerSyncError> {
-        let stmt = db.prepare_v2(&pending.sql).into_db_result(db)?;
-        if stmt.bind_parameter_count() as usize != pending.params.len() {
+    pub fn prepare(db: Database, pending: Rc<PendingStatement>) -> Result<Self, PowerSyncError> {
+        let stmt = db.prepare_v2(&pending.sql)?;
+        if stmt.bind_parameter_count() != pending.params.len() {
             return Err(PowerSyncError::argument_error(format!(
                 "Statement {} has {} parameters, but {} values were provided as sources.",
                 &pending.sql,
@@ -658,21 +633,17 @@ impl PreparedPendingStatement {
     /// to insert.
     pub fn exec(
         &self,
-        db: *mut sqlite::sqlite3,
         table: &str,
         id: &str,
         data: Option<&serde_json::Value>,
     ) -> Result<(), PowerSyncError> {
-        match self.stmt.exec() {
-            Ok(_) => Ok(()),
-            Err(rc) => {
-                let context = match data {
-                    None => format!("deleting from {table}, id = {id}"),
-                    Some(data) => format!("replacing into {table}, id = {id}, data = {data}"),
-                };
+        self.stmt.exec().map_err(|e| {
+            let context = match data {
+                None => format!("deleting from {table}, id = {id}"),
+                Some(data) => format!("replacing into {table}, id = {id}, data = {data}"),
+            };
 
-                Err(PowerSyncError::from_sqlite(db, rc, context))
-            }
-        }
+            e.context(context)
+        })
     }
 }

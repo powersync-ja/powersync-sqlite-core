@@ -1,9 +1,11 @@
 use alloc::{rc::Rc, string::String, vec::Vec};
 use num_traits::Zero;
 
+use crate::error::PowerSyncError;
 use crate::sync::line::{BucketChecksum, BucketSubscriptionReason};
 use crate::sync::{BucketPriority, Checksum};
-use powersync_sqlite_nostd::{self as sqlite, Connection, ResultCode};
+use crate::utils::database::Database;
+use powersync_sqlite_nostd::{self as sqlite};
 
 /// A structure cloned from [BucketChecksum]s with an owned bucket name instead of one borrowed from
 /// a sync line.
@@ -47,8 +49,8 @@ pub struct ChecksumMismatch {
 pub fn validate_checkpoint<'a>(
     buckets: impl Iterator<Item = &'a OwnedBucketChecksum>,
     priority: Option<BucketPriority>,
-    db: *mut sqlite::sqlite3,
-) -> Result<Vec<ChecksumMismatch>, ResultCode> {
+    db: Database,
+) -> Result<Vec<ChecksumMismatch>, PowerSyncError> {
     // language=SQLite
     let statement = db.prepare_v2(
         "
@@ -63,13 +65,12 @@ FROM ps_buckets WHERE name = ?;",
         if bucket.is_in_priority(priority) {
             statement.bind_text(1, &bucket.bucket, sqlite::Destructor::STATIC)?;
 
-            let (add_checksum, oplog_checksum) = match statement.step()? {
-                ResultCode::ROW => {
-                    let add_checksum = Checksum::from_i32(statement.column_int(0));
-                    let oplog_checksum = Checksum::from_i32(statement.column_int(1));
-                    (add_checksum, oplog_checksum)
-                }
-                _ => (Checksum::zero(), Checksum::zero()),
+            let (add_checksum, oplog_checksum) = if statement.step()? {
+                let add_checksum = Checksum::from_i32(statement.column_int(0));
+                let oplog_checksum = Checksum::from_i32(statement.column_int(1));
+                (add_checksum, oplog_checksum)
+            } else {
+                (Checksum::zero(), Checksum::zero())
             };
 
             let actual = add_checksum + oplog_checksum;

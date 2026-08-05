@@ -14,11 +14,11 @@ use powersync_sqlite_nostd::Context;
 use sqlite::{Connection, ResultCode, Value};
 
 use crate::create_sqlite_text_fn;
-use crate::error::{PSResult, PowerSyncError};
-use crate::ext::ExtendedDatabase;
+use crate::error::PowerSyncError;
 use crate::schema::inspection::{ExistingTable, ExistingView};
 use crate::schema::table_info::Index;
 use crate::state::DatabaseState;
+use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
 use crate::views::{
     powersync_trigger_delete_sql, powersync_trigger_insert_sql, powersync_trigger_update_sql,
@@ -27,7 +27,7 @@ use crate::views::{
 
 use super::Schema;
 
-fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerSyncError> {
+fn update_tables(db: Database, schema: &Schema) -> Result<(), PowerSyncError> {
     let existing_tables = ExistingTable::list(db)?;
     let mut existing_tables = {
         let mut map = BTreeMap::new();
@@ -56,11 +56,10 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
         // New table.
         let quoted_internal_name = SqlBuffer::quote_identifier(&table.internal_name());
 
-        db.exec_safe(&format!(
+        db.exec_safe_str(&format!(
             "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
             quoted_internal_name
-        ))
-        .into_db_result(db)?;
+        ))?;
 
         if !table.local_only() {
             // MOVE data if any
@@ -73,8 +72,7 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
                     quoted_internal_name
                 ),
                 &table.name,
-            )
-            .into_db_result(db)?;
+            )?;
 
             // language=SQLite
             db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
@@ -91,8 +89,7 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
                     SqlBuffer::quote_identifier(&remaining.internal_name)
                 ),
                 &remaining.name,
-            )
-            .into_db_result(db)?;
+            )?;
         }
     }
 
@@ -103,7 +100,7 @@ fn update_tables(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerS
             "DROP TABLE {:}",
             SqlBuffer::quote_identifier(&remaining.internal_name)
         );
-        db.exec_safe(&q).into_db_result(db)?;
+        db.exec_safe_str(&q)?;
     }
 
     Ok(())
@@ -132,7 +129,7 @@ fn create_index_stmt(table_name: &str, index_name: &str, index: &Index) -> Strin
     sql.sql
 }
 
-fn update_indexes(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerSyncError> {
+fn update_indexes(db: Database, schema: &Schema) -> Result<(), PowerSyncError> {
     let mut statements: Vec<String> = alloc::vec![];
     let mut expected_index_names: Vec<String> = vec![];
 
@@ -152,7 +149,7 @@ fn update_indexes(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), Power
                     find_index.reset()?;
                     find_index.bind_text(1, &index_name, sqlite::Destructor::STATIC)?;
 
-                    let result = if let ResultCode::ROW = find_index.step()? {
+                    let result = if find_index.step()? {
                         Some(find_index.column_text(0)?)
                     } else {
                         None
@@ -178,9 +175,8 @@ fn update_indexes(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), Power
 
         // In a block so that the statement is finalized before dropping indexes
         // language=SQLite
-        let statement = db
-            .prepare_v2(
-                "\
+        let statement = db.prepare_v2(
+            "\
 SELECT
     sqlite_master.name as index_name
       FROM sqlite_master
@@ -188,13 +184,12 @@ SELECT
             AND sqlite_master.name GLOB 'ps_data_*'
             AND sqlite_master.name NOT IN (SELECT value FROM json_each(?))
 ",
-            )
-            .into_db_result(db)?;
+        )?;
         let json_names = serde_json::to_string(&expected_index_names)
             .map_err(PowerSyncError::as_argument_error)?;
         statement.bind_text(1, &json_names, sqlite::Destructor::STATIC)?;
 
-        while statement.step()? == ResultCode::ROW {
+        while statement.step()? {
             let name = statement.column_text(0)?;
 
             statements.push(format!("DROP INDEX {}", SqlBuffer::quote_identifier(name)));
@@ -203,14 +198,14 @@ SELECT
 
     // We cannot have any open queries on sqlite_master at the point that we drop indexes, otherwise
     // we get "database table is locked (code 6)" errors.
-    for statement in statements {
-        db.exec_safe(&statement).into_db_result(db)?;
+    for statement in &statements {
+        db.exec_safe_str(statement)?;
     }
 
     Ok(())
 }
 
-fn update_views(db: *mut sqlite::sqlite3, schema: &Schema) -> Result<(), PowerSyncError> {
+fn update_views(db: Database, schema: &Schema) -> Result<(), PowerSyncError> {
     // First, find all existing views and index them by name.
     let existing = ExistingView::list(db)?;
     let mut existing = {
@@ -262,7 +257,7 @@ fn powersync_replace_schema_impl(
     ctx: *mut sqlite::context,
     args: &[*mut sqlite::value],
 ) -> Result<String, PowerSyncError> {
-    let db = ctx.db_handle();
+    let db = Database::from(ctx.db_handle());
     verify_in_transaction(db)?;
 
     let schema = args[0].text();
@@ -271,7 +266,7 @@ fn powersync_replace_schema_impl(
         serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::as_argument_error)?;
 
     // language=SQLite
-    db.exec_safe("SELECT powersync_init()").into_db_result(db)?;
+    db.exec_safe(c"SELECT powersync_init()")?;
 
     update_tables(db, &parsed_schema)?;
     update_indexes(db, &parsed_schema)?;

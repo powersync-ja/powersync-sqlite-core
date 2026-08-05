@@ -16,10 +16,10 @@ pub use table_info::{
 };
 
 use crate::{
-    error::{PSResult, PowerSyncError},
+    error::PowerSyncError,
     schema::raw_table::generate_raw_table_trigger,
     state::DatabaseState,
-    utils::WriteType,
+    utils::{WriteType, database::Database},
 };
 
 #[derive(Deserialize, Default)]
@@ -43,10 +43,10 @@ pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<()
             let trigger_name = args[1].text();
             let write_type: WriteType = args[2].text().parse()?;
 
-            let db = context.db_handle();
+            let db = Database::from(context.db_handle());
             let create_trigger_stmt =
                 generate_raw_table_trigger(db, &table, trigger_name, write_type)?;
-            db.exec_safe(&create_trigger_stmt).into_db_result(db)?;
+            db.exec_safe_str(&create_trigger_stmt)?;
             Ok(())
         }
 
