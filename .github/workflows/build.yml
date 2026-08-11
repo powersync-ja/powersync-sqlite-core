@@ -40,6 +40,9 @@ on:
       libs_xcframework:
         description: "Artifact ID of the uploaded xcframework artifact"
         value: ${{ jobs.libs_xcframework.outputs.artifact_id }}
+      sbom:
+        description: "Artifact ID of the uploaded sbom artifact"
+        value: ${{ jobs.attest.outputs.artifact_id }}
 
 permissions: {}
 
@@ -321,6 +324,8 @@ jobs:
         libs_xcframework,
       ]
     runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload_sbom.outputs.artifact-id }}
     permissions:
       id-token: write # Needed to mint the OIDC token used to sign the attestation.
       attestations: write # Needed to publish the attestation.
@@ -344,6 +349,14 @@ jobs:
         working-directory: dart
         run: dart tool/generate_sbom.dart > ../bom.json
 
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        id: upload_sbom
+        with:
+          name: sbom
+          retention-days: 14
+          path: bom.json
+
       - name: Download build artifacts
         uses: actions/download-artifact@v8
         with:
@@ -362,6 +375,11 @@ jobs:
         run: find artifacts
 
       - name: Attest artifacts
+        uses: actions/attest@v4
+        with:
+          subject-path: artifacts/*
+
+      - name: Attest SBOM
         uses: actions/attest@v4
         with:
           sbom-path: bom.json
