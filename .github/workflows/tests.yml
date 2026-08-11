@@ -33,6 +33,8 @@ jobs:
       id-token: write # Unused
       attestations: write # Unused
       artifact-metadata: write # Unused
+    with:
+      attest: true # Todo: remove
 
   rust_unit_tests:
     name: Rust unit tests on ${{ matrix.os }}
