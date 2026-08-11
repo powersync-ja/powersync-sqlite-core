@@ -41,6 +41,7 @@ jobs:
     with:
       attest: true
       sign-publication: true
+    secrets:
       gpg-key: ${{ secrets.GPG_PRIVATE_KEY }}
       gpg-password: ${{ secrets.GPG_PASSWORD }}
 
