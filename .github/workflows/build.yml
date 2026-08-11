@@ -146,7 +146,6 @@ jobs:
 
   libs_android:
     name: Building Android libraries
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
@@ -177,7 +176,7 @@ jobs:
       
       - name: Build signed library
         shell: bash
-        if: ${{ inputs.sign-publication == '1' }}
+        if: ${{ inputs.sign-publication }}
         run: |
           cd android
           ./gradlew build zipPublication  -PgpgKey=${INPUTS_GPG_KEY} -PgpgPassword=${INPUTS_GPG_PASSWORD}
@@ -189,7 +188,7 @@ jobs:
 
       - name: Build library without signing
         shell: bash
-        if: ${{ inputs.sign-publication == '0' }}
+        if: ${{ !inputs.sign-publication }}
         run: |
           cd android
           ./gradlew build zipPublication -PsignPublication=0
@@ -231,7 +230,6 @@ jobs:
 
   libs_wasm:
     name: Basic WASM build
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ubuntu-latest
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
@@ -257,7 +255,6 @@ jobs:
 
   libs_xcframework:
     name: Build XCFramework
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: macos-latest
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
