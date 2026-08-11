@@ -18,6 +18,7 @@ dev_dependencies:
   convert: ^3.1.2
   meta: ^1.16.0
   path: ^1.9.1
+  uuid: ^4.6.0
 
 # See https://pub.dev/documentation/sqlite3/latest/topics/hook-topic.html
 hooks:
