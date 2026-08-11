@@ -363,7 +363,6 @@ jobs:
 
       - name: Attest artifacts
         uses: actions/attest@v4
-        if: false
         with:
           sbom-path: bom.json
           subject-path: artifacts/*
