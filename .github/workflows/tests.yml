@@ -126,6 +126,10 @@ jobs:
         run: |
           dart test -P ci
 
+      - name: Generate sbom
+        working-directory: dart
+        run: dart tool/generate_sbom.dart
+
   build_stable_rust:
     runs-on: ubuntu-latest
     steps:
