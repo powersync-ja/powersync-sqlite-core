@@ -366,4 +366,4 @@ jobs:
         if: false
         with:
           sbom-path: bom.json
-          subject-path: artifacts/
+          subject-path: artifacts/*
