@@ -5,8 +5,7 @@ pub const FULL_GIT_HASH: &'static str = env!("GIT_HASH");
 
 // We need 3.44 or later to use an `ORDER BY` in an aggregate function invocation.
 //
-// When raising the minimum version requirement, also change it in download_sqlite3.dart to ensure
-// we're testing with the minimum version we claim to support.
+// When raising the minimum version requirement, also change it in generate_sbom.dart.
 pub const MIN_SQLITE_VERSION_NUMBER: c_int = 3044000;
 
 pub const SUBTYPE_JSON: u32 = 'J' as u32;

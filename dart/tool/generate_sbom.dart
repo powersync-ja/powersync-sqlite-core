@@ -7,7 +7,7 @@ import 'package:uuid/uuid.dart';
 ///
 /// Usage: `dart tool/generate_sbom.dart > bom.json`
 void main() async {
-  final crates = await findDependencies();
+  final [coreExtension, ...dependencies] = await findDependencies();
 
   const journeyApps = {
     'name': 'JourneyApps',
@@ -21,7 +21,7 @@ void main() async {
     if (Platform.environment['GITHUB_ACTIONS'] == 'true')
       'version': int.parse(Platform.environment['GITHUB_RUN_ID']!),
     'metadata': {
-      'component': crates.first.describeAsBomComponent(),
+      'component': coreExtension.describeAsBomComponent(),
       'lifecycles': [
         {'phase': 'build'}
       ],
@@ -30,14 +30,33 @@ void main() async {
       'supplier': journeyApps,
     },
     'components': [
-      for (final crate in crates.skip(1)) crate.describeAsBomComponent(),
+      for (final crate in dependencies) crate.describeAsBomComponent(),
+      // Also declare SQLite as an external component required at runtime (since
+      // this is a SQLite extension).
+      {
+        'isExternal': true,
+        'versionRange': 'vers:semver/>=3.44.0|<4.0.0',
+        'type': 'library',
+        'name': 'SQLite',
+        'purl': 'pkg:generic/sqlite',
+        'bom-ref': 'external-sqlite',
+        'licenses': [
+          {'expression': 'blessing'},
+        ],
+        'externalReferences': [
+          {'url': 'https://sqlite.org/', 'type': 'website'},
+        ],
+      }
     ],
     'dependencies': [
-      for (final crate in crates)
+      for (final crate in [coreExtension, ...dependencies])
         if (crate.dependencies.isNotEmpty)
           {
             'ref': crate.bomRef,
-            'dependsOn': [for (final dep in crate.dependencies) dep.bomRef]
+            'dependsOn': [
+              for (final dep in crate.dependencies) dep.bomRef,
+              if (crate == coreExtension) 'external-sqlite'
+            ]
           }
     ],
   };
