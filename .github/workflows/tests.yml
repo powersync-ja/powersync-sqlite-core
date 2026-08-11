@@ -23,75 +23,10 @@ jobs:
         with:
           persona: pedantic
 
-  libs_linux:
-    name: Building Linux libraries
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build Linux libraries
-        uses: ./.github/actions/linux
-
-  libs_macos:
-    name: Building macOS libraries
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build macOS
-        uses: ./.github/actions/macos
-
-  libs_windows:
-    name: Building Windows libraries
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)  
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Build Windows
-        uses: ./.github/actions/windows
-
-  libs_android:
-    name: Building Android libraries
+  build_libs:
+    name: Build libraries
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build Android
-        uses: ./.github/actions/android
-        with:
-          sign-publication: '0'
-
-  libs_wasm:
-    name: Basic WASM build
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Build wasm
-        uses: ./.github/actions/wasm
-
-  libs_xcframework:
-    name: Build XCFramework
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build XCFramework
-        uses: ./.github/actions/xcframework
+    uses: ./.github/workflows/build.yml
 
   rust_unit_tests:
     name: Rust unit tests on ${{ matrix.os }}
@@ -140,7 +75,7 @@ jobs:
     name: Testing on ${{ matrix.os }}
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: ${{ matrix.os }}
-    needs: [libs_linux, libs_macos, libs_windows]
+    needs: [build_libs]
     strategy:
       fail-fast: false
       matrix:
@@ -167,17 +102,17 @@ jobs:
       - name: Download libs
         uses: actions/download-artifact@v8
         with:
-          name: linux-library
+          artifact-ids: ${{ needs.build_libs.outputs.libs_linux }}
           path: dart/assets
       - name: Download libs
         uses: actions/download-artifact@v8
         with:
-          name: macos-library
+          artifact-ids: ${{ needs.build_libs.outputs.libs_macos }}
           path: dart/assets
       - name: Download libs
         uses: actions/download-artifact@v8
         with:
-          name: windows-library
+          artifact-ids: ${{ needs.build_libs.outputs.libs_windows }}
           path: dart/assets
 
       - name: View downloaded artifacts

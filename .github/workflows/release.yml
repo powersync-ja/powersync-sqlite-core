@@ -35,73 +35,18 @@ jobs:
           body="Release $tag"
           gh release create --draft "$tag" --title "$tag" --notes "$body"
 
-  libs_linux:
-    name: Building Linux libraries
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build Linux
-        uses: ./.github/actions/linux
-
-  libs_macos:
-    name: Building macOS libraries
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build macOS
-        uses: ./.github/actions/macos
-
-  libs_windows:
-    name: Building Windows libraries
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build Windows
-        uses: ./.github/actions/windows
-
-  libs_android:
-    name: Building Android libraries
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build Android
-        uses: ./.github/actions/android
-        with:
-          gpg-key: ${{ secrets.GPG_PRIVATE_KEY }}
-          gpg-password: ${{ secrets.GPG_PASSWORD }}
-
-  libs_wasm:
-    name: Basic WASM build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-
-      - name: Build wasm
-        uses: ./.github/actions/wasm
-
-  libs_xcframework:
-    name: Build XCFramework
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Build XCFramework
-        uses: ./.github/actions/xcframework
+  build_libs:
+    name: Build libraries
+    uses: ./.github/workflows/build.yml
+    with:
+      attest: true
+      sign-publication: true
+      gpg-key: ${{ secrets.GPG_PRIVATE_KEY }}
+      gpg-password: ${{ secrets.GPG_PASSWORD }}
 
   publish_android:
     name: Publish Android
-    needs: [ draft_release, libs_android ]
+    needs: [ draft_release, build_libs ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -110,7 +55,7 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: android-library
+          artifact-ids: ${{ needs.build_libs.outputs.libs_android }}
 
       - name: Publish to Maven Central
         env:
@@ -123,7 +68,7 @@ jobs:
 
   publish_ios_pod_and_spm_package:
     name: Publish iOS
-    needs: [ draft_release, libs_xcframework ]
+    needs: [ draft_release, build_libs ]
     runs-on: macos-latest
     permissions:
       contents: write # Needed to upload the XCFramework to the draft release.
@@ -135,7 +80,7 @@ jobs:
       - name: Download libs
         uses: actions/download-artifact@v8
         with:
-          name: xcframework
+          artifact-ids: ${{ needs.build_libs.outputs.libs_xcframework }}
 
       - name: Extract xcframework
         run: unzip powersync-sqlite-core.xcframework.zip "powersync-sqlite-core.xcframework/*"
@@ -185,7 +130,7 @@ jobs:
 
   publish_desktop:
     name: Publish Desktop libraries
-    needs: [ draft_release, libs_linux, libs_macos, libs_windows ]
+    needs: [ draft_release, build_libs ]
     runs-on: ubuntu-latest
     permissions:
       contents: write # Needed to upload binaries to release.
@@ -198,23 +143,19 @@ jobs:
       - name: Download Linux libraries
         uses: actions/download-artifact@v8
         with:
-          name: linux-library
+          artifact-ids: ${{ needs.build_libs.outputs.libs_linux }}
       - name: Download macOS libraries
         uses: actions/download-artifact@v8
         with:
-          name: macos-library
+          artifact-ids: ${{ needs.build_libs.outputs.libs_macos }}
       - name: Download Windows libraries
         uses: actions/download-artifact@v8
         with:
-          name: windows-library
-      - name: Download Windows libraries
-        uses: actions/download-artifact@v8
-        with:
-          name: windows-library
+          artifact-ids: ${{ needs.build_libs.outputs.libs_windows }}
       - name: Download static Android libraries
         uses: actions/download-artifact@v8
         with:
-          name: android-static
+          artifact-ids: ${{ needs.build_libs.outputs.libs_android_static }}
 
       - name: Create archive of static libs for Kotlin
         run: zip static_libs.zip *.lib *.a
@@ -235,7 +176,7 @@ jobs:
 
   publish_wasm:
     name: Publish WASM builds
-    needs: [ draft_release, libs_wasm ]
+    needs: [ draft_release, build_libs ]
     runs-on: ubuntu-latest
     permissions:
       contents: write # Needed to upload binaries to release.
@@ -247,7 +188,7 @@ jobs:
       - name: Download wasm bundle
         uses: actions/download-artifact@v8
         with:
-          name: wasm-library
+          artifact-ids: ${{ needs.build_libs.outputs.libs_wasm }}
 
       - name: Upload wasm binaries
         env:
