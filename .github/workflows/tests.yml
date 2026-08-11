@@ -27,6 +27,12 @@ jobs:
     name: Build libraries
     if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     uses: ./.github/workflows/build.yml
+    permissions:
+      # Not used here since attest is not enabled for this workflow, but the
+      # reusable workflow's attest job requires the caller to grant these.
+      id-token: write # Unused
+      attestations: write # Unused
+      artifact-metadata: write # Unused
 
   rust_unit_tests:
     name: Rust unit tests on ${{ matrix.os }}

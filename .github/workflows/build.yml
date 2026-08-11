@@ -307,3 +307,63 @@ jobs:
           compression-level: 0 # We're uploading a zip archive, no need to compress agan
           path: |
             powersync-sqlite-core.xcframework.zip
+
+  attest:
+    name: Attest artifacts
+    if: ${{ inputs.attest }}
+    needs:
+      [
+        libs_linux,
+        libs_macos,
+        libs_windows,
+        libs_android,
+        libs_wasm,
+        libs_xcframework,
+      ]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Needed to mint the OIDC token used to sign the attestation.
+      attestations: write # Needed to publish the attestation.
+      artifact-metadata: write # Create artifact storage record.
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: dart-lang/setup-dart@v1
+
+      - name: Install Rust Nightly
+        shell: bash
+        run: rustup install
+
+      - name: Install Dart dependencies
+        working-directory: dart
+        run: dart pub get
+
+      - name: Generate SBOM
+        working-directory: dart
+        run: dart tool/generate_sbom.dart > ../bom.json
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+          artifact-ids: >-
+            ${{ needs.libs_linux.outputs.artifact_id }},
+            ${{ needs.libs_macos.outputs.artifact_id }},
+            ${{ needs.libs_windows.outputs.artifact_id }},
+            ${{ needs.libs_android.outputs.artifact_id }},
+            ${{ needs.libs_android.outputs.static_artifact_id }},
+            ${{ needs.libs_wasm.outputs.artifact_id }},
+            ${{ needs.libs_xcframework.outputs.artifact_id }}
+
+      - name: List downloaded artifacts
+        run: find artifacts
+
+      - name: Attest artifacts
+        uses: actions/attest@v4
+        if: false
+        with:
+          sbom-path: bom.json
+          subject-path: artifacts/
