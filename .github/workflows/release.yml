@@ -161,6 +161,10 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           artifact-ids: ${{ needs.build_libs.outputs.libs_android_static }}
+      - name: Download SBOM
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build_libs.outputs.sbom }}
 
       - name: Create archive of static libs for Kotlin
         run: zip static_libs.zip *.lib *.a
@@ -178,6 +182,7 @@ jobs:
           gh release upload "${TAG}" *.dylib
           gh release upload "${TAG}" *.so
           gh release upload "${TAG}" static_libs.zip
+          gh release upload "${TAG}" bom.json
 
   publish_wasm:
     name: Publish WASM builds
