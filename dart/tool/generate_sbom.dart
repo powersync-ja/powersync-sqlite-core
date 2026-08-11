@@ -7,7 +7,13 @@ import 'package:uuid/uuid.dart';
 ///
 /// Usage: `dart tool/generate_sbom.dart > bom.json`
 void main() async {
+  // The first library is the core extension itself (the powersync_core crate).
+  // The crate we actually compile as binaries is powersync_static or
+  // powersync_loadable, but these contain no additional dependencies.
   final [coreExtension, ...dependencies] = await findDependencies();
+  if (coreExtension.name != 'powersync_core') {
+    throw 'Unexpected root: ${coreExtension.name}';
+  }
 
   const journeyApps = {
     'name': 'JourneyApps',
@@ -18,8 +24,7 @@ void main() async {
     'bomFormat': 'CycloneDX',
     'specVersion': '1.7',
     'serialNumber': 'urn:uuid:${const Uuid().v4()}',
-    if (Platform.environment['GITHUB_ACTIONS'] == 'true')
-      'version': int.parse(Platform.environment['GITHUB_RUN_ID']!),
+    'version': 1,
     'metadata': {
       'component': coreExtension.describeAsBomComponent(),
       'lifecycles': [
@@ -72,7 +77,7 @@ final class RustCrate {
 
   final List<RustCrate> dependencies = [];
 
-  String get bomRef => '$name-$version';
+  String get bomRef => '$name@$version';
 
   RustCrate({
     required this.name,
@@ -148,6 +153,10 @@ Future<List<RustCrate>> findDependencies() async {
     final version = match[3]!;
     final license = match[4]!;
     final repository = match[5]!;
+
+    if (license.isEmpty) {
+      throw 'Crate $name@$version does not include a license expression.';
+    }
 
     // A crate is only fully expanded the first time it's encountered, so
     // later (deduped) occurrences reuse the same instance and its already
