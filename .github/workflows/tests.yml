@@ -138,6 +138,7 @@ jobs:
 
   build_stable_rust:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     steps:
       - uses: actions/checkout@v7
         with:
@@ -169,6 +170,7 @@ jobs:
 
   test_with_sanitizers:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     steps:
       - uses: actions/checkout@v7
         with:
@@ -194,3 +196,29 @@ jobs:
       - name: Test with AddressSanitizer
         working-directory: dart
         run: dart tool/run_tests.dart asan
+
+  vulnerability_scan:
+    runs-on: ubuntu-latest
+    name: Scan SBOM for vulnerabilities
+    needs: [build_libs]
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
+    permissions:
+      security-events: write # To upload SARIF report of found vulnerabilities
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Download SBOM
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.build_libs.outputs.sbom }}
+          path: bom.json
+      - uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        id: scan
+        with:
+          sbom: bom.json
+          cache-db: true
+      - uses: github/codeql-action/upload-sarif@v4
+        if: '!cancelled()' # Also upload if the scan failed the build due to found vulnerabilities
+        with:
+          sarif_file: ${{ steps.scan.outputs.sarif }}

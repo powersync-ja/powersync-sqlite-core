@@ -10,3 +10,15 @@ updates:
       github-actions:
         patterns:
           - "*"
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    versioning-strategy: increase-if-necessary
+    groups:
+      cargo:
+        patterns:
+          - "*"
