@@ -4,6 +4,7 @@ rules:
     config:
       policies:
         "actions/*": ref-pin
+        "github/*": ref-pin
         "dart-lang/*": ref-pin
         "rust-lang/*": ref-pin
         "gradle/actions/wrapper-validation": ref-pin
