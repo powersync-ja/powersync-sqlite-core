@@ -310,7 +310,6 @@ jobs:
 
   attest:
     name: Attest artifacts
-    if: ${{ inputs.attest }}
     needs:
       [
         libs_linux,
@@ -356,6 +355,7 @@ jobs:
 
       - name: Download build artifacts
         uses: actions/download-artifact@v8
+        if: ${{ inputs.attest }}
         with:
           path: artifacts
           merge-multiple: true
@@ -369,14 +369,17 @@ jobs:
             ${{ needs.libs_xcframework.outputs.artifact_id }}
 
       - name: List downloaded artifacts
+        if: ${{ inputs.attest }}
         run: find artifacts
 
       - name: Attest artifacts
+        if: ${{ inputs.attest }}
         uses: actions/attest@v4
         with:
           subject-path: artifacts/*
 
       - name: Attest SBOM
+        if: ${{ inputs.attest }}
         uses: actions/attest@v4
         with:
           sbom-path: bom.json
