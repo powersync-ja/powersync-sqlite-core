@@ -4,7 +4,6 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use const_format::formatcp;
 use core::ffi::{CStr, c_char, c_int, c_void};
-use core::mem;
 use serde::Serialize;
 use serde_json::value::RawValue;
 
@@ -227,7 +226,7 @@ impl VirtualTable {
     }
 
     fn end_transaction(&mut self) {
-        if let Some(tx) = mem::take(&mut self.current_tx) {
+        if let Some(tx) = self.current_tx.take() {
             if tx.observed_begin {
                 self.state.current_transaction_id.set(None);
             }

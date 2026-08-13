@@ -1022,21 +1022,26 @@ INSERT INTO ps_kv(key, value) VALUES
         });
       }
 
-      test('for writes in both types of tables', () {
-        for (var tx = 1; tx < 10; tx++) {
-          db.execute('BEGIN');
-          for (var i = 0; i < tx; i++) {
-            db.execute('INSERT INTO regular (id, a) VALUES (uuid(), 1234)');
-            db.execute('INSERT INTO insertonly (id, a) VALUES (uuid(), 1234)');
-          }
-          db.execute('COMMIT');
+      for (final (first, second) in [
+        ('regular', 'insertonly'),
+        ('insertonly', 'regular')
+      ]) {
+        test('write $first then $second', () {
+          for (var tx = 1; tx < 10; tx++) {
+            db.execute('BEGIN');
+            for (var i = 0; i < tx; i++) {
+              db.execute('INSERT INTO $first (id, a) VALUES (uuid(), 1234)');
+              db.execute('INSERT INTO $second (id, a) VALUES (uuid(), 1234)');
+            }
+            db.execute('COMMIT');
 
-          expect(
-            db.select('SELECT * FROM ps_crud WHERE tx_id = ?', [tx]),
-            hasLength(tx * 2),
-          );
-        }
-      });
+            expect(
+              db.select('SELECT * FROM ps_crud WHERE tx_id = ?', [tx]),
+              hasLength(tx * 2),
+            );
+          }
+        });
+      }
     });
   });
 }
