@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use const_format::formatcp;
 use core::ffi::{CStr, c_char, c_int, c_void};
+use core::mem;
 use serde::Serialize;
 use serde_json::value::RawValue;
 
@@ -50,6 +51,15 @@ struct VirtualTable {
 struct ActiveCrudTransaction {
     tx_id: i64,
     mode: CrudTransactionMode,
+    /// Whether the virtual table owning this transaction observed the begin, or whether we re-used
+    /// a transaction we already knew existed.
+    ///
+    /// We have two virtual tables to record local mutations as crud entries. They both need a begin
+    /// hook to increment `ps_tx` when a transaction operates on that table. For transactions
+    /// operating on both tables, only one table must increment the counter though. We store whether
+    /// we're in a transaction in [DatabaseState::current_transaction_id], if that is true when
+    /// `xBegin` is called then we skip incrementing the counter.
+    observed_begin: bool,
 }
 
 enum CrudTransactionMode {
@@ -184,17 +194,28 @@ impl VirtualTable {
     fn begin(&mut self) -> Result<()> {
         let db = self.db;
 
-        // language=SQLite
-        let statement =
-            db.prepare_v2("UPDATE ps_tx SET next_tx = next_tx + 1 WHERE id = 1 RETURNING next_tx")?;
-        let tx_id = if statement.step()? {
-            statement.column_int64(0) - 1
-        } else {
-            return Err(PowerSyncError::unknown_internal());
+        let (tx_id, observed_begin) = {
+            if let Some(existing_tx) = self.state.current_transaction_id.get() {
+                // Re-use existing transaction, the other table is responsible for clearing that
+                // field on commit.
+                (existing_tx, false)
+            } else {
+                let statement = db.prepare_v2(
+                    "UPDATE ps_tx SET next_tx = next_tx + 1 WHERE id = 1 RETURNING next_tx",
+                )?;
+                let tx_id = if statement.step()? {
+                    statement.column_int64(0) - 1
+                } else {
+                    return Err(PowerSyncError::unknown_internal());
+                };
+                self.state.current_transaction_id.set(Some(tx_id));
+                (tx_id, true)
+            }
         };
 
         self.current_tx = Some(ActiveCrudTransaction {
             tx_id,
+            observed_begin,
             mode: if self.is_simple {
                 CrudTransactionMode::Simple(Default::default())
             } else {
@@ -206,7 +227,11 @@ impl VirtualTable {
     }
 
     fn end_transaction(&mut self) {
-        self.current_tx = None;
+        if let Some(tx) = mem::take(&mut self.current_tx) {
+            if tx.observed_begin {
+                self.state.current_transaction_id.set(None);
+            }
+        }
     }
 }
 

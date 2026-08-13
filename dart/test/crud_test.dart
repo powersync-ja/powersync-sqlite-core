@@ -980,5 +980,63 @@ INSERT INTO ps_kv(key, value) VALUES
         expect(db.select('SELECT * FROM ps_crud'), isEmpty);
       });
     });
+
+    group('transaction ids', () {
+      setUp(() {
+        db.executeInTx('select powersync_replace_schema(?)', [
+          json.encode({
+            'tables': [
+              {
+                'name': 'regular',
+                'columns': [
+                  {'name': 'a', 'type': 'integer'}
+                ]
+              },
+              {
+                'name': 'insertonly',
+                'insert_only': true,
+                'columns': [
+                  {'name': 'a', 'type': 'integer'}
+                ]
+              }
+            ],
+          })
+        ]);
+      });
+
+      for (final table in ['regular', 'insertonly']) {
+        test('for write into $table table', () {
+          for (var tx = 1; tx < 10; tx++) {
+            db.execute('BEGIN');
+            final numWrites = tx * 2;
+            for (var i = 0; i < numWrites; i++) {
+              db.execute('INSERT INTO $table (id, a) VALUES (uuid(), 1234)');
+            }
+            db.execute('COMMIT');
+
+            expect(
+              db.select('SELECT * FROM ps_crud WHERE tx_id = ?', [tx]),
+              hasLength(numWrites),
+            );
+          }
+        });
+      }
+
+      test('for writes in both types of tables', () {
+        for (var tx = 1; tx < 10; tx++) {
+          db.execute('BEGIN');
+          for (var i = 0; i < tx; i++) {
+            db.execute('INSERT INTO regular (id, a) VALUES (uuid(), 1234)');
+            db.execute('INSERT INTO insertonly (id, a) VALUES (uuid(), 1234)');
+          }
+          db.execute('COMMIT');
+
+          expect(
+            db.select('SELECT * FROM ps_crud WHERE tx_id = ?', [tx]),
+            hasLength(tx * 2),
+          );
+        }
+      });
+    });
   });
 }
