@@ -36,6 +36,7 @@ pub struct DatabaseState {
     /// Cached put and delete statements for raw tables, used by the `sync_local` step of the sync
     /// client.
     pub inferred_schema_cache: InferredSchemaCache,
+    pub current_transaction_id: Cell<Option<i64>>,
 }
 
 impl DatabaseState {

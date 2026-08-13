@@ -7,7 +7,7 @@ final expectedState = _expectedState();
 
 Map<int, String> _expectedState() {
   final state = <int, String>{
-  2: r'''
+    2: r'''
 ;CREATE TABLE ps_buckets(
   name TEXT PRIMARY KEY,
   last_applied_op INTEGER NOT NULL DEFAULT 0,
@@ -36,7 +36,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(1, null)
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(2, '[{"sql":"DELETE FROM ps_migration WHERE id >= 2","params":[]},{"sql":"DROP TABLE ps_tx","params":[]},{"sql":"ALTER TABLE ps_crud DROP COLUMN tx_id","params":[]}]')
 ''',
-  3: r'''
+    3: r'''
 ;CREATE TABLE ps_buckets(
   name TEXT PRIMARY KEY,
   last_applied_op INTEGER NOT NULL DEFAULT 0,
@@ -67,7 +67,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(2, '[{"sql":"DELETE FROM ps_migration WHERE id >= 2","params":[]},{"sql":"DROP TABLE ps_tx","params":[]},{"sql":"ALTER TABLE ps_crud DROP COLUMN tx_id","params":[]}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(3, '[{"sql":"DELETE FROM ps_migration WHERE id >= 3"},{"sql":"DROP TABLE ps_kv"}]')
 ''',
-  4: r'''
+    4: r'''
 ;CREATE TABLE ps_buckets(
   name TEXT PRIMARY KEY,
   last_applied_op INTEGER NOT NULL DEFAULT 0,
@@ -99,7 +99,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(3, '[{"sql":"DELETE FROM ps_migration WHERE id >= 3"},{"sql":"DROP TABLE ps_kv"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(4, '[{"sql":"DELETE FROM ps_migration WHERE id >= 4"},{"sql":"ALTER TABLE ps_buckets DROP COLUMN op_checksum"},{"sql":"ALTER TABLE ps_buckets DROP COLUMN remove_operations"}]')
 ''',
-  5: r'''
+    5: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -137,7 +137,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(4, '[{"sql":"DELETE FROM ps_migration WHERE id >= 4"},{"sql":"ALTER TABLE ps_buckets DROP COLUMN op_checksum"},{"sql":"ALTER TABLE ps_buckets DROP COLUMN remove_operations"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(5, '[{"sql":"SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated''"},{"sql":"ALTER TABLE ps_buckets RENAME TO ps_buckets_5"},{"sql":"ALTER TABLE ps_oplog RENAME TO ps_oplog_5"},{"sql":"CREATE TABLE ps_buckets(\n  name TEXT PRIMARY KEY,\n  last_applied_op INTEGER NOT NULL DEFAULT 0,\n  last_op INTEGER NOT NULL DEFAULT 0,\n  target_op INTEGER NOT NULL DEFAULT 0,\n  add_checksum INTEGER NOT NULL DEFAULT 0,\n  pending_delete INTEGER NOT NULL DEFAULT 0\n, op_checksum INTEGER NOT NULL DEFAULT 0, remove_operations INTEGER NOT NULL DEFAULT 0)"},{"sql":"INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete)\n    SELECT name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete FROM ps_buckets_5"},{"sql":"CREATE TABLE ps_oplog(\n  bucket TEXT NOT NULL,\n  op_id INTEGER NOT NULL,\n  op INTEGER NOT NULL,\n  row_type TEXT,\n  row_id TEXT,\n  key TEXT,\n  data TEXT,\n  hash INTEGER NOT NULL,\n  superseded INTEGER NOT NULL)"},{"sql":"CREATE INDEX ps_oplog_by_row ON ps_oplog (row_type, row_id) WHERE superseded = 0"},{"sql":"CREATE INDEX ps_oplog_by_opid ON ps_oplog (bucket, op_id)"},{"sql":"CREATE INDEX ps_oplog_by_key ON ps_oplog (bucket, key) WHERE superseded = 0"},{"sql":"INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, key, data, hash, superseded)\n    SELECT ps_buckets_5.name, oplog.op_id, 3, oplog.row_type, oplog.row_id, oplog.key, oplog.data, oplog.hash, 0\n    FROM ps_oplog_5 oplog\n    JOIN ps_buckets_5\n        ON ps_buckets_5.id = oplog.bucket"},{"sql":"DROP TABLE ps_oplog_5"},{"sql":"DROP TABLE ps_buckets_5"},{"sql":"INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)\n    SELECT ''$local'', 1, 4, r.row_type, r.row_id, 0, 0\n    FROM ps_updated_rows r"},{"sql":"INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES(''$local'', 1, 0, 9223372036854775807)"},{"sql":"DROP TABLE ps_updated_rows"},{"sql":"DELETE FROM ps_migration WHERE id >= 5"}]')
 ''',
-  6: r'''
+    6: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -176,7 +176,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(5, '[{"sql":"SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated''"},{"sql":"ALTER TABLE ps_buckets RENAME TO ps_buckets_5"},{"sql":"ALTER TABLE ps_oplog RENAME TO ps_oplog_5"},{"sql":"CREATE TABLE ps_buckets(\n  name TEXT PRIMARY KEY,\n  last_applied_op INTEGER NOT NULL DEFAULT 0,\n  last_op INTEGER NOT NULL DEFAULT 0,\n  target_op INTEGER NOT NULL DEFAULT 0,\n  add_checksum INTEGER NOT NULL DEFAULT 0,\n  pending_delete INTEGER NOT NULL DEFAULT 0\n, op_checksum INTEGER NOT NULL DEFAULT 0, remove_operations INTEGER NOT NULL DEFAULT 0)"},{"sql":"INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete)\n    SELECT name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete FROM ps_buckets_5"},{"sql":"CREATE TABLE ps_oplog(\n  bucket TEXT NOT NULL,\n  op_id INTEGER NOT NULL,\n  op INTEGER NOT NULL,\n  row_type TEXT,\n  row_id TEXT,\n  key TEXT,\n  data TEXT,\n  hash INTEGER NOT NULL,\n  superseded INTEGER NOT NULL)"},{"sql":"CREATE INDEX ps_oplog_by_row ON ps_oplog (row_type, row_id) WHERE superseded = 0"},{"sql":"CREATE INDEX ps_oplog_by_opid ON ps_oplog (bucket, op_id)"},{"sql":"CREATE INDEX ps_oplog_by_key ON ps_oplog (bucket, key) WHERE superseded = 0"},{"sql":"INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, key, data, hash, superseded)\n    SELECT ps_buckets_5.name, oplog.op_id, 3, oplog.row_type, oplog.row_id, oplog.key, oplog.data, oplog.hash, 0\n    FROM ps_oplog_5 oplog\n    JOIN ps_buckets_5\n        ON ps_buckets_5.id = oplog.bucket"},{"sql":"DROP TABLE ps_oplog_5"},{"sql":"DROP TABLE ps_buckets_5"},{"sql":"INSERT INTO ps_oplog(bucket, op_id, op, row_type, row_id, hash, superseded)\n    SELECT ''$local'', 1, 4, r.row_type, r.row_id, 0, 0\n    FROM ps_updated_rows r"},{"sql":"INSERT OR REPLACE INTO ps_buckets(name, pending_delete, last_op, target_op) VALUES(''$local'', 1, 0, 9223372036854775807)"},{"sql":"DROP TABLE ps_updated_rows"},{"sql":"DELETE FROM ps_migration WHERE id >= 5"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(6, '[{"sql":"DELETE FROM ps_migration WHERE id >= 6"}]')
 ''',
-  7: r'''
+    7: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -220,7 +220,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(6, '[{"sql":"DELETE FROM ps_migration WHERE id >= 6"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(7, '[{"sql":"INSERT OR REPLACE INTO ps_kv(key, value) SELECT ''last_synced_at'', last_synced_at FROM ps_sync_state WHERE priority = 2147483647"},{"sql":"DROP TABLE ps_sync_state"},{"sql":"DELETE FROM ps_migration WHERE id >= 7"}]')
 ''',
-  8: r'''
+    8: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -265,7 +265,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(7, '[{"sql":"INSERT OR REPLACE INTO ps_kv(key, value) SELECT ''last_synced_at'', last_synced_at FROM ps_sync_state WHERE priority = 2147483647"},{"sql":"DROP TABLE ps_sync_state"},{"sql":"DELETE FROM ps_migration WHERE id >= 7"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(8, '[{"sql":"ALTER TABLE ps_sync_state RENAME TO ps_sync_state_new"},{"sql":"CREATE TABLE ps_sync_state (\n  priority INTEGER NOT NULL,\n  last_synced_at TEXT NOT NULL\n) STRICT"},{"sql":"INSERT INTO ps_sync_state SELECT * FROM ps_sync_state_new"},{"sql":"DROP TABLE ps_sync_state_new"},{"sql":"DELETE FROM ps_migration WHERE id >= 8"}]')
 ''',
-  9: r'''
+    9: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -311,7 +311,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(8, '[{"sql":"ALTER TABLE ps_sync_state RENAME TO ps_sync_state_new"},{"sql":"CREATE TABLE ps_sync_state (\n  priority INTEGER NOT NULL,\n  last_synced_at TEXT NOT NULL\n) STRICT"},{"sql":"INSERT INTO ps_sync_state SELECT * FROM ps_sync_state_new"},{"sql":"DROP TABLE ps_sync_state_new"},{"sql":"DELETE FROM ps_migration WHERE id >= 8"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(9, '[{"sql":"ALTER TABLE ps_buckets DROP COLUMN count_at_last"},{"sql":"ALTER TABLE ps_buckets DROP COLUMN count_since_last"},{"sql":"DELETE FROM ps_migration WHERE id >= 9"}]')
 ''',
-  10: r'''
+    10: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -358,7 +358,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(9, '[{"sql":"ALTER TABLE ps_buckets DROP COLUMN count_at_last"},{"sql":"ALTER TABLE ps_buckets DROP COLUMN count_since_last"},{"sql":"DELETE FROM ps_migration WHERE id >= 9"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(10, '[{"sql":"SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated''"},{"sql":"DELETE FROM ps_migration WHERE id >= 10"}]')
 ''',
-  11: r'''
+    11: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -418,7 +418,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(10, '[{"sql":"SELECT powersync_drop_view(view.name)\n  FROM sqlite_master view\n  WHERE view.type = ''view''\n    AND view.sql GLOB  ''*-- powersync-auto-generated''"},{"sql":"DELETE FROM ps_migration WHERE id >= 10"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(11, '[{"sql":"DROP TABLE ps_stream_subscriptions"},{"sql":"DELETE FROM ps_migration WHERE id >= 11"}]')
 ''',
-  12: r'''
+    12: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -479,7 +479,7 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(11, '[{"sql":"DROP TABLE ps_stream_subscriptions"},{"sql":"DELETE FROM ps_migration WHERE id >= 11"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(12, '[{"sql":"ALTER TABLE ps_buckets DROP COLUMN downloaded_size"},{"sql":"DELETE FROM ps_migration WHERE id >= 12"}]')
 ''',
-  13: r'''
+    13: r'''
 ;CREATE TABLE ps_buckets(
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
@@ -541,7 +541,8 @@ Map<int, String> _expectedState() {
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(12, '[{"sql":"ALTER TABLE ps_buckets DROP COLUMN downloaded_size"},{"sql":"DELETE FROM ps_migration WHERE id >= 12"}]')
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(13, '[{"sql":"UPDATE ps_stream_subscriptions SET expires_at = expires_at / 1000000, last_synced_at = last_synced_at / 1000000"},{"sql":"ALTER TABLE ps_sync_state RENAME TO ps_sync_state_new"},{"sql":"CREATE TABLE ps_sync_state (\n  priority INTEGER NOT NULL PRIMARY KEY,\n  last_synced_at TEXT NOT NULL\n) STRICT;"},{"sql":"INSERT INTO ps_sync_state (priority, last_synced_at) SELECT priority, datetime(last_synced_at / 1000000, ''unixepoch'') FROM ps_sync_state_new"},{"sql":"DROP TABLE ps_sync_state_new"},{"sql":"DELETE FROM ps_migration WHERE id >= 13"}]')''',
   };
-  state[14] = '''${state[13]!.trim().replaceFirst('  target_op INTEGER NOT NULL DEFAULT 0,\n', '')}
+  state[14] =
+      '''${state[13]!.trim().replaceFirst('  target_op INTEGER NOT NULL DEFAULT 0,\n', '')}
 ;INSERT INTO ps_migration(id, down_migrations) VALUES(14, '[{"sql":"ALTER TABLE ps_buckets RENAME TO ps_buckets_14"},{"sql":"DROP INDEX ps_buckets_name"},{"sql":"CREATE TABLE ps_buckets(\\n  id INTEGER PRIMARY KEY,\\n  name TEXT NOT NULL,\\n  last_applied_op INTEGER NOT NULL DEFAULT 0,\\n  last_op INTEGER NOT NULL DEFAULT 0,\\n  target_op INTEGER NOT NULL DEFAULT 0,\\n  add_checksum INTEGER NOT NULL DEFAULT 0,\\n  op_checksum INTEGER NOT NULL DEFAULT 0,\\n  pending_delete INTEGER NOT NULL DEFAULT 0\\n) STRICT"},{"sql":"CREATE UNIQUE INDEX ps_buckets_name ON ps_buckets (name)"},{"sql":"ALTER TABLE ps_buckets ADD COLUMN count_at_last INTEGER NOT NULL DEFAULT 0"},{"sql":"ALTER TABLE ps_buckets ADD COLUMN count_since_last INTEGER NOT NULL DEFAULT 0"},{"sql":"ALTER TABLE ps_buckets ADD COLUMN downloaded_size INTEGER NOT NULL DEFAULT 0"},{"sql":"INSERT INTO ps_buckets(\\n  id,\\n  name,\\n  last_applied_op,\\n  last_op,\\n  add_checksum,\\n  op_checksum,\\n  pending_delete,\\n  count_at_last,\\n  count_since_last,\\n  downloaded_size\\n)\\nSELECT\\n  id,\\n  name,\\n  last_applied_op,\\n  last_op,\\n  add_checksum,\\n  op_checksum,\\n  pending_delete,\\n  count_at_last,\\n  count_since_last,\\n  downloaded_size\\nFROM ps_buckets_14"},{"sql":"DROP TABLE ps_buckets_14"},{"sql":"INSERT INTO ps_buckets(name, pending_delete, last_op, last_applied_op, target_op)\\nSELECT ''\$local'', 1, seen, applied, target\\n  FROM (\\n    SELECT\\n      IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = ''last_seen_checkpoint_request_id''), 0) AS seen,\\n      IFNULL((SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = ''last_applied_checkpoint_request_id''), 0) AS applied,\\n      (SELECT CAST(value AS INTEGER) FROM ps_kv WHERE key = ''target_checkpoint_request_id'') AS target\\n  )\\n WHERE EXISTS (\\n    SELECT 1 FROM ps_kv WHERE key = ''target_checkpoint_request_id''\\n )\\nON CONFLICT(name) DO UPDATE SET\\n  pending_delete = excluded.pending_delete,\\n  last_op = excluded.last_op,\\n  last_applied_op = excluded.last_applied_op,\\n  target_op = excluded.target_op"},{"sql":"DELETE FROM ps_migration WHERE id >= 14"}]')''';
   return state;
 }
@@ -553,7 +554,7 @@ final data1 = _data1();
 
 Map<int, String> _data1() {
   final data = <int, String>{
-  2: r'''
+    2: r'''
 ;INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, pending_delete) VALUES
   ('b1', 0, 0, 0, 0, 0),
   ('b2', 0, 0, 0, 1000, 0)
@@ -563,7 +564,7 @@ Map<int, String> _data1() {
   ('b2', 3, 3, 'lists', 'l1', '', '{}', 3, 0),
   ('b2', 4, 4, 'lists', 'l2', '', null, 5, 0)
 ''',
-  3: r'''
+    3: r'''
 ;INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, pending_delete) VALUES
   ('b1', 0, 0, 0, 0, 0),
   ('b2', 0, 0, 0, 1000, 0)
@@ -573,7 +574,7 @@ Map<int, String> _data1() {
   ('b2', 3, 3, 'lists', 'l1', '', '{}', 3, 0),
   ('b2', 4, 4, 'lists', 'l2', '', null, 5, 0)
 ''',
-  4: r'''
+    4: r'''
 ;INSERT INTO ps_buckets(name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete) VALUES
   ('b1', 0, 0, 0, 0, 120, 0),
   ('b2', 0, 0, 0, 1000, 8, 0)
@@ -583,7 +584,7 @@ Map<int, String> _data1() {
   ('b2', 3, 3, 'lists', 'l1', '', '{}', 3, 0),
   ('b2', 4, 4, 'lists', 'l2', '', null, 5, 0)
 ''',
-  5: r'''
+    5: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0)
@@ -594,7 +595,7 @@ Map<int, String> _data1() {
 ;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
   ('lists', 'l2')
 ''',
-  6: r'''
+    6: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0)
@@ -605,7 +606,7 @@ Map<int, String> _data1() {
 ;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
   ('lists', 'l2')
 ''',
-  7: r'''
+    7: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0)
@@ -616,7 +617,7 @@ Map<int, String> _data1() {
 ;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
   ('lists', 'l2')
 ''',
-  8: r'''
+    8: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0)
@@ -627,7 +628,7 @@ Map<int, String> _data1() {
 ;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
   ('lists', 'l2')
 ''',
-  9: r'''
+    9: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0, 0, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0, 0, 0)
@@ -638,7 +639,7 @@ Map<int, String> _data1() {
 ;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
   ('lists', 'l2')
 ''',
-  10: r'''
+    10: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0, 0, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0, 0, 0)
@@ -649,7 +650,7 @@ Map<int, String> _data1() {
 ;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
   ('lists', 'l2')
 ''',
-  11: r'''
+    11: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0, 0, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0, 0, 0)
@@ -660,7 +661,7 @@ Map<int, String> _data1() {
 ;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
   ('lists', 'l2')
 ''',
-  12: r'''
+    12: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last, downloaded_size) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0, 0, 0, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0, 0, 0, 0)
@@ -671,7 +672,7 @@ Map<int, String> _data1() {
 ;INSERT INTO ps_updated_rows(row_type, row_id) VALUES
   ('lists', 'l2')
 ''',
-  13: r'''
+    13: r'''
 ;INSERT INTO ps_buckets(id, name, last_applied_op, last_op, target_op, add_checksum, op_checksum, pending_delete, count_at_last, count_since_last, downloaded_size) VALUES
   (1, 'b1', 0, 0, 0, 0, 120, 0, 0, 0, 0),
   (2, 'b2', 0, 0, 0, 1005, 3, 0, 0, 0, 0)
