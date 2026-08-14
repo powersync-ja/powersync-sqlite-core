@@ -76,7 +76,7 @@ jobs:
           ./tool/build_linux.sh armv7
           ./tool/build_linux.sh riscv64gc
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         id: upload
         with:
           name: linux-library
@@ -105,7 +105,7 @@ jobs:
           ./tool/build_macos.sh x64
           ./tool/build_macos.sh aarch64
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         id: upload
         with:
           name: macos-library
@@ -135,7 +135,7 @@ jobs:
           ./tool/build_windows.sh aarch64
           ./tool/build_windows.sh x86
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         id: upload
         with:
           name: windows-library
@@ -160,7 +160,7 @@ jobs:
           java-version: "25"
 
       - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v4
+        uses: gradle/actions/wrapper-validation@v6
 
       - name: Setup
         shell: bash
@@ -196,7 +196,7 @@ jobs:
           find build/repository
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         id: upload
         with:
           name: android-library
@@ -220,7 +220,7 @@ jobs:
           cp android/build/standalone/x86_64/libpowersync.so libpowersync_x64.android.so
 
       - name: Upload individual libraries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         id: upload_static
         with:
           name: android-static
@@ -246,7 +246,7 @@ jobs:
         shell: bash
         run: ./tool/build_wasm.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         id: upload
         with:
           name: wasm-library
@@ -299,7 +299,7 @@ jobs:
         run: |
           pod lib lint
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         id: upload
         with:
           name: xcframework
@@ -346,7 +346,7 @@ jobs:
         run: dart tool/generate_sbom.dart > ../bom.json
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         id: upload_sbom
         with:
           name: sbom
