@@ -23,7 +23,6 @@ num-derive = "0.3"
 serde_json = { version = "1.0", default-features = false, features = ["alloc", "raw_value"] }
 serde = { version = "1.0", default-features = false, features = ["alloc", "derive", "rc"] }
 const_format = "0.2.34"
-futures-lite = { version = "2.6.0", default-features = false, features = ["alloc"] }
 rustc-hash = { version = "2.1", default-features = false }
 thiserror = { version = "2", default-features = false }
 serde_with = { version = "3.14.0", default-features = false, features = ["alloc", "macros"] }

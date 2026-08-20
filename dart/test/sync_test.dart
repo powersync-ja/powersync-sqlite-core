@@ -251,6 +251,17 @@ void _syncTests<T>({
     });
   });
 
+  syncTest('marks connected on keepalive line', (_) {
+    invokeControl('start', null);
+
+    final instructions = syncLine({'token_expires_in': 60});
+    expect(instructions, [
+      {
+        'UpdateSyncStatus': {'status': containsPair('connected', true)}
+      }
+    ]);
+  });
+
   syncTest('app_metadata is passed to EstablishSyncStream request', (_) {
     final startInstructions = invokeControlRaw(
       'start',
@@ -1457,6 +1468,14 @@ void _syncTests<T>({
             }
           },
           {
+            'UpdateSyncStatus': {
+              'status': allOf(
+                containsPair('connected', false),
+                containsPair('connecting', false),
+              ),
+            }
+          },
+          {
             'CloseSyncStream': {'hide_disconnect': false}
           },
         ],
@@ -1464,6 +1483,52 @@ void _syncTests<T>({
 
       // Should delete bucket with checksum mismatch
       expect(db.select('SELECT * FROM ps_buckets'), isEmpty);
+    });
+
+    syncTest('can retry', (_) {
+      invokeControl('start', null);
+
+      expect(
+        () => syncLine(
+          {
+            'checkpoint': {
+              'last_op_id': 'invalid op id',
+              'write_checkpoint': null,
+              'buckets': [],
+            },
+          },
+        ),
+        throwsA(anything),
+      );
+
+      // Realistically, client SDKs would abort on this error. Still, verify
+      // that we're able to try again and resume from the previous initial
+      // state.
+      final instructions = syncLine(
+        {
+          'checkpoint': {
+            'last_op_id': '1',
+            'write_checkpoint': null,
+            'buckets': [],
+          },
+        },
+      );
+
+      expect(instructions, [
+        {
+          'UpdateSyncStatus': {
+            'status': allOf(
+                containsPair(
+                  'connected',
+                  true,
+                ),
+                containsPair(
+                  'downloading',
+                  isNotNull,
+                ))
+          }
+        }
+      ]);
     });
 
     group('recoverable',
