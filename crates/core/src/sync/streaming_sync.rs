@@ -1,21 +1,13 @@
-use core::{
-    fmt::Write,
-    future::Future,
-    marker::PhantomData,
-    pin::Pin,
-    task::{Context, Poll, Waker},
-};
+use core::{cell::RefCell, fmt::Write};
 
 use alloc::{
     borrow::Cow,
-    boxed::Box,
     collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     format,
     rc::{Rc, Weak},
     string::{String, ToString},
     vec::Vec,
 };
-use futures_lite::FutureExt;
 
 use crate::{
     error::{PowerSyncError, PowerSyncErrorCause, Result},
@@ -33,7 +25,7 @@ use crate::{
             BucketSubscriptionReason, DataLine, StreamDescription, StreamSubscriptionError,
             StreamSubscriptionErrorCause, SyncLineWithSource,
         },
-        subscriptions::LocallyTrackedSubscription,
+        subscriptions::{LocallyTrackedSubscription, StreamKey},
         sync_status::{ActiveStreamSubscription, TimestampMicros},
     },
     utils::database::Database,
@@ -56,8 +48,7 @@ pub struct SyncClient {
     db: Database,
     adapter: Rc<StorageAdapter>,
     db_state: Weak<DatabaseState>,
-    /// The current [ClientState] (essentially an optional [StreamingSyncIteration]).
-    state: ClientState,
+    current_iteration: Option<StreamingSyncIteration>,
 }
 
 impl SyncClient {
@@ -68,160 +59,61 @@ impl SyncClient {
             db,
             adapter,
             db_state: Rc::downgrade(state),
-            state: ClientState::Idle,
+            current_iteration: None,
         })
     }
 
     pub fn push_event<'a>(&mut self, event: SyncControlRequest<'a>) -> Result<Vec<Instruction>> {
         match event {
             SyncControlRequest::StartSyncStream(options) => {
-                self.state.tear_down()?;
-
-                let mut handle = SyncIterationHandle::new(
+                let mut event = ActiveEvent::new(SyncEvent::Initialize);
+                let handle = StreamingSyncIteration::create(
                     self.db,
                     options,
                     self.adapter.clone(),
                     self.db_state.clone(),
-                );
-                let instructions = handle.initialize()?;
-                self.state = ClientState::IterationActive(handle);
+                    &mut event,
+                )?;
+                self.current_iteration = Some(handle);
 
-                Ok(instructions)
+                Ok(event.instructions)
             }
             SyncControlRequest::SyncEvent(sync_event) => {
                 let mut active = ActiveEvent::new(sync_event);
 
-                let ClientState::IterationActive(handle) = &mut self.state else {
+                let Some(iteration) = &mut self.current_iteration else {
                     return Err(PowerSyncError::state_error("No iteration is active"));
                 };
 
-                match handle.run(&mut active) {
-                    Err(e) => {
-                        self.state = ClientState::Idle;
-                        return Err(e);
-                    }
-                    Ok(done) => {
-                        if done {
-                            self.state = ClientState::Idle;
-                        }
-                    }
-                };
-
-                if let Some(recoverable) = active.recoverable_error.take() {
-                    Err(recoverable)
-                } else {
-                    Ok(active.instructions)
+                let done = iteration.handle_event(&mut active)?;
+                if done {
+                    self.current_iteration = None;
                 }
+
+                Ok(active.instructions)
             }
-            SyncControlRequest::StopSyncStream => self.state.tear_down(),
+            SyncControlRequest::StopSyncStream => {
+                let mut active = ActiveEvent::new(SyncEvent::TearDown);
+
+                if let Some(mut iteration) = self.current_iteration.take() {
+                    iteration.handle_event(&mut active)?;
+                }
+
+                Ok(active.instructions)
+            }
         }
     }
 
     /// Whether a sync iteration is currently active on the connection.
     pub fn has_sync_iteration(&self) -> bool {
-        matches!(self.state, ClientState::IterationActive(_))
-    }
-}
-
-enum ClientState {
-    /// No sync iteration is currently active.
-    Idle,
-    /// A sync iteration has begun on the database.
-    IterationActive(SyncIterationHandle),
-}
-
-impl ClientState {
-    fn tear_down(&mut self) -> Result<Vec<Instruction>> {
-        let mut event = ActiveEvent::new(SyncEvent::TearDown);
-
-        if let ClientState::IterationActive(old) = self {
-            old.run(&mut event)?;
-        };
-
-        *self = ClientState::Idle;
-        Ok(event.instructions)
-    }
-}
-
-/// A handle that allows progressing a [StreamingSyncIteration].
-///
-/// The sync itertion itself is implemented as an `async` function, as this allows us to treat it
-/// as a coroutine that preserves internal state between multiple `powersync_control` invocations.
-/// At each invocation, the future is polled once (and gets access to context that allows it to
-/// render [Instruction]s to return from the function).
-struct SyncIterationHandle {
-    future: Pin<Box<dyn Future<Output = Result<CloseSyncStream>>>>,
-}
-
-impl SyncIterationHandle {
-    /// Creates a new sync iteration in a pending state by preparing statements for
-    /// [StorageAdapter] and setting up the initial downloading state for [StorageAdapter] .
-    fn new(
-        db: Database,
-        options: StartSyncStream,
-        adapter: Rc<StorageAdapter>,
-        state: Weak<DatabaseState>,
-    ) -> Self {
-        let runner = StreamingSyncIteration {
-            db,
-            validated_but_not_applied: None,
-            diagnostics: DiagnosticsCollector::for_options(&options),
-            options,
-            state,
-            adapter,
-            status: SyncStatusContainer::new(),
-        };
-        let future = runner.run().boxed_local();
-        Self { future }
-    }
-
-    /// Forwards a [SyncEvent::Initialize] to the current sync iteration, returning the initial
-    /// instructions generated.
-    fn initialize(&mut self) -> Result<Vec<Instruction>> {
-        let mut event = ActiveEvent::new(SyncEvent::Initialize);
-        let result = self.run(&mut event)?;
-        assert!(!result, "Stream client aborted initialization");
-
-        Ok(event.instructions)
-    }
-
-    fn run(&mut self, active: &mut ActiveEvent) -> Result<bool> {
-        // Using a noop waker because the only event thing StreamingSyncIteration::run polls on is
-        // the next incoming sync event.
-        let waker = unsafe {
-            Waker::new(
-                active as *const ActiveEvent as *const (),
-                Waker::noop().vtable(),
-            )
-        };
-        let mut context = Context::from_waker(&waker);
-
-        Ok(
-            if let Poll::Ready(result) = self.future.poll(&mut context) {
-                let close = result?;
-
-                active
-                    .instructions
-                    .push(Instruction::CloseSyncStream(close));
-                true
-            } else {
-                false
-            },
-        )
+        self.current_iteration.is_some()
     }
 }
 
 /// A [SyncEvent] currently being handled by a [StreamingSyncIteration].
 struct ActiveEvent<'a> {
-    handled: bool,
     /// The event to handle
     event: SyncEvent<'a>,
-    /// An error to return to the client for a `powersync_control` invocation when that error
-    /// shouldn't interrupt the sync iteration.
-    ///
-    /// For errors that do close the iteration, we report a result by having [SyncIterationHandle::run]
-    /// returning the error.
-    recoverable_error: Option<PowerSyncError>,
     /// Instructions to forward to the client when the `powersync_control` invocation completes.
     instructions: Vec<Instruction>,
 }
@@ -229,50 +121,47 @@ struct ActiveEvent<'a> {
 impl<'a> ActiveEvent<'a> {
     pub fn new(event: SyncEvent<'a>) -> Self {
         Self {
-            handled: false,
             event,
-            recoverable_error: None,
             instructions: Vec::new(),
         }
     }
 }
 
 struct StreamingSyncIteration {
-    db: Database,
     state: Weak<DatabaseState>,
     adapter: Rc<StorageAdapter>,
-    options: StartSyncStream,
     status: SyncStatusContainer,
+    options: StartSyncStream,
+    target: SyncTarget,
     // A checkpoint that has been fully received and validated, but couldn't be applied due to
     // pending local data. We will retry applying this checkpoint when the client SDK informs us
     // that it has finished uploading changes.
-    validated_but_not_applied: Option<OwnedCheckpoint>,
+    validated_but_not_applied: RefCell<Option<OwnedCheckpoint>>,
     diagnostics: Option<DiagnosticsCollector>,
 }
 
 impl StreamingSyncIteration {
-    fn receive_event<'a>() -> impl Future<Output = &'a mut ActiveEvent<'a>> {
-        struct Wait<'a> {
-            a: PhantomData<&'a StreamingSyncIteration>,
-        }
+    fn create(
+        db: Database,
+        mut options: StartSyncStream,
+        adapter: Rc<StorageAdapter>,
+        state: Weak<DatabaseState>,
+        event: &mut ActiveEvent,
+    ) -> Result<Self> {
+        let mut status = SyncStatusContainer::new();
+        let prepared_request =
+            Self::prepare_request(db, &adapter, &mut status, &mut options, event)?;
+        let diagnostics = DiagnosticsCollector::for_options(&options);
 
-        impl<'a> Future for Wait<'a> {
-            type Output = &'a mut ActiveEvent<'a>;
-
-            fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-                let context = cx.waker().data().cast_mut() as *mut ActiveEvent;
-                let context = unsafe { &mut *context };
-
-                if context.handled {
-                    Poll::Pending
-                } else {
-                    context.handled = true;
-                    Poll::Ready(context)
-                }
-            }
-        }
-
-        Wait { a: PhantomData }
+        Ok(Self {
+            state,
+            adapter,
+            status: SyncStatusContainer::new(),
+            options,
+            target: SyncTarget::BeforeCheckpoint(prepared_request),
+            validated_but_not_applied: Default::default(),
+            diagnostics: diagnostics,
+        })
     }
 
     /// Starts handling a single sync line without altering any in-memory state of the state
@@ -282,15 +171,15 @@ impl StreamingSyncIteration {
     /// discussion on why this split is necessary, see [SyncStateMachineTransition].
     fn prepare_handling_sync_line<'a>(
         &self,
-        target: &SyncTarget,
+        // Note: Only mutable so that resolve_subscription_state can push log events.
         event: &mut ActiveEvent,
-        line: &'a SyncLineWithSource<'a>,
+        line: SyncLineWithSource<'a>,
     ) -> Result<SyncStateMachineTransition<'a>> {
         let SyncLineWithSource { source, line } = line;
 
         Ok(match line {
             SyncLine::Checkpoint(checkpoint) => {
-                let (to_delete, updated_target) = target.track_checkpoint(&checkpoint);
+                let (to_delete, updated_target) = self.target.track_checkpoint(&checkpoint);
 
                 self.adapter
                     .delete_buckets(to_delete.iter().map(|b| b.as_str()))?;
@@ -303,7 +192,7 @@ impl StreamingSyncIteration {
                 }
             }
             SyncLine::CheckpointDiff(diff) => {
-                let Some(target) = target.target_checkpoint() else {
+                let Some(target) = self.target.target_checkpoint() else {
                     return Err(PowerSyncError::sync_protocol_error(
                         "Received checkpoint_diff without previous checkpoint",
                         PowerSyncErrorCause::Unknown,
@@ -323,7 +212,7 @@ impl StreamingSyncIteration {
                 }
             }
             SyncLine::CheckpointComplete(_) => {
-                let Some(checkpoint) = target.target_checkpoint() else {
+                let Some(checkpoint) = self.target.target_checkpoint() else {
                     return Err(PowerSyncError::sync_protocol_error(
                         "Received checkpoint complete without previous checkpoint",
                         PowerSyncErrorCause::Unknown,
@@ -376,7 +265,7 @@ impl StreamingSyncIteration {
             }
             SyncLine::CheckpointPartiallyComplete(complete) => {
                 let priority = complete.priority;
-                let Some(target) = target.target_checkpoint() else {
+                let Some(target) = self.target.target_checkpoint() else {
                     return Err(PowerSyncError::state_error(
                         "Received checkpoint complete without previous checkpoint",
                     ));
@@ -400,7 +289,9 @@ impl StreamingSyncIteration {
                     SyncLocalResult::PendingLocalChanges => {
                         // If we have pending uploads, we can't complete new checkpoints outside
                         // of priority 0. We'll resolve this for a complete checkpoint later.
-                        SyncStateMachineTransition::Empty
+                        SyncStateMachineTransition::Empty {
+                            contains_line: true,
+                        }
                     }
                     SyncLocalResult::ChangesApplied { timestamp } => {
                         SyncStateMachineTransition::SyncLocalChangesApplied {
@@ -431,7 +322,9 @@ impl StreamingSyncIteration {
                     event
                         .instructions
                         .push(Instruction::FetchCredentials { did_expire: false });
-                    SyncStateMachineTransition::Empty
+                    SyncStateMachineTransition::Empty {
+                        contains_line: true,
+                    }
                 } else {
                     // Periodically check whether any subscriptions that are part of this stream
                     // are expired. We currently do this by re-creating the request and aborting the
@@ -439,12 +332,16 @@ impl StreamingSyncIteration {
                     let updated_request = self
                         .adapter
                         .collect_subscription_requests(self.options.include_defaults)?;
-                    if updated_request.request != target.explicit_stream_subscriptions().request {
+                    if updated_request.request
+                        != self.target.explicit_stream_subscriptions().request
+                    {
                         SyncStateMachineTransition::CloseIteration(CloseSyncStream {
                             hide_disconnect: true,
                         })
                     } else {
-                        SyncStateMachineTransition::Empty
+                        SyncStateMachineTransition::Empty {
+                            contains_line: true,
+                        }
                     }
                 }
             }
@@ -453,7 +350,9 @@ impl StreamingSyncIteration {
                     severity: LogSeverity::DEBUG,
                     line: "Unknown sync line".into(),
                 });
-                SyncStateMachineTransition::Empty
+                SyncStateMachineTransition::Empty {
+                    contains_line: true,
+                }
             }
         })
     }
@@ -461,10 +360,9 @@ impl StreamingSyncIteration {
     /// Applies a sync state transition, returning whether the iteration should be stopped.
     fn apply_transition(
         &mut self,
-        target: &mut SyncTarget,
         event: &mut ActiveEvent,
         transition: SyncStateMachineTransition,
-    ) -> Option<CloseSyncStream> {
+    ) -> bool {
         match transition {
             SyncStateMachineTransition::StartTrackingCheckpoint {
                 progress,
@@ -481,8 +379,8 @@ impl StreamingSyncIteration {
                 // pending checkpoint, so we'd have to take the oplog state at the time we've
                 // originally received the validated-but-not-applied checkpoint. This is likely not
                 // something worth doing.
-                self.validated_but_not_applied = None;
-                *target = updated_target;
+                *self.validated_but_not_applied.get_mut() = None;
+                self.target = updated_target;
 
                 if let Some(diagnostics) = &self.diagnostics {
                     let status = self.status.inner().borrow();
@@ -495,14 +393,20 @@ impl StreamingSyncIteration {
 
                 if let Some(diagnostics) = &mut self.diagnostics {
                     let status = self.status.inner().borrow();
-                    diagnostics.handle_data_line(line, &*status, &mut event.instructions);
+                    diagnostics.handle_data_line(&line, &*status, &mut event.instructions);
                 }
             }
-            SyncStateMachineTransition::CloseIteration(close) => return Some(close),
+            SyncStateMachineTransition::CloseIteration(close) => {
+                self.status
+                    .update(|s| s.disconnect(), &mut event.instructions);
+
+                event.instructions.push(Instruction::CloseSyncStream(close));
+                return true;
+            }
             SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
                 validated_but_not_applied,
             } => {
-                self.validated_but_not_applied = Some(validated_but_not_applied);
+                *self.validated_but_not_applied.get_mut() = Some(validated_but_not_applied);
             }
             SyncStateMachineTransition::SyncLocalChangesApplied {
                 applied_checkpoint_request_id,
@@ -520,102 +424,80 @@ impl StreamingSyncIteration {
                     self.handle_checkpoint_applied(event, timestamp, applied_checkpoint_request_id);
                 }
             }
-            SyncStateMachineTransition::Empty => {}
+            SyncStateMachineTransition::ChangeActiveStreams(streams) => {
+                self.options.active_streams = streams;
+            }
+            SyncStateMachineTransition::MarkConnected
+            | SyncStateMachineTransition::Empty {
+                contains_line: true,
+            } => {
+                self.status
+                    .update(|s| s.mark_connected(), &mut event.instructions);
+            }
+            SyncStateMachineTransition::Empty {
+                contains_line: false,
+            } => {}
         };
 
-        None
+        false
     }
 
-    /// Handles a single sync line.
-    ///
-    /// When it returns `Ok(true)`, the sync iteration should be stopped. For errors, the type of
-    /// error determines whether the iteration can continue.
-    fn handle_line(
-        &mut self,
-        target: &mut SyncTarget,
-        event: &mut ActiveEvent,
-        line: &SyncLineWithSource,
-    ) -> Result<Option<CloseSyncStream>> {
-        let transition = self.prepare_handling_sync_line(target, event, line)?;
-        Ok(self.apply_transition(target, event, transition))
+    fn prepare_handling_event<'a>(
+        &self,
+        event: &mut ActiveEvent<'a>,
+    ) -> Result<SyncStateMachineTransition<'a>> {
+        Ok(match event.event {
+            SyncEvent::Initialize { .. } => {
+                panic!("Initialize should only be emited once")
+            }
+            SyncEvent::TearDown | SyncEvent::StreamEnded => {
+                SyncStateMachineTransition::CloseIteration(CloseSyncStream {
+                    hide_disconnect: false,
+                })
+            }
+            SyncEvent::TextLine { data } => {
+                self.prepare_handling_sync_line(event, SyncLineWithSource::from_text(data)?)?
+            }
+            SyncEvent::BinaryLine { data } => {
+                self.prepare_handling_sync_line(event, SyncLineWithSource::from_binary(data)?)?
+            }
+            SyncEvent::UploadFinished => self.try_applying_write_after_completed_upload(event)?,
+            SyncEvent::DidUpdateSubscriptions { ref active_streams } => {
+                self.adapter.increase_ttl(&active_streams)?;
+                let new_request = self
+                    .adapter
+                    .collect_subscription_requests(self.options.include_defaults)?;
+
+                if new_request.request != self.target.explicit_stream_subscriptions().request {
+                    // This changes stream requests, start another iteration.
+                    SyncStateMachineTransition::CloseIteration(CloseSyncStream {
+                        hide_disconnect: true,
+                    })
+                } else {
+                    // Stream request unchanged, but update our references so that we don't
+                    // extend the expiry date of previous subscriptions.
+                    SyncStateMachineTransition::ChangeActiveStreams(Rc::clone(active_streams))
+                }
+            }
+            SyncEvent::ConnectionEstablished => SyncStateMachineTransition::MarkConnected,
+            SyncEvent::DidRefreshToken => {
+                // Break so that the client SDK starts another iteration.
+                SyncStateMachineTransition::CloseIteration(CloseSyncStream {
+                    hide_disconnect: true,
+                })
+            }
+        })
     }
 
     /// Runs a full sync iteration, returning nothing when it completes regularly or an error when
     /// the sync iteration should be interrupted.
-    async fn run(mut self) -> Result<CloseSyncStream> {
-        let mut target = SyncTarget::BeforeCheckpoint(self.prepare_request().await?);
+    fn handle_event(&mut self, event: &mut ActiveEvent) -> Result<bool> {
+        let transition = self.prepare_handling_event(event)?;
 
-        let hide_disconnect = loop {
-            let event = Self::receive_event().await;
+        let maybe_close = self.apply_transition(event, transition);
+        self.status.emit_changes(&mut event.instructions);
 
-            let line: SyncLineWithSource = match event.event {
-                SyncEvent::Initialize { .. } => {
-                    panic!("Initialize should only be emited once")
-                }
-                SyncEvent::TearDown => {
-                    self.status
-                        .update(|s| s.disconnect(), &mut event.instructions);
-                    break false;
-                }
-                SyncEvent::TextLine { data } => SyncLineWithSource::from_text(data)?,
-                SyncEvent::BinaryLine { data } => SyncLineWithSource::from_binary(data)?,
-                SyncEvent::UploadFinished => {
-                    self.try_applying_write_after_completed_upload(event)?;
-
-                    continue;
-                }
-                SyncEvent::DidUpdateSubscriptions { ref active_streams } => {
-                    self.adapter.increase_ttl(&active_streams)?;
-                    let new_request = self
-                        .adapter
-                        .collect_subscription_requests(self.options.include_defaults)?;
-
-                    if new_request.request != target.explicit_stream_subscriptions().request {
-                        // This changes stream requests, start another iteration.
-                        break true;
-                    } else {
-                        // Stream request unchanged, but update our references so that we don't
-                        // extend the expiry date of previous subscriptions.
-                        self.options.active_streams = Rc::clone(active_streams);
-                        continue;
-                    }
-                }
-                SyncEvent::ConnectionEstablished => {
-                    self.status
-                        .update(|s| s.mark_connected(), &mut event.instructions);
-                    continue;
-                }
-                SyncEvent::StreamEnded => {
-                    self.status
-                        .update(|s| s.disconnect(), &mut event.instructions);
-                    break false;
-                }
-                SyncEvent::DidRefreshToken => {
-                    // Break so that the client SDK starts another iteration.
-                    break true;
-                }
-            };
-
-            self.status.update_only(|s| s.mark_connected());
-
-            match self.handle_line(&mut target, event, &line) {
-                Ok(end_iteration) => {
-                    if let Some(options) = end_iteration {
-                        break options.hide_disconnect;
-                    } else {
-                        ()
-                    }
-                }
-                Err(e) if e.can_retry() => {
-                    event.recoverable_error = Some(e);
-                }
-                Err(e) => return Err(e),
-            };
-
-            self.status.emit_changes(&mut event.instructions);
-        };
-
-        Ok(CloseSyncStream { hide_disconnect })
+        Ok(maybe_close)
     }
 
     fn load_progress(&self, checkpoint: &OwnedCheckpoint) -> Result<SyncDownloadProgress> {
@@ -631,9 +513,14 @@ impl StreamingSyncIteration {
         Ok(progress)
     }
 
-    fn try_applying_write_after_completed_upload(&mut self, event: &mut ActiveEvent) -> Result<()> {
+    fn try_applying_write_after_completed_upload<'a>(
+        &'_ self,
+        event: &mut ActiveEvent<'a>,
+    ) -> Result<SyncStateMachineTransition<'a>> {
         let Some(checkpoint) = self.validated_but_not_applied.take() else {
-            return Ok(());
+            return Ok(SyncStateMachineTransition::Empty {
+                contains_line: false,
+            });
         };
 
         let target_write = self.adapter.target_checkpoint_request_id()?;
@@ -641,11 +528,13 @@ impl StreamingSyncIteration {
             // Note: None < Some(x). The pending checkpoint does not contain the write
             // checkpoint created during the upload, so we don't have to try applying it, it's
             // guaranteed to be outdated.
-            return Ok(());
+            return Ok(SyncStateMachineTransition::Empty {
+                contains_line: false,
+            });
         }
 
         let result = self.sync_local(&checkpoint, None)?;
-        match result {
+        Ok(match result {
             SyncLocalResult::ChangesApplied { timestamp } => {
                 event.instructions.push(Instruction::LogLine {
                     severity: LogSeverity::DEBUG,
@@ -656,17 +545,23 @@ impl StreamingSyncIteration {
                     self.adapter
                         .persist_last_applied_checkpoint_request_id(request_id)?;
                 }
-                self.handle_checkpoint_applied(event, timestamp, checkpoint.write_checkpoint);
+                SyncStateMachineTransition::SyncLocalChangesApplied {
+                    applied_checkpoint_request_id: checkpoint.write_checkpoint,
+                    partial: None,
+                    timestamp,
+                }
             }
             _ => {
                 event.instructions.push(Instruction::LogLine {
                     severity: LogSeverity::WARNING,
                     line: "Could not apply pending checkpoint even after completed upload".into(),
                 });
-            }
-        }
 
-        Ok(())
+                SyncStateMachineTransition::Empty {
+                    contains_line: false,
+                }
+            }
+        })
     }
 
     /// Reconciles local stream subscriptions with service-side state received in a checkpoint.
@@ -893,16 +788,21 @@ impl StreamingSyncIteration {
     /// This returns local bucket names (used to delete buckets that don't appear in checkpoints
     /// anymore) and the [LocallyTrackedSubscription::id] of explicitly-requested stream
     /// subscriptions, used to associate [BucketSubscriptionReason::DerivedFromExplicitSubscription].
-    async fn prepare_request(&mut self) -> Result<BeforeCheckpoint> {
-        let event = Self::receive_event().await;
+    fn prepare_request(
+        db: Database,
+        adapter: &StorageAdapter,
+        status: &mut SyncStatusContainer,
+        options: &mut StartSyncStream,
+        event: &mut ActiveEvent,
+    ) -> Result<BeforeCheckpoint> {
         let SyncEvent::Initialize = event.event else {
             return Err(PowerSyncError::argument_error(
                 "first event must initialize",
             ));
         };
 
-        let offline_state = self.adapter.offline_sync_state()?;
-        self.status.update(
+        let offline_state = adapter.offline_sync_state()?;
+        status.update(
             move |s| {
                 *s = offline_state;
                 s.start_connecting();
@@ -910,18 +810,17 @@ impl StreamingSyncIteration {
             &mut event.instructions,
         );
 
-        let requests = self.adapter.collect_bucket_requests()?;
+        let requests = adapter.collect_bucket_requests()?;
         let local_bucket_names: Vec<String> = requests.iter().map(|s| s.name.clone()).collect();
-        self.adapter.increase_ttl(&self.options.active_streams)?;
-        let stream_subscriptions = self
-            .adapter
-            .collect_subscription_requests(self.options.include_defaults)?;
+        adapter.increase_ttl(&options.active_streams)?;
+        let stream_subscriptions =
+            adapter.collect_subscription_requests(options.include_defaults)?;
 
-        let client_id = client_id(self.db)?;
-        let checkpoint_request = if self.options.checkpoint_mode == CheckpointMode::Requests {
+        let client_id = client_id(db)?;
+        let checkpoint_request = if options.checkpoint_mode == CheckpointMode::Requests {
             Some(CheckpointRequestPayload {
                 client_id: client_id.clone(),
-                checkpoint_request_id: self.adapter.initial_checkpoint_request_id()?.to_string(),
+                checkpoint_request_id: adapter.initial_checkpoint_request_id()?.to_string(),
             })
         } else {
             None
@@ -936,9 +835,9 @@ impl StreamingSyncIteration {
             // For details, see https://github.com/powersync-ja/powersync-service/pull/332
             binary_data: true,
             client_id,
-            parameters: self.options.parameters.take(),
+            parameters: options.parameters.take(),
             streams: stream_subscriptions.request.clone(),
-            app_metadata: self.options.app_metadata.take(),
+            app_metadata: options.app_metadata.take(),
         };
 
         event.instructions.push(Instruction::EstablishSyncStream {
@@ -1146,7 +1045,7 @@ enum SyncStateMachineTransition<'a> {
         subscription_state: Vec<ActiveStreamSubscription>,
     },
     DataLineSaved {
-        line: &'a DataLine<'a>,
+        line: DataLine<'a>,
     },
     SyncLocalFailedDueToPendingCrud {
         validated_but_not_applied: OwnedCheckpoint,
@@ -1157,5 +1056,9 @@ enum SyncStateMachineTransition<'a> {
         timestamp: TimestampMicros,
     },
     CloseIteration(CloseSyncStream),
-    Empty,
+    ChangeActiveStreams(Rc<Vec<StreamKey>>),
+    MarkConnected,
+    Empty {
+        contains_line: bool,
+    },
 }

@@ -10,7 +10,6 @@ use alloc::{
     ffi::{CString, NulError},
     string::{String, ToString},
 };
-use num_traits::FromPrimitive;
 use powersync_sqlite_nostd::{self as sqlite, Connection, Context, ResultCode, context, sqlite3};
 use thiserror::Error;
 
@@ -149,20 +148,6 @@ impl PowerSyncError {
             Internal { .. } => ResultCode::INTERNAL,
             CString { .. } => ResultCode::FORMAT,
             Context { inner, context: _ } => inner.sqlite_error_code(),
-        }
-    }
-
-    pub fn can_retry(&self) -> bool {
-        match self.inner.as_ref() {
-            RawPowerSyncError::Sqlite(cause) => {
-                let base_error = ResultCode::from_i32((cause.code as i32) & 0xFF);
-                if base_error == Some(ResultCode::BUSY) || base_error == Some(ResultCode::LOCKED) {
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
         }
     }
 
