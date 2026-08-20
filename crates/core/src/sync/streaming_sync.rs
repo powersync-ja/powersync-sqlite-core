@@ -1,4 +1,4 @@
-use core::{cell::RefCell, fmt::Write};
+use core::fmt::Write;
 
 use alloc::{
     borrow::Cow,
@@ -136,7 +136,7 @@ struct StreamingSyncIteration {
     // A checkpoint that has been fully received and validated, but couldn't be applied due to
     // pending local data. We will retry applying this checkpoint when the client SDK informs us
     // that it has finished uploading changes.
-    validated_but_not_applied: RefCell<Option<OwnedCheckpoint>>,
+    validated_but_not_applied: Option<OwnedCheckpoint>,
     diagnostics: Option<DiagnosticsCollector>,
 }
 
@@ -156,7 +156,7 @@ impl StreamingSyncIteration {
         Ok(Self {
             state,
             adapter,
-            status: SyncStatusContainer::new(),
+            status,
             options,
             target: SyncTarget::BeforeCheckpoint(prepared_request),
             validated_but_not_applied: Default::default(),
@@ -289,9 +289,7 @@ impl StreamingSyncIteration {
                     SyncLocalResult::PendingLocalChanges => {
                         // If we have pending uploads, we can't complete new checkpoints outside
                         // of priority 0. We'll resolve this for a complete checkpoint later.
-                        SyncStateMachineTransition::Empty {
-                            contains_line: true,
-                        }
+                        SyncStateMachineTransition::EmptyAndConnected
                     }
                     SyncLocalResult::ChangesApplied { timestamp } => {
                         SyncStateMachineTransition::SyncLocalChangesApplied {
@@ -322,9 +320,7 @@ impl StreamingSyncIteration {
                     event
                         .instructions
                         .push(Instruction::FetchCredentials { did_expire: false });
-                    SyncStateMachineTransition::Empty {
-                        contains_line: true,
-                    }
+                    SyncStateMachineTransition::EmptyAndConnected
                 } else {
                     // Periodically check whether any subscriptions that are part of this stream
                     // are expired. We currently do this by re-creating the request and aborting the
@@ -339,9 +335,7 @@ impl StreamingSyncIteration {
                             hide_disconnect: true,
                         })
                     } else {
-                        SyncStateMachineTransition::Empty {
-                            contains_line: true,
-                        }
+                        SyncStateMachineTransition::EmptyAndConnected
                     }
                 }
             }
@@ -350,9 +344,7 @@ impl StreamingSyncIteration {
                     severity: LogSeverity::DEBUG,
                     line: "Unknown sync line".into(),
                 });
-                SyncStateMachineTransition::Empty {
-                    contains_line: true,
-                }
+                SyncStateMachineTransition::EmptyAndConnected
             }
         })
     }
@@ -379,7 +371,7 @@ impl StreamingSyncIteration {
                 // pending checkpoint, so we'd have to take the oplog state at the time we've
                 // originally received the validated-but-not-applied checkpoint. This is likely not
                 // something worth doing.
-                *self.validated_but_not_applied.get_mut() = None;
+                self.validated_but_not_applied = None;
                 self.target = updated_target;
 
                 if let Some(diagnostics) = &self.diagnostics {
@@ -406,13 +398,15 @@ impl StreamingSyncIteration {
             SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
                 validated_but_not_applied,
             } => {
-                *self.validated_but_not_applied.get_mut() = Some(validated_but_not_applied);
+                self.validated_but_not_applied = Some(validated_but_not_applied);
             }
             SyncStateMachineTransition::SyncLocalChangesApplied {
                 applied_checkpoint_request_id,
                 partial,
                 timestamp,
             } => {
+                self.validated_but_not_applied = None;
+
                 if let Some(priority) = partial {
                     self.status.update(
                         |status| {
@@ -427,16 +421,11 @@ impl StreamingSyncIteration {
             SyncStateMachineTransition::ChangeActiveStreams(streams) => {
                 self.options.active_streams = streams;
             }
-            SyncStateMachineTransition::MarkConnected
-            | SyncStateMachineTransition::Empty {
-                contains_line: true,
-            } => {
+            SyncStateMachineTransition::EmptyAndConnected => {
                 self.status
                     .update(|s| s.mark_connected(), &mut event.instructions);
             }
-            SyncStateMachineTransition::Empty {
-                contains_line: false,
-            } => {}
+            SyncStateMachineTransition::Empty => {}
         };
 
         false
@@ -479,7 +468,7 @@ impl StreamingSyncIteration {
                     SyncStateMachineTransition::ChangeActiveStreams(Rc::clone(active_streams))
                 }
             }
-            SyncEvent::ConnectionEstablished => SyncStateMachineTransition::MarkConnected,
+            SyncEvent::ConnectionEstablished => SyncStateMachineTransition::EmptyAndConnected,
             SyncEvent::DidRefreshToken => {
                 // Break so that the client SDK starts another iteration.
                 SyncStateMachineTransition::CloseIteration(CloseSyncStream {
@@ -517,10 +506,8 @@ impl StreamingSyncIteration {
         &'_ self,
         event: &mut ActiveEvent<'a>,
     ) -> Result<SyncStateMachineTransition<'a>> {
-        let Some(checkpoint) = self.validated_but_not_applied.take() else {
-            return Ok(SyncStateMachineTransition::Empty {
-                contains_line: false,
-            });
+        let Some(checkpoint) = &self.validated_but_not_applied else {
+            return Ok(SyncStateMachineTransition::Empty);
         };
 
         let target_write = self.adapter.target_checkpoint_request_id()?;
@@ -528,9 +515,7 @@ impl StreamingSyncIteration {
             // Note: None < Some(x). The pending checkpoint does not contain the write
             // checkpoint created during the upload, so we don't have to try applying it, it's
             // guaranteed to be outdated.
-            return Ok(SyncStateMachineTransition::Empty {
-                contains_line: false,
-            });
+            return Ok(SyncStateMachineTransition::Empty);
         }
 
         let result = self.sync_local(&checkpoint, None)?;
@@ -557,9 +542,7 @@ impl StreamingSyncIteration {
                     line: "Could not apply pending checkpoint even after completed upload".into(),
                 });
 
-                SyncStateMachineTransition::Empty {
-                    contains_line: false,
-                }
+                SyncStateMachineTransition::Empty
             }
         })
     }
@@ -1057,8 +1040,6 @@ enum SyncStateMachineTransition<'a> {
     },
     CloseIteration(CloseSyncStream),
     ChangeActiveStreams(Rc<Vec<StreamKey>>),
-    MarkConnected,
-    Empty {
-        contains_line: bool,
-    },
+    EmptyAndConnected,
+    Empty,
 }
