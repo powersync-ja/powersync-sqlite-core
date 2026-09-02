@@ -1009,6 +1009,19 @@ impl OwnedCheckpoint {
         self.last_op_id = diff.last_op_id;
         self.write_checkpoint = diff.write_checkpoint;
     }
+
+    pub fn list_buckets<'a>(
+        &'a self,
+        min_priority: Option<BucketPriority>,
+    ) -> impl Iterator<Item = &'a str> {
+        self.buckets.values().filter_map(move |item| {
+            if item.is_in_priority(min_priority) {
+                Some(item.bucket.as_str())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 /// A transition representing pending changes between [StreamingSyncIteration::prepare_handling_sync_line]
