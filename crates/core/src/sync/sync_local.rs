@@ -16,7 +16,6 @@ use crate::sync::BucketPriority;
 use crate::sync::storage_adapter::{
     LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY, TARGET_CHECKPOINT_REQUEST_ID_KEY,
 };
-use crate::sync::streaming_sync::OwnedCheckpoint;
 use crate::sync::sync_status::TimestampMicros;
 use crate::utils::SqlBuffer;
 use crate::utils::database::{Database, Statement};
@@ -26,13 +25,7 @@ use powersync_sqlite_nostd::{self as sqlite, Destructor};
 pub struct PartialSyncOperation<'a> {
     /// The lowest priority part of the partial sync operation.
     pub priority: BucketPriority,
-    pub checkpoint: &'a OwnedCheckpoint,
-}
-
-impl<'a> PartialSyncOperation<'a> {
-    fn list_buckets(&self) -> impl Iterator<Item = &'a str> {
-        self.checkpoint.list_buckets(Some(self.priority))
-    }
+    pub involved_buckets: Vec<&'a str>,
 }
 
 pub struct SyncOperation<'a> {
@@ -321,8 +314,8 @@ SELECT
     GROUP BY b.row_type, b.row_id;",
                 )?;
 
-                let bucket_ids: Vec<&str> = partial.list_buckets().collect();
-                let bucket_ids = serde_json::to_string(&bucket_ids).unwrap();
+                let bucket_ids = serde_json::to_string(&partial.involved_buckets)
+                    .map_err(PowerSyncError::internal)?;
                 stmt.bind_text(1, &bucket_ids, Destructor::TRANSIENT)?;
 
                 stmt
@@ -341,7 +334,7 @@ SELECT
                             WHERE last_applied_op != last_op AND name = ?",
                 )?;
 
-                for bucket in partial.list_buckets() {
+                for bucket in &partial.involved_buckets {
                     updated.bind_text(1, bucket, Destructor::STATIC)?;
                     updated.exec()?;
                 }
