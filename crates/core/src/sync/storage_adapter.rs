@@ -281,7 +281,7 @@ WHERE bucket = ?1",
                 self.db,
                 Some(PartialSyncOperation {
                     priority,
-                    checkpoint,
+                    involved_buckets: checkpoint.list_buckets(Some(priority)).collect(),
                 }),
                 now,
             ),
