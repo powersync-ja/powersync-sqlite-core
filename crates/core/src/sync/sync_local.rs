@@ -2,6 +2,7 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use serde::Serialize;
 use serde::ser::SerializeMap;
 
@@ -15,6 +16,7 @@ use crate::sync::BucketPriority;
 use crate::sync::storage_adapter::{
     LAST_SEEN_CHECKPOINT_REQUEST_ID_KEY, TARGET_CHECKPOINT_REQUEST_ID_KEY,
 };
+use crate::sync::streaming_sync::OwnedCheckpoint;
 use crate::sync::sync_status::TimestampMicros;
 use crate::utils::SqlBuffer;
 use crate::utils::database::{Database, Statement};
@@ -24,9 +26,13 @@ use powersync_sqlite_nostd::{self as sqlite, Destructor};
 pub struct PartialSyncOperation<'a> {
     /// The lowest priority part of the partial sync operation.
     pub priority: BucketPriority,
-    /// The JSON-encoded arguments passed by the client SDK. This includes the priority and a list
-    /// of bucket names in that (and higher) priorities.
-    pub args: &'a str,
+    pub checkpoint: &'a OwnedCheckpoint,
+}
+
+impl<'a> PartialSyncOperation<'a> {
+    fn list_buckets(&self) -> impl Iterator<Item = &'a str> {
+        self.checkpoint.list_buckets(Some(self.priority))
+    }
 }
 
 pub struct SyncOperation<'a> {
@@ -285,8 +291,8 @@ SELECT
 --    We filter out duplicates using the GROUP BY below.
 WITH 
   involved_buckets (id) AS MATERIALIZED (
-    SELECT id FROM ps_buckets WHERE ?1 IS NULL
-      OR name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))
+    SELECT id FROM ps_buckets
+      WHERE name IN (SELECT value FROM json_each(?1))
   ),
   updated_rows AS (
     SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
@@ -314,7 +320,10 @@ SELECT
     -- Group for (2)
     GROUP BY b.row_type, b.row_id;",
                 )?;
-                stmt.bind_text(1, partial.args, Destructor::STATIC)?;
+
+                let bucket_ids: Vec<&str> = partial.list_buckets().collect();
+                let bucket_ids = serde_json::to_string(&bucket_ids).unwrap();
+                stmt.bind_text(1, &bucket_ids, Destructor::TRANSIENT)?;
 
                 stmt
             }
@@ -325,16 +334,17 @@ SELECT
         match &self.partial {
             Some(partial) => {
                 // language=SQLite
-                let updated = self
-                    .db
-                    .prepare_v2(   "\
+                let updated = self.db.prepare_v2(
+                    "\
                         UPDATE ps_buckets
                             SET last_applied_op = last_op
-                            WHERE last_applied_op != last_op AND
-                                name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))",
-                    )?;
-                updated.bind_text(1, partial.args, Destructor::STATIC)?;
-                updated.exec()?;
+                            WHERE last_applied_op != last_op AND name = ?",
+                )?;
+
+                for bucket in partial.list_buckets() {
+                    updated.bind_text(1, bucket, Destructor::STATIC)?;
+                    updated.exec()?;
+                }
             }
             None => {
                 // language=SQLite
