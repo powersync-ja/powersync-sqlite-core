@@ -22,6 +22,7 @@ pub struct Table {
     pub indexes: Vec<Index>,
     #[serde(flatten)]
     pub options: CommonTableOptions,
+    #[serde(default)]
     pub direct: bool,
 }
 
@@ -78,8 +79,6 @@ impl Table {
     }
 
     pub fn internal_name(&self) -> String {
-        debug_assert!(!self.direct);
-
         if self.local_only() {
             format!("ps_data_local__{:}", self.name)
         } else {
