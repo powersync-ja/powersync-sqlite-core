@@ -2180,6 +2180,61 @@ CREATE TRIGGER users_ref_delete
     });
   });
 
+  group('direct tables', () {
+    test('smoke test', () {
+      final schema = {
+        'tables': [
+          {
+            'name': 'users',
+            'columns': [
+              {'name': 'name', 'type': 'text'}
+            ],
+            'direct': true,
+          }
+        ]
+      };
+
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+      invokeControl('start', json.encode({'schema': schema}));
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      final users = db.select('SELECT * FROM users;');
+      expect(users, [
+        {
+          'id': 'my_user',
+          'name': 'First user',
+          '__data': '{"name":"First user"}'
+        }
+      ]);
+
+      // Delete
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'REMOVE',
+        null,
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('SELECT * FROM users'), isEmpty);
+    });
+  });
+
   test('can close database while iteration is active', () {
     // The sync client caches prepared statements, we need to ensure those are
     // freed when we close the connection since SQLite would keep files open

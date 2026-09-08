@@ -71,29 +71,46 @@ impl<'a> SchemaTable<'a> {
     pub fn infer_put_stmt(&self, table_name: &str) -> PendingStatement {
         let mut buffer = SqlBuffer::new();
         let mut params = vec![];
+        let data_column = self.data_column();
 
         buffer.push_str("INSERT INTO ");
         let _ = buffer.identifier().write_str(table_name);
         buffer.push_str(" (id");
+        if let Some(data_column) = data_column {
+            let _ = write!(&mut buffer, ", {data_column}");
+        }
+
         for column in self.column_names() {
             buffer.comma();
             let _ = buffer.identifier().write_str(column);
         }
         buffer.push_str(") VALUES (?1");
         params.push(PendingStatementValue::Id);
+        if data_column.is_some() {
+            params.push(PendingStatementValue::Row);
+            buffer.push_str(", ?2");
+        }
+
+        let data_start_index = if data_column.is_some() { 3 } else { 2 };
         for (i, column) in self.column_names().enumerate() {
             buffer.comma();
-            let _ = write!(&mut buffer, "?{}", i + 2);
+            let _ = write!(&mut buffer, "?{}", i + data_start_index);
             params.push(PendingStatementValue::Column(column.to_string()));
         }
         buffer.push_str(") ON CONFLICT (id) DO UPDATE SET ");
         let mut do_update = buffer.comma_separated();
-        // Generated an "x" = ? for all synced columns to update them without affecting local-only
+
+        if let Some(data_column) = data_column {
+            let entry = do_update.element();
+            let _ = write!(entry, "{data_column} = ?2");
+        }
+
+        // Generate an "x" = ? for all synced columns to update them without affecting local-only
         // columns.
         for (i, column) in self.column_names().enumerate() {
             let entry = do_update.element();
             let _ = entry.identifier().write_str(column);
-            let _ = write!(entry, " = ?{}", i + 2);
+            let _ = write!(entry, " = ?{}", i + data_start_index);
         }
 
         PendingStatement {
