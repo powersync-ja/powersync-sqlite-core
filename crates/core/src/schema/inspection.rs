@@ -12,7 +12,9 @@ pub struct ExistingView {
     /// The name of the view itself.
     pub name: String,
     /// SQL contents of the `CREATE VIEW` statement.
-    pub sql: String,
+    ///
+    /// This is not set for as_raw_table tables, which don't have a view.
+    pub sql: Option<String>,
     /// SQL contents of all triggers implementing deletes by forwarding to
     /// `ps_data` and `ps_crud`.
     pub delete_trigger_sql: String,
@@ -52,7 +54,7 @@ SELECT
 
             results.push(ExistingView {
                 name,
-                sql,
+                sql: Some(sql),
                 delete_trigger_sql: delete,
                 insert_trigger_sql: insert,
                 update_trigger_sql: update,
@@ -69,8 +71,10 @@ SELECT
     }
 
     pub fn create(&self, db: Database) -> Result<()> {
-        Self::drop_by_name(db, &self.name)?;
-        db.exec_safe_str(&self.sql)?;
+        if let Some(create_view) = &self.sql {
+            Self::drop_by_name(db, &self.name)?;
+            db.exec_safe_str(create_view)?;
+        }
         db.exec_safe_str(&self.delete_trigger_sql)?;
         db.exec_safe_str(&self.insert_trigger_sql)?;
         db.exec_safe_str(&self.update_trigger_sql)?;

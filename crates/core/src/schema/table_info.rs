@@ -1,3 +1,5 @@
+use core::fmt::Write;
+
 use alloc::rc::Rc;
 use alloc::string::ToString;
 use alloc::vec;
@@ -5,7 +7,10 @@ use alloc::{collections::btree_set::BTreeSet, format, string::String, vec::Vec};
 use serde::{Deserialize, de::Visitor};
 
 use crate::error::PowerSyncError;
-use crate::schema::ColumnFilter;
+use crate::schema::raw_table::generate_schema_table_trigger;
+use crate::schema::{ColumnFilter, SchemaTable};
+use crate::utils::database::Database;
+use crate::utils::{SqlBuffer, WriteType};
 
 #[derive(Deserialize)]
 pub struct Table {
@@ -17,6 +22,7 @@ pub struct Table {
     pub indexes: Vec<Index>,
     #[serde(flatten)]
     pub options: CommonTableOptions,
+    pub direct: bool,
 }
 
 /// Options shared between regular and raw tables.
@@ -77,6 +83,59 @@ impl Table {
         } else {
             format!("ps_data__{:}", self.name)
         }
+    }
+
+    pub fn move_from_ps_untyped(&self, db: Database) -> Result<(), PowerSyncError> {
+        let mut stmt = SqlBuffer::default();
+        let direct = self.direct;
+
+        stmt.push_str("INSERT INTO ");
+        self.write_name(&mut stmt);
+        let _ = write!(&mut stmt, "(id, {}", self.data_column_name());
+
+        if direct {
+            for column in &self.columns {
+                stmt.push_char(',');
+                let _ = stmt.identifier().write_str(&column.name);
+            }
+        }
+
+        stmt.push_str(") SELECT id, data");
+        if direct {
+            for column in &self.columns {
+                stmt.push_char(',');
+                stmt.json_extract_and_cast("data", &column.name, &column.type_name);
+            }
+        }
+
+        stmt.push_str(" FROM ps_untyped WHERE type = ?");
+
+        db.exec_text(&stmt.sql, &self.name)?;
+        db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &self.name)
+    }
+
+    pub fn write_name(&self, buffer: &mut SqlBuffer) {
+        if self.direct {
+            // Direct tables don't have views, so use the name of the table directly.
+            let _ = buffer.identifier().write_str(&self.name);
+        } else {
+            buffer.quote_internal_name(&self.name, self.local_only());
+        }
+    }
+
+    pub fn data_column_name(&self) -> &'static str {
+        if self.direct { "__data" } else { "data" }
+    }
+
+    pub fn generate_direct_trigger(&self, write: WriteType) -> Result<String, PowerSyncError> {
+        debug_assert!(self.direct);
+        generate_schema_table_trigger(
+            &self.name,
+            SchemaTable::Json(self),
+            None,
+            &format!("{}_trigger_{}", self.name, write),
+            write,
+        )
     }
 }
 
