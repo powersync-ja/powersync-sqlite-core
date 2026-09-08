@@ -78,6 +78,8 @@ impl Table {
     }
 
     pub fn internal_name(&self) -> String {
+        debug_assert!(!self.direct);
+
         if self.local_only() {
             format!("ps_data_local__{:}", self.name)
         } else {
