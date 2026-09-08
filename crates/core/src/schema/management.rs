@@ -54,28 +54,33 @@ fn update_tables(db: Database, schema: &Schema) -> Result<()> {
         }
 
         // New table.
-        let quoted_internal_name = SqlBuffer::quote_identifier(&table.internal_name());
+        let data_column = table.data_column_name();
+        let mut create_table = SqlBuffer::default();
 
-        db.exec_safe_str(&format!(
-            "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
-            quoted_internal_name
-        ))?;
+        create_table.push_str("CREATE TABLE ");
+        table.write_name(&mut create_table);
+        _ = write!(
+            &mut create_table,
+            "(id TEXT PRIMARY KEY NOT NULL, {data_column} TEXT"
+        );
+
+        if table.direct {
+            for column in &table.columns {
+                create_table.push_char(',');
+                let _ = create_table.identifier().write_str(&column.name);
+                let _ = write!(&mut create_table, " {}", column.type_name);
+            }
+
+            create_table.push_str(") STRICT /* ps-managed */;");
+        } else {
+            create_table.push_str(");");
+        }
+
+        db.exec_safe_str(&create_table.sql)?;
 
         if !table.local_only() {
             // MOVE data if any
-            db.exec_text(
-                &format!(
-                    "INSERT INTO {:}(id, data)
-    SELECT id, data
-    FROM ps_untyped
-    WHERE type = ?",
-                    quoted_internal_name
-                ),
-                &table.name,
-            )?;
-
-            // language=SQLite
-            db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
+            table.move_from_ps_untyped(db)?;
         }
     }
 
@@ -217,7 +222,11 @@ fn update_views(db: Database, schema: &Schema) -> Result<()> {
     };
 
     for table in &schema.tables {
-        let view_sql = powersync_view_sql(table);
+        let view_sql = if table.direct {
+            None
+        } else {
+            Some(powersync_view_sql(table))
+        };
         let delete_trigger_sql = powersync_trigger_delete_sql(table)?;
         let insert_trigger_sql = powersync_trigger_insert_sql(table)?;
         let update_trigger_sql = powersync_trigger_update_sql(table)?;

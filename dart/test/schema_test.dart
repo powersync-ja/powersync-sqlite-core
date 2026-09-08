@@ -322,6 +322,74 @@ END''',
         test('#$i', () => testCase.testWith(db));
       }
     });
+
+    group('direct tables', () {
+      final table = {
+        'name': 'users',
+        'columns': [
+          {'name': 'name', 'type': 'text'}
+        ],
+        'direct': true,
+      };
+
+      test('create', () {
+        db.executeInTx('SELECT powersync_replace_schema(?)', [
+          json.encode({'tables': []})
+        ]);
+        db.execute('INSERT INTO ps_untyped (type, id, data) VALUES (?, ?, ?)', [
+          'users',
+          'user-id',
+          json.encode({'name': 'Name', 'other': 3})
+        ]);
+        db.executeInTx('SELECT powersync_replace_schema(?)', [
+          json.encode({
+            'tables': [table]
+          })
+        ]);
+
+        expect(db.select('SELECT * FROM users'), [
+          {
+            'id': 'user-id',
+            'name': 'Name',
+            '__data': '{"name":"Name","other":3}'
+          },
+        ]);
+
+        final createTable = db.select(
+          'SELECT sql FROM sqlite_schema WHERE type = ? AND tbl_name = ?',
+          ['table', 'users'],
+        )[0].columnAt(0);
+        expect(
+          createTable,
+          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL, __data TEXT,"name" text) STRICT /* ps-managed */',
+        );
+
+        final triggers = db
+            .select(
+              'SELECT sql FROM sqlite_schema WHERE type = ? AND tbl_name = ? ORDER BY name',
+              ['trigger', 'users'],
+            )
+            .map((r) => r['sql'])
+            .toList();
+
+        expect(triggers, [
+          r'''
+CREATE TRIGGER "users_trigger_DELETE" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'users');
+END''',
+          r'''
+CREATE TRIGGER "users_trigger_INSERT" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'users', json(powersync_diff('{}', json_object('name', powersync_strip_subtype(NEW."name")))));
+END''',
+          r'''
+CREATE TRIGGER "users_trigger_UPDATE" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
+UPDATE users SET __data = json_object('name', powersync_strip_subtype(NEW."name")) WHERE id = NEW.id;
+INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'users', json(powersync_diff(json_object('name', powersync_strip_subtype(OLD."name")), json_object('name', powersync_strip_subtype(NEW."name")))), 0);
+END'''
+        ]);
+      });
+    });
   });
 }
 
