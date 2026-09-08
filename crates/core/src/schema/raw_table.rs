@@ -232,6 +232,22 @@ pub fn generate_raw_table_trigger(
         schema: &resolved_table,
     };
 
+    generate_schema_table_trigger(
+        local_table_name,
+        as_schema_table,
+        synced_columns.as_ref(),
+        trigger_name,
+        write,
+    )
+}
+
+pub fn generate_schema_table_trigger(
+    local_table_name: &str,
+    table: SchemaTable,
+    synced_columns: Option<&ColumnFilter>,
+    trigger_name: &str,
+    write: WriteType,
+) -> Result<String> {
     let mut buffer = SqlBuffer::new();
     buffer.create_trigger("", trigger_name);
     buffer.trigger_after(write, local_table_name);
@@ -242,7 +258,7 @@ pub fn generate_raw_table_trigger(
         buffer.push_str(" AND\n(");
         // If we have a filter for synced columns (instead of syncing all of them), we want to add
         // additional WHEN clauses to enesure the trigger runs for updates on those columns only.
-        for (i, name) in as_schema_table.column_names().enumerate() {
+        for (i, name) in table.column_names().enumerate() {
             if i != 0 {
                 buffer.push_str(" OR ");
             }
@@ -258,14 +274,14 @@ pub fn generate_raw_table_trigger(
 
     buffer.push_str(" BEGIN\n");
 
-    if table.schema.options.flags.insert_only() {
+    if table.common_options().flags.insert_only() {
         if write != WriteType::Insert {
             // Prevent illegal writes to a table marked as insert-only by raising errors here.
             buffer.push_str("SELECT RAISE(FAIL, 'Unexpected update on insert-only table');\n");
         } else {
             // Insert-only tables use manual CRUD writes so they don't block incoming data.
-            let fragment = table_columns_to_json_object("NEW", &as_schema_table)?;
-            buffer.powersync_crud_manual_put(&table.name, &fragment);
+            let fragment = table_columns_to_json_object("NEW", &table)?;
+            buffer.powersync_crud_manual_put(table.name(), &fragment);
         }
     } else {
         if write == WriteType::Update {
@@ -273,9 +289,9 @@ pub fn generate_raw_table_trigger(
             buffer.check_id_not_changed();
         }
 
-        let json_fragment_new = table_columns_to_json_object("NEW", &as_schema_table)?;
+        let json_fragment_new = table_columns_to_json_object("NEW", &table)?;
         let json_fragment_old = if write == WriteType::Update {
-            Some(table_columns_to_json_object("OLD", &as_schema_table)?)
+            Some(table_columns_to_json_object("OLD", &table)?)
         } else {
             None
         };
@@ -294,15 +310,26 @@ pub fn generate_raw_table_trigger(
             write!(f, ", {json_fragment_new}))")
         });
 
+        if write == WriteType::Update
+            && let Some(data_column) = table.data_column()
+        {
+            // If the table has a __data column storing the full JSON row, we also need to update
+            // that.
+            let _ = write!(
+                &mut buffer,
+                "UPDATE {local_table_name} SET {data_column} = {json_fragment_new} WHERE id = NEW.id;\n"
+            );
+        }
+
         buffer.insert_into_powersync_crud(InsertIntoCrud {
             op: write,
-            table: &as_schema_table,
+            table: &table,
             id_expr: if write == WriteType::Delete {
                 "OLD.id"
             } else {
                 "NEW.id"
             },
-            type_name: &table.name,
+            type_name: table.name(),
             data: match write {
                 // There is no data for deleted rows.
                 WriteType::Delete => None,
