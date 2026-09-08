@@ -18,6 +18,25 @@ pub enum SchemaTable<'a> {
 }
 
 impl<'a> SchemaTable<'a> {
+    /// The type name used for the table when referenced in `ps_crud`, `ps_oplog` and other tables.
+    pub fn name(&self) -> &str {
+        match self {
+            SchemaTable::Json(table) => &table.name,
+            SchemaTable::Raw {
+                definition,
+                schema: _,
+            } => &definition.name,
+        }
+    }
+
+    pub fn data_column(&self) -> Option<&'static str> {
+        if let SchemaTable::Json(table) = self {
+            Some(table.data_column_name())
+        } else {
+            None
+        }
+    }
+
     pub fn common_options(&self) -> &CommonTableOptions {
         match self {
             Self::Json(table) => &table.options,

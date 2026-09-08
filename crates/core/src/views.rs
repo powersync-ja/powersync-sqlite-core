@@ -59,6 +59,10 @@ pub fn powersync_view_sql(table_info: &Table) -> String {
 }
 
 pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String> {
+    if table_info.direct {
+        return table_info.generate_direct_trigger(WriteType::Delete);
+    }
+
     if table_info.options.flags.insert_only() {
         // Insert-only tables have no DELETE triggers
         return Ok(String::new());
@@ -117,6 +121,10 @@ pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String> {
 }
 
 pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String> {
+    if table_info.direct {
+        return table_info.generate_direct_trigger(WriteType::Insert);
+    }
+
     let name = &table_info.name;
     let view_name = table_info.view_name();
     let local_only = table_info.options.flags.local_only();
@@ -168,6 +176,10 @@ pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String> {
 }
 
 pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
+    if table_info.direct {
+        return table_info.generate_direct_trigger(WriteType::Update);
+    }
+
     if table_info.options.flags.insert_only() {
         // Insert-only tables have no UPDATE triggers
         return Ok(String::new());
@@ -359,6 +371,7 @@ mod test {
             ],
             indexes: vec![],
             options: Default::default(),
+            direct: false,
         };
     }
 
