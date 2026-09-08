@@ -1,10 +1,18 @@
-use core::slice;
+use core::{fmt::Write, slice};
 
-use alloc::{string::String, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use serde::Deserialize;
 
-use crate::schema::{
-    Column, CommonTableOptions, RawTable, Table, raw_table::InferredTableStructure,
+use crate::{
+    schema::{
+        Column, CommonTableOptions, PendingStatement, PendingStatementValue, RawTable, Table,
+        raw_table::InferredTableStructure,
+    },
+    utils::SqlBuffer,
 };
 
 /// Utility to wrap both PowerSync-managed JSON tables and raw tables (with their schema snapshot
@@ -55,6 +63,57 @@ impl<'a> SchemaTable<'a> {
                 definition: _,
                 schema,
             } => SchemaTableColumnIterator::Raw(schema.columns.iter()),
+        }
+    }
+
+    /// Generates a statement of the form `INSERT INTO $tbl ($cols) VALUES (?, ...) ON CONFLICT (id)
+    /// DO UPDATE SET ...` for the sync client.
+    pub fn infer_put_stmt(&self, table_name: &str) -> PendingStatement {
+        let mut buffer = SqlBuffer::new();
+        let mut params = vec![];
+
+        buffer.push_str("INSERT INTO ");
+        let _ = buffer.identifier().write_str(table_name);
+        buffer.push_str(" (id");
+        for column in self.column_names() {
+            buffer.comma();
+            let _ = buffer.identifier().write_str(column);
+        }
+        buffer.push_str(") VALUES (?1");
+        params.push(PendingStatementValue::Id);
+        for (i, column) in self.column_names().enumerate() {
+            buffer.comma();
+            let _ = write!(&mut buffer, "?{}", i + 2);
+            params.push(PendingStatementValue::Column(column.to_string()));
+        }
+        buffer.push_str(") ON CONFLICT (id) DO UPDATE SET ");
+        let mut do_update = buffer.comma_separated();
+        // Generated an "x" = ? for all synced columns to update them without affecting local-only
+        // columns.
+        for (i, column) in self.column_names().enumerate() {
+            let entry = do_update.element();
+            let _ = entry.identifier().write_str(column);
+            let _ = write!(entry, " = ?{}", i + 2);
+        }
+
+        PendingStatement {
+            sql: buffer.sql,
+            params,
+            named_parameters_index: None,
+        }
+    }
+
+    /// Generates a statement of the form `DELETE FROM $tbl WHERE id = ?` for the sync client.
+    pub fn infer_delete_stmt(&self, table_name: &str) -> PendingStatement {
+        let mut buffer = SqlBuffer::new();
+        buffer.push_str("DELETE FROM ");
+        let _ = buffer.identifier().write_str(table_name);
+        buffer.push_str(" WHERE id = ?");
+
+        PendingStatement {
+            sql: buffer.sql,
+            params: vec![PendingStatementValue::Id],
+            named_parameters_index: None,
         }
     }
 }
@@ -116,5 +175,54 @@ impl<'de> Deserialize<'de> for ColumnFilter {
         D: serde::Deserializer<'de>,
     {
         Ok(Self::from(Vec::<String>::deserialize(deserializer)?))
+    }
+}
+#[cfg(test)]
+mod test {
+    use alloc::{string::ToString, vec};
+    use core::assert_matches;
+
+    use crate::schema::{
+        PendingStatementValue, RawTable, SchemaTable, raw_table::InferredTableStructure,
+        table_info::RawTableSchema,
+    };
+
+    #[test]
+    fn infer_sync_statements() {
+        let raw_table = RawTable {
+            name: "users".to_string(),
+            schema: RawTableSchema::default(),
+            put: None,
+            delete: None,
+            clear: None,
+        };
+        let structure = InferredTableStructure {
+            columns: vec!["foo".to_string(), "bar".to_string()],
+        };
+        let schema_table = SchemaTable::Raw {
+            definition: &raw_table,
+            schema: &structure,
+        };
+
+        let put = schema_table.infer_put_stmt("tbl");
+        assert_eq!(
+            put.sql,
+            r#"INSERT INTO "tbl" (id, "foo", "bar") VALUES (?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET "foo" = ?2, "bar" = ?3"#
+        );
+        assert_eq!(put.params.len(), 3);
+        assert_matches!(put.params[0], PendingStatementValue::Id);
+        assert_matches!(
+            put.params[1],
+            PendingStatementValue::Column(ref name) if name == "foo"
+        );
+        assert_matches!(
+            put.params[2],
+            PendingStatementValue::Column(ref name) if name == "bar"
+        );
+
+        let delete = schema_table.infer_delete_stmt("tbl");
+        assert_eq!(delete.sql, r#"DELETE FROM "tbl" WHERE id = ?"#);
+        assert_eq!(delete.params.len(), 1);
+        assert_matches!(delete.params[0], PendingStatementValue::Id);
     }
 }
