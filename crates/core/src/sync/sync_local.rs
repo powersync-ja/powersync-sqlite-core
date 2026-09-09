@@ -341,7 +341,7 @@ impl<'a> ParsedDatabaseSchema<'a> {
 
     fn add_from_schema(&mut self, schema: &'a Schema) {
         for regular in &schema.tables {
-            if regular.direct {
+            if regular.direct && !regular.local_only() {
                 self.tables.insert(
                     regular.name.clone(),
                     ParsedSchemaTable::new(TableDefinition::Direct(regular)),
@@ -358,7 +358,9 @@ impl<'a> ParsedDatabaseSchema<'a> {
     }
 
     fn add_from_db(&mut self, db: Database) -> Result<()> {
-        let tables = ExistingTable::list(db)?;
+        // Ignore direct tables here, we can rely on them being added via add_from_schema.
+        // TODO: Remove this function, SDKs should always pass the used schema when they connect.
+        let tables = ExistingTable::list_filtered(db, true)?;
         for table in tables {
             if !table.local_only && !self.tables.contains_key(&table.name) {
                 let visible_name = table.name;
