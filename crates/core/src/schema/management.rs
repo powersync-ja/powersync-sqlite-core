@@ -39,11 +39,12 @@ fn update_tables(db: Database, schema: &Schema) -> Result<()> {
 
     for table in &schema.tables {
         if let Some(existing) = existing_tables.remove(&*table.name) {
-            if existing.local_only != table.local_only() {
+            if !table.direct && existing.local_only != table.local_only() {
                 // Migrating between local-only and synced tables. This works by deleting
                 // existing and re-creating the table from scratch. We can re-create first and
                 // delete the old table afterwards because they have a different name
                 // (local-only tables have a ps_data_local prefix).
+                // Direct tables are the same whether they're local or not.
 
                 // To delete the old existing table in the end.
                 existing_tables.insert(&existing.name, existing);

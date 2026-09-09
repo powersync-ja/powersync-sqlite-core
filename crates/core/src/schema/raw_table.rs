@@ -209,12 +209,14 @@ pub fn generate_schema_table_trigger(
     }
 
     buffer.push_str(" BEGIN\n");
+    let flags = table.common_options().flags;
+    let mut has_stmt = false;
 
-    if table.common_options().flags.insert_only() {
+    if flags.insert_only() {
         if write != WriteType::Insert {
             // Prevent illegal writes to a table marked as insert-only by raising errors here.
             buffer.push_str("SELECT RAISE(FAIL, 'Unexpected update on insert-only table');\n");
-        } else {
+        } else if !flags.local_only() {
             // Insert-only tables use manual CRUD writes so they don't block incoming data.
             let fragment = table_columns_to_json_object("NEW", &table)?;
             buffer.powersync_crud_manual_put(table.name(), &fragment);
@@ -255,24 +257,33 @@ pub fn generate_schema_table_trigger(
                 &mut buffer,
                 "UPDATE {local_table_name} SET {data_column} = {json_fragment_new} WHERE id = NEW.id;\n"
             );
+
+            has_stmt = true;
         }
 
-        buffer.insert_into_powersync_crud(InsertIntoCrud {
-            op: write,
-            table: &table,
-            id_expr: if write == WriteType::Delete {
-                "OLD.id"
-            } else {
-                "NEW.id"
-            },
-            type_name: table.name(),
-            data: match write {
-                // There is no data for deleted rows.
-                WriteType::Delete => None,
-                _ => Some(&write_data),
-            },
-            metadata: None::<&'static str>,
-        })?;
+        if !flags.local_only() {
+            has_stmt = true;
+            buffer.insert_into_powersync_crud(InsertIntoCrud {
+                op: write,
+                table: &table,
+                id_expr: if write == WriteType::Delete {
+                    "OLD.id"
+                } else {
+                    "NEW.id"
+                },
+                type_name: table.name(),
+                data: match write {
+                    // There is no data for deleted rows.
+                    WriteType::Delete => None,
+                    _ => Some(&write_data),
+                },
+                metadata: None::<&'static str>,
+            })?;
+        }
+    }
+
+    if !has_stmt {
+        return Ok(Default::default());
     }
 
     buffer.trigger_end();
