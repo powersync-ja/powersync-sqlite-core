@@ -125,7 +125,7 @@ impl Table {
     }
 
     pub fn data_column_name(&self) -> &'static str {
-        if self.direct { "__data" } else { "data" }
+        data_column_name(self.direct)
     }
 
     pub fn generate_direct_trigger(&self, write: WriteType) -> Result<String, PowerSyncError> {
@@ -138,6 +138,10 @@ impl Table {
             write,
         )
     }
+}
+
+pub fn data_column_name(is_direct: bool) -> &'static str {
+    if is_direct { "__data" } else { "data" }
 }
 
 impl RawTable {
