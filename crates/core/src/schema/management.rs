@@ -16,7 +16,7 @@ use sqlite::{Connection, ResultCode, Value};
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
 use crate::schema::inspection::{ExistingTable, ExistingView};
-use crate::schema::table_info::Index;
+use crate::schema::table_info::{Index, data_column_name};
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
@@ -65,17 +65,15 @@ fn update_tables(db: Database, schema: &Schema) -> Result<()> {
         );
 
         if table.direct {
+            create_table.push_str("/* ps-managed */");
+
             for column in &table.columns {
                 create_table.push_char(',');
                 let _ = create_table.identifier().write_str(&column.name);
                 let _ = write!(&mut create_table, " {}", column.type_name);
             }
-
-            create_table.push_str(") STRICT /* ps-managed */;");
-        } else {
-            create_table.push_str(");");
         }
-
+        create_table.push_str(");");
         db.exec_safe_str(&create_table.sql)?;
 
         if !table.local_only() {
@@ -90,7 +88,8 @@ fn update_tables(db: Database, schema: &Schema) -> Result<()> {
         if !remaining.local_only {
             db.exec_text(
                 &format!(
-                    "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}",
+                    "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, {} FROM {:}",
+                    data_column_name(remaining.direct.is_some()),
                     SqlBuffer::quote_identifier(&remaining.internal_name)
                 ),
                 &remaining.name,
