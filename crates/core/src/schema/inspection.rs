@@ -3,6 +3,7 @@ use alloc::{format, vec};
 use alloc::{string::String, vec::Vec};
 
 use crate::error::Result;
+use crate::schema::raw_table::InferredTableStructure;
 use crate::utils::SqlBuffer;
 use crate::utils::database::Database;
 
@@ -87,28 +88,39 @@ pub struct ExistingTable {
     pub name: String,
     pub internal_name: String,
     pub local_only: bool,
+    pub direct: Option<InferredTableStructure>,
 }
 
 impl ExistingTable {
     pub fn list(db: Database) -> Result<Vec<Self>> {
         let mut results = vec![];
-        let stmt = db.prepare_v2(
-            "
-SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'ps_data_*';
-        ",
-        )?;
+        let stmt = db.prepare_v2("SELECT name, sql FROM sqlite_master WHERE type = 'table';")?;
 
         while stmt.step()? {
             let internal_name = stmt.column_text(0)?;
-            let Some((name, local_only)) = Self::external_name(internal_name) else {
+            let Ok(sql) = stmt.column_text(1) else {
                 continue;
             };
 
-            results.push(ExistingTable {
-                internal_name: internal_name.to_owned(),
-                name: name.to_owned(),
-                local_only: local_only,
-            });
+            if let Some((name, local_only)) = Self::external_name(internal_name) {
+                results.push(ExistingTable {
+                    internal_name: internal_name.to_owned(),
+                    name: name.to_owned(),
+                    local_only: local_only,
+                    direct: None,
+                });
+            } else if sql.contains("/* ps-managed */") {
+                results.push(ExistingTable {
+                    internal_name: internal_name.to_owned(),
+                    name: internal_name.to_owned(),
+                    local_only: false,
+                    direct: Some(InferredTableStructure::read_from_database(
+                        internal_name,
+                        db,
+                        &None,
+                    )?),
+                });
+            }
         }
 
         Ok(results)

@@ -4,24 +4,20 @@ use core::{
 };
 
 use alloc::{
-    collections::btree_map::BTreeMap,
-    format,
-    rc::Rc,
-    string::{String, ToString},
-    vec,
+    borrow::ToOwned, collections::btree_map::BTreeMap, format, rc::Rc, string::String, vec,
     vec::Vec,
 };
 use powersync_sqlite_nostd::Destructor;
 
 use crate::{
     error::{PowerSyncError, Result},
-    schema::{ColumnFilter, PendingStatement, RawTable, SchemaTable},
+    schema::{Column, ColumnFilter, PendingStatement, RawTable, SchemaTable},
     utils::{InsertIntoCrud, SqlBuffer, WriteType, database::Database},
     views::table_columns_to_json_object,
 };
 
 pub struct InferredTableStructure {
-    pub columns: Vec<String>,
+    pub columns: Vec<Column>,
 }
 
 impl InferredTableStructure {
@@ -30,7 +26,7 @@ impl InferredTableStructure {
         db: Database,
         synced_columns: &Option<ColumnFilter>,
     ) -> Result<Self> {
-        let stmt = db.prepare_v2("select name from pragma_table_info(?)")?;
+        let stmt = db.prepare_v2("select name, type from pragma_table_info(?)")?;
         stmt.bind_text(1, table_name, Destructor::STATIC)?;
 
         let mut has_id_column = false;
@@ -38,6 +34,8 @@ impl InferredTableStructure {
 
         while stmt.step()? {
             let name = stmt.column_text(0)?;
+            let column_type = stmt.column_text(1)?;
+
             if name == "id" {
                 has_id_column = true;
             } else if let Some(filter) = synced_columns
@@ -45,7 +43,10 @@ impl InferredTableStructure {
             {
                 // This column isn't part of the synced columns, skip.
             } else {
-                columns.push(name.to_string());
+                columns.push(Column {
+                    name: name.to_owned(),
+                    type_name: column_type.to_owned(),
+                });
             }
         }
 
@@ -245,7 +246,7 @@ pub fn generate_schema_table_trigger(
             write!(f, ", {json_fragment_new}))")
         });
 
-        if write == WriteType::Update
+        if write != WriteType::Delete
             && let Some(data_column) = table.data_column()
         {
             // If the table has a __data column storing the full JSON row, we also need to update
