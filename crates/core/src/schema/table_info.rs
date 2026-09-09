@@ -336,6 +336,7 @@ impl<'de> Deserialize<'de> for PendingStatement {
                 set.insert(match column {
                     PendingStatementValue::Id => "id".to_string(),
                     PendingStatementValue::Column(name) => name.clone(),
+                    PendingStatementValue::Row => continue,
                     PendingStatementValue::Rest => {
                         rest_parameter_positions.push(i);
                         continue;
@@ -366,5 +367,6 @@ pub enum PendingStatementValue {
     /// Bind to a JSON object containing all columns from the synced row that haven't been matched
     /// by other statement values.
     Rest,
-    // TODO: Stuff like a raw object of put data?
+    /// The full JSON object for the row, as received from the PowerSync service.
+    Row,
 }

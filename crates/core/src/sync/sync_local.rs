@@ -1,7 +1,10 @@
+use core::fmt::Write;
+
 use alloc::collections::btree_map::BTreeMap;
-use alloc::format;
 use alloc::rc::Rc;
-use alloc::string::{String, ToString};
+use alloc::string::String;
+use alloc::vec::Vec;
+use alloc::{format, vec};
 use serde::Serialize;
 use serde::ser::SerializeMap;
 
@@ -24,9 +27,7 @@ use powersync_sqlite_nostd::{self as sqlite, Destructor};
 pub struct PartialSyncOperation<'a> {
     /// The lowest priority part of the partial sync operation.
     pub priority: BucketPriority,
-    /// The JSON-encoded arguments passed by the client SDK. This includes the priority and a list
-    /// of bucket names in that (and higher) priorities.
-    pub args: &'a str,
+    pub involved_buckets: Vec<&'a str>,
 }
 
 pub struct SyncOperation<'a> {
@@ -102,15 +103,6 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
         let schema_version = InferredSchemaCache::current_schema_version(self.db)?;
         let schema_cache = &self.state.inferred_schema_cache;
 
-        // We cache the last insert and delete statements for each row
-        struct CachedStatement {
-            table: String,
-            statement: Statement,
-        }
-
-        let mut last_insert = None::<CachedStatement>;
-        let mut last_delete = None::<CachedStatement>;
-
         let mut untyped_delete_statement: Option<Statement> = None;
         let mut untyped_insert_statement: Option<Statement> = None;
 
@@ -120,10 +112,11 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
             let data = statement.column_text(2);
 
             if let Some(known) = self.schema.tables.get_mut(type_name) {
-                if let Some(raw) = &mut known.raw {
-                    match data {
-                        Ok(data) => {
-                            let stmt = raw.put_statement(self.db, schema_version, schema_cache)?;
+                match data {
+                    Ok(data) => {
+                        let stmt = known.put_statement(self.db, schema_version, schema_cache)?;
+
+                        if stmt.needs_parsed_json {
                             let parsed: serde_json::Value = serde_json::from_str(data)
                                 .map_err(PowerSyncError::json_local_error)?;
                             let json_object = parsed.as_object().ok_or_else(|| {
@@ -133,70 +126,19 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
                             })?;
 
                             let rest = stmt.render_rest_object(json_object)?;
-                            stmt.bind_for_put(id, &json_object, &rest)?;
-                            stmt.exec(type_name, id, Some(&parsed))?;
-                        }
-                        Err(_) => {
-                            let stmt =
-                                raw.delete_statement(self.db, schema_version, schema_cache)?;
-                            stmt.bind_for_delete(id)?;
-                            stmt.exec(type_name, id, None)?;
+                            stmt.bind_for_put(id, data, Some(json_object), rest.as_ref())?;
+                            stmt.exec(type_name, id, Some(&data))?;
+                        } else {
+                            stmt.bind_for_put(id, data, None, None)?;
+                            stmt.exec(type_name, id, Some(&data))?;
                         }
                     }
-                } else {
-                    // is_err() is essentially a NULL check here.
-                    // NULL data means no PUT operations found, so we delete the row.
-                    if data.is_err() {
-                        // DELETE
-                        let delete_statement = match &last_delete {
-                            Some(stmt) if stmt.table == type_name => &stmt.statement,
-                            _ => {
-                                // Prepare statement when the table changed
-                                let mut statement = SqlBuffer::new();
-                                statement.push_str("DELETE FROM ");
-                                statement.quote_internal_name(type_name, false);
-                                statement.push_str(" WHERE id = ?");
-
-                                let statement = self.db.prepare_v2(&statement.sql)?;
-
-                                &last_delete
-                                    .insert(CachedStatement {
-                                        table: type_name.to_string(),
-                                        statement,
-                                    })
-                                    .statement
-                            }
-                        };
-
-                        delete_statement.reset()?;
-                        delete_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
-                        delete_statement.exec()?;
-                    } else {
-                        // INSERT/UPDATE
-                        let insert_statement = match &last_insert {
-                            Some(stmt) if stmt.table == type_name => &stmt.statement,
-                            _ => {
-                                // Prepare statement when the table changed
-                                let mut statement = SqlBuffer::new();
-                                statement.push_str("REPLACE INTO ");
-                                statement.quote_internal_name(type_name, false);
-                                statement.push_str("(id, data) VALUES (?, ?)");
-
-                                let statement = self.db.prepare_v2(&statement.sql)?;
-
-                                &last_insert
-                                    .insert(CachedStatement {
-                                        table: type_name.to_string(),
-                                        statement,
-                                    })
-                                    .statement
-                            }
-                        };
-
-                        insert_statement.reset()?;
-                        insert_statement.bind_text(1, id, sqlite::Destructor::STATIC)?;
-                        insert_statement.bind_text(2, data?, sqlite::Destructor::STATIC)?;
-                        insert_statement.exec()?;
+                    Err(_) => {
+                        // is_err() is essentially a NULL check here.
+                        // NULL data means no PUT operations found, so we delete the row.
+                        let stmt = known.delete_statement(self.db, schema_version, schema_cache)?;
+                        stmt.bind_for_delete(id)?;
+                        stmt.exec(type_name, id, None)?;
                     }
                 }
             } else {
@@ -285,8 +227,8 @@ SELECT
 --    We filter out duplicates using the GROUP BY below.
 WITH 
   involved_buckets (id) AS MATERIALIZED (
-    SELECT id FROM ps_buckets WHERE ?1 IS NULL
-      OR name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))
+    SELECT id FROM ps_buckets
+      WHERE name IN (SELECT value FROM json_each(?1))
   ),
   updated_rows AS (
     SELECT b.row_type, b.row_id FROM ps_buckets AS buckets
@@ -314,7 +256,10 @@ SELECT
     -- Group for (2)
     GROUP BY b.row_type, b.row_id;",
                 )?;
-                stmt.bind_text(1, partial.args, Destructor::STATIC)?;
+
+                let bucket_ids = serde_json::to_string(&partial.involved_buckets)
+                    .map_err(PowerSyncError::internal)?;
+                stmt.bind_text(1, &bucket_ids, Destructor::TRANSIENT)?;
 
                 stmt
             }
@@ -325,16 +270,17 @@ SELECT
         match &self.partial {
             Some(partial) => {
                 // language=SQLite
-                let updated = self
-                    .db
-                    .prepare_v2(   "\
+                let updated = self.db.prepare_v2(
+                    "\
                         UPDATE ps_buckets
                             SET last_applied_op = last_op
-                            WHERE last_applied_op != last_op AND
-                                name IN (SELECT value FROM json_each(json_extract(?1, '$.buckets')))",
-                    )?;
-                updated.bind_text(1, partial.args, Destructor::STATIC)?;
-                updated.exec()?;
+                            WHERE last_applied_op != last_op AND name = ?",
+                )?;
+
+                for bucket in &partial.involved_buckets {
+                    updated.bind_text(1, bucket, Destructor::STATIC)?;
+                    updated.exec()?;
+                }
             }
             None => {
                 // language=SQLite
@@ -395,8 +341,10 @@ impl<'a> ParsedDatabaseSchema<'a> {
 
     fn add_from_schema(&mut self, schema: &'a Schema) {
         for raw in &schema.raw_tables {
-            self.tables
-                .insert(raw.name.clone(), ParsedSchemaTable::raw(raw));
+            self.tables.insert(
+                raw.name.clone(),
+                ParsedSchemaTable::new(TableDefinition::Raw(raw)),
+            );
         }
     }
 
@@ -406,8 +354,12 @@ impl<'a> ParsedDatabaseSchema<'a> {
             if !table.local_only {
                 let visible_name = table.name;
 
-                self.tables
-                    .insert(visible_name, ParsedSchemaTable::json_table());
+                self.tables.insert(
+                    visible_name,
+                    ParsedSchemaTable::new(TableDefinition::JsonView {
+                        local_table: table.internal_name,
+                    }),
+                );
             }
         }
 
@@ -416,25 +368,29 @@ impl<'a> ParsedDatabaseSchema<'a> {
 }
 
 struct ParsedSchemaTable<'a> {
-    raw: Option<RawTableWithCachedStatements<'a>>,
-}
-
-struct RawTableWithCachedStatements<'a> {
-    definition: &'a RawTable,
+    definition: TableDefinition<'a>,
     cached_put: Option<PreparedPendingStatement>,
     cached_delete: Option<PreparedPendingStatement>,
 }
 
-impl<'a> RawTableWithCachedStatements<'a> {
+impl<'a> ParsedSchemaTable<'a> {
+    const fn new(definition: TableDefinition<'a>) -> Self {
+        Self {
+            definition,
+            cached_put: None,
+            cached_delete: None,
+        }
+    }
+
     fn prepare_lazily(
         db: Database,
         slot: &mut Option<PreparedPendingStatement>,
-        def: Rc<PendingStatement>,
+        create_stmt: impl FnOnce() -> Result<Rc<PendingStatement>>,
     ) -> Result<&PreparedPendingStatement> {
         Ok(match slot {
             Some(stmt) => stmt,
             None => {
-                let stmt = PreparedPendingStatement::prepare(db, def)?;
+                let stmt = PreparedPendingStatement::prepare(db, create_stmt()?)?;
                 slot.insert(stmt)
             }
         })
@@ -446,14 +402,26 @@ impl<'a> RawTableWithCachedStatements<'a> {
         schema_version: usize,
         cache: &InferredSchemaCache,
     ) -> Result<&'_ PreparedPendingStatement> {
-        Self::prepare_lazily(
-            db,
-            &mut self.cached_put,
-            match self.definition.put {
-                Some(ref stmt) => stmt.clone(),
-                None => cache.infer_put_statement(db, schema_version, &self.definition)?,
-            },
-        )
+        Self::prepare_lazily(db, &mut self.cached_put, || {
+            Ok(match self.definition {
+                TableDefinition::Raw(raw_table) => match raw_table.put {
+                    Some(ref stmt) => stmt.clone(),
+                    None => cache.infer_put_statement(db, schema_version, raw_table)?,
+                },
+                TableDefinition::JsonView { ref local_table } => {
+                    let mut statement = SqlBuffer::new();
+                    statement.push_str("REPLACE INTO ");
+                    let _ = statement.identifier().write_str(local_table);
+                    statement.push_str("(id, data) VALUES (?, ?)");
+
+                    Rc::new(PendingStatement {
+                        sql: statement.sql,
+                        params: vec![PendingStatementValue::Id, PendingStatementValue::Row],
+                        named_parameters_index: None,
+                    })
+                }
+            })
+        })
     }
 
     fn delete_statement(
@@ -462,36 +430,38 @@ impl<'a> RawTableWithCachedStatements<'a> {
         schema_version: usize,
         cache: &InferredSchemaCache,
     ) -> Result<&'_ PreparedPendingStatement> {
-        Self::prepare_lazily(
-            db,
-            &mut self.cached_delete,
-            match self.definition.delete {
-                Some(ref stmt) => stmt.clone(),
-                None => cache.infer_delete_statement(db, schema_version, &self.definition)?,
-            },
-        )
+        Self::prepare_lazily(db, &mut self.cached_delete, || {
+            Ok(match self.definition {
+                TableDefinition::Raw(raw_table) => match raw_table.delete {
+                    Some(ref stmt) => stmt.clone(),
+                    None => cache.infer_delete_statement(db, schema_version, raw_table)?,
+                },
+                TableDefinition::JsonView { ref local_table } => {
+                    let mut statement = SqlBuffer::new();
+                    statement.push_str("DELETE FROM ");
+                    let _ = statement.identifier().write_str(&local_table);
+                    statement.push_str(" WHERE id = ?");
+
+                    Rc::new(PendingStatement {
+                        sql: statement.sql,
+                        params: vec![PendingStatementValue::Id],
+                        named_parameters_index: None,
+                    })
+                }
+            })
+        })
     }
 }
 
-impl<'a> ParsedSchemaTable<'a> {
-    pub const fn json_table() -> Self {
-        Self { raw: None }
-    }
-
-    pub fn raw(definition: &'a RawTable) -> Self {
-        Self {
-            raw: Some(RawTableWithCachedStatements {
-                definition,
-                cached_put: None,
-                cached_delete: None,
-            }),
-        }
-    }
+enum TableDefinition<'a> {
+    Raw(&'a RawTable),
+    JsonView { local_table: String },
 }
 
 struct PreparedPendingStatement {
     stmt: Statement,
     definition: Rc<PendingStatement>,
+    needs_parsed_json: bool,
 }
 
 impl PreparedPendingStatement {
@@ -510,6 +480,10 @@ impl PreparedPendingStatement {
 
         Ok(Self {
             stmt,
+            needs_parsed_json: pending.params.iter().any(|p| match p {
+                PendingStatementValue::Id | PendingStatementValue::Row => false,
+                PendingStatementValue::Column(_) | PendingStatementValue::Rest => true,
+            }),
             definition: pending,
         })
     }
@@ -562,8 +536,9 @@ impl PreparedPendingStatement {
     pub fn bind_for_put(
         &self,
         id: &str,
-        json_data: &serde_json::Map<String, serde_json::Value>,
-        rest: &Option<String>,
+        row: &str,
+        json_data: Option<&serde_json::Map<String, serde_json::Value>>,
+        rest: Option<&String>,
     ) -> Result<()> {
         use serde_json::Value;
 
@@ -574,8 +549,11 @@ impl PreparedPendingStatement {
                 PendingStatementValue::Id => {
                     self.stmt.bind_text(i, id, Destructor::STATIC)?;
                 }
+                PendingStatementValue::Row => {
+                    self.stmt.bind_text(i, row, Destructor::STATIC)?;
+                }
                 PendingStatementValue::Column(column) => {
-                    match json_data.get(column) {
+                    match json_data.and_then(|m| m.get(column)) {
                         Some(Value::Bool(value)) => {
                             self.stmt.bind_int(i, if *value { 1 } else { 0 })
                         }
@@ -631,7 +609,7 @@ impl PreparedPendingStatement {
 
     /// Executes the prepared statement, contextualizing errors with the id / data that we've tried
     /// to insert.
-    pub fn exec(&self, table: &str, id: &str, data: Option<&serde_json::Value>) -> Result<()> {
+    pub fn exec(&self, table: &str, id: &str, data: Option<&str>) -> Result<()> {
         self.stmt.exec().map_err(|e| {
             let context = match data {
                 None => format!("deleting from {table}, id = {id}"),
