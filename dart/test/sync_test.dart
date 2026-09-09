@@ -2181,8 +2181,8 @@ CREATE TRIGGER users_ref_delete
   });
 
   group('direct tables', () {
-    test('smoke test', () {
-      final schema = {
+    Object schema({Map<String, Object?> additionalOptions = const {}}) {
+      return {
         'tables': [
           {
             'name': 'users',
@@ -2190,13 +2190,16 @@ CREATE TRIGGER users_ref_delete
               {'name': 'name', 'type': 'text'}
             ],
             'direct': true,
+            ...additionalOptions,
           }
         ]
       };
+    }
 
+    test('smoke test', () {
       db.executeInTx(
-          'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
-      invokeControl('start', json.encode({'schema': schema}));
+          'SELECT powersync_replace_schema(?)', [json.encode(schema())]);
+      invokeControl('start', json.encode({'schema': schema()}));
 
       // Insert
       pushCheckpoint(buckets: [bucketDescription('a')]);
@@ -2232,6 +2235,28 @@ CREATE TRIGGER users_ref_delete
       pushCheckpointComplete();
 
       expect(db.select('SELECT * FROM users'), isEmpty);
+    });
+
+    test('local only', () {
+      final localOnlySchema = schema(additionalOptions: {'local_only': true});
+
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(localOnlySchema)]);
+      invokeControl('start', json.encode({'schema': localOnlySchema}));
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('SELECT * FROM ps_untyped'), hasLength(1));
     });
   });
 

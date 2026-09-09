@@ -93,6 +93,10 @@ pub struct ExistingTable {
 
 impl ExistingTable {
     pub fn list(db: Database) -> Result<Vec<Self>> {
+        Self::list_filtered(db, false)
+    }
+
+    pub fn list_filtered(db: Database, ignore_direct: bool) -> Result<Vec<Self>> {
         let mut results = vec![];
         let stmt = db.prepare_v2("SELECT name, sql FROM sqlite_master WHERE type = 'table';")?;
 
@@ -109,7 +113,7 @@ impl ExistingTable {
                     local_only: local_only,
                     direct: None,
                 });
-            } else if sql.contains("/* ps-managed */") {
+            } else if sql.contains("/* ps-managed */") && !ignore_direct {
                 results.push(ExistingTable {
                     internal_name: internal_name.to_owned(),
                     name: internal_name.to_owned(),
