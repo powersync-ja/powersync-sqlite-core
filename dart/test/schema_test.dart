@@ -324,13 +324,20 @@ END''',
     });
 
     group('direct tables', () {
-      final table = {
-        'name': 'users',
-        'columns': [
-          {'name': 'name', 'type': 'text'}
-        ],
-        'direct': true,
-      };
+      Object schema({Map<String, Object?> additionalOptions = const {}}) {
+        return {
+          'tables': [
+            {
+              'name': 'users',
+              'columns': [
+                {'name': 'name', 'type': 'text'}
+              ],
+              'direct': true,
+              ...additionalOptions,
+            }
+          ]
+        };
+      }
 
       test('create', () {
         db.executeInTx('SELECT powersync_replace_schema(?)', [
@@ -341,11 +348,8 @@ END''',
           'user-id',
           json.encode({'name': 'Name', 'other': 3})
         ]);
-        db.executeInTx('SELECT powersync_replace_schema(?)', [
-          json.encode({
-            'tables': [table]
-          })
-        ]);
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(schema())]);
 
         expect(db.select('SELECT * FROM users'), [
           {
@@ -390,12 +394,19 @@ END'''
         ]);
       });
 
-      test('remove from schema', () {
+      test('local-only', () {
         db.executeInTx('SELECT powersync_replace_schema(?)', [
-          json.encode({
-            'tables': [table]
-          })
+          json.encode(schema(additionalOptions: {'local_only': true}))
         ]);
+
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+      });
+
+      test('remove from schema', () {
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(schema())]);
         db.execute(
             'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
         db.executeInTx('SELECT powersync_replace_schema(?)', [
