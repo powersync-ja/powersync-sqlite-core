@@ -6,7 +6,7 @@ use core::fmt::{Write, from_fn};
 use core::mem;
 
 use crate::error::{PowerSyncError, Result};
-use crate::schema::{ColumnFilter, SchemaTable, Table};
+use crate::schema::{Column, ColumnFilter, SchemaTable, Table};
 use crate::utils::{InsertIntoCrud, SqlBuffer, WriteType};
 
 pub fn powersync_view_sql(table_info: &Table) -> String {
@@ -140,7 +140,7 @@ pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String> {
         sql.check_id_valid();
     }
 
-    let json_fragment = table_columns_to_json_object("NEW", &as_schema_table)?;
+    let json_fragment = table_columns_to_json_object("NEW", &table_info.columns)?;
 
     if insert_only {
         // This is using the manual powersync_crud_ instead of powersync_crud because insert-only
@@ -188,7 +188,6 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
     let name = &table_info.name;
     let view_name = table_info.view_name();
     let local_only = table_info.options.flags.local_only();
-    let as_schema_table = SchemaTable::from(table_info);
 
     let mut sql = SqlBuffer::new();
     sql.create_trigger("ps_view_update_", view_name);
@@ -202,8 +201,8 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
     sql.push_str("BEGIN\n");
     sql.check_id_not_changed();
 
-    let json_fragment_new = table_columns_to_json_object("NEW", &as_schema_table)?;
-    let json_fragment_old = table_columns_to_json_object("OLD", &as_schema_table)?;
+    let json_fragment_new = table_columns_to_json_object("NEW", &table_info.columns)?;
+    let json_fragment_old = table_columns_to_json_object("OLD", &table_info.columns)?;
 
     // UPDATE {internal_name} SET data = {json_fragment_new} WHERE id = NEW.id;
     sql.push_str("UPDATE ");
@@ -218,7 +217,7 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
         sql.insert_into_powersync_crud(InsertIntoCrud {
             op: WriteType::Update,
             id_expr: "NEW.id",
-            table: &as_schema_table,
+            table: &SchemaTable::Json(table_info),
             type_name: name,
             data: Some(&from_fn(|f| {
                 write!(
@@ -241,16 +240,13 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
 /// Given a query returning column names, return a JSON object fragment for a trigger.
 ///
 /// Example output with prefix "NEW": "json_object('id', NEW.id, 'name', NEW.name, 'age', NEW.age)".
-pub fn table_columns_to_json_object<'a>(
-    prefix: &str,
-    table: &'a SchemaTable<'a>,
-) -> Result<String> {
-    table_columns_to_json_object_with_filter(prefix, table, None)
+pub fn table_columns_to_json_object(prefix: &str, columns: &[Column]) -> Result<String> {
+    table_columns_to_json_object_with_filter(prefix, columns, None)
 }
 
 pub fn table_columns_to_json_object_with_filter<'a>(
     prefix: &str,
-    table: &'a SchemaTable<'a>,
+    columns: &[Column],
     filter: Option<&'a ColumnFilter>,
 ) -> Result<String> {
     // floor(SQLITE_MAX_FUNCTION_ARG / 2).
@@ -274,8 +270,7 @@ pub fn table_columns_to_json_object_with_filter<'a>(
         buffer.sql
     }
 
-    let mut columns = table.column_names();
-    while let Some(name) = columns.next() {
+    for Column { name, type_name: _ } in columns {
         if let Some(filter) = filter
             && !filter.matches(name)
         {
@@ -377,8 +372,8 @@ mod test {
 
     #[test]
     fn test_json_object_fragment() {
-        let fragment =
-            table_columns_to_json_object("NEW", &(&test_table()).into()).expect("should generate");
+        let columns = &test_table().columns;
+        let fragment = table_columns_to_json_object("NEW", columns).expect("should generate");
 
         assert_eq!(
             fragment,

@@ -476,7 +476,7 @@ enum TableDefinition<'a> {
     Direct(&'a Table),
 }
 
-struct PreparedPendingStatement {
+pub struct PreparedPendingStatement {
     stmt: Statement,
     needs_parsed_json: bool,
     definition: Rc<PendingStatement>,
