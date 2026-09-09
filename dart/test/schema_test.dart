@@ -361,7 +361,7 @@ END''',
         )[0].columnAt(0);
         expect(
           createTable,
-          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL, __data TEXT,"name" text) STRICT /* ps-managed */',
+          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL, __data TEXT/* ps-managed */,"name" text)',
         );
 
         final triggers = db
@@ -387,6 +387,23 @@ SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
 UPDATE users SET __data = json_object('name', powersync_strip_subtype(NEW."name")) WHERE id = NEW.id;
 INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'users', json(powersync_diff(json_object('name', powersync_strip_subtype(OLD."name")), json_object('name', powersync_strip_subtype(NEW."name")))), 0);
 END'''
+        ]);
+      });
+
+      test('remove from schema', () {
+        db.executeInTx('SELECT powersync_replace_schema(?)', [
+          json.encode({
+            'tables': [table]
+          })
+        ]);
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        db.executeInTx('SELECT powersync_replace_schema(?)', [
+          json.encode({'tables': []})
+        ]);
+
+        expect(db.select('SELECT * FROM ps_untyped'), [
+          {'type': 'users', 'id': 'id', 'data': '{"name":"name"}'}
         ]);
       });
     });

@@ -1,4 +1,4 @@
-use core::{fmt::Write, slice};
+use core::fmt::Write;
 
 use alloc::{
     string::{String, ToString},
@@ -55,15 +55,19 @@ impl<'a> SchemaTable<'a> {
         }
     }
 
-    /// Iterates over defined column names in this table (not including the `id` column).
-    pub fn column_names(&self) -> impl Iterator<Item = &'a str> {
+    pub fn columns(&self) -> &'a [Column] {
         match self {
-            Self::Json(table) => SchemaTableColumnIterator::Json(table.columns.iter()),
+            Self::Json(table) => &table.columns,
             Self::Raw {
                 definition: _,
                 schema,
-            } => SchemaTableColumnIterator::Raw(schema.columns.iter()),
+            } => &schema.columns,
         }
+    }
+
+    /// Iterates over defined column names in this table (not including the `id` column).
+    pub fn column_names(&self) -> impl Iterator<Item = &'a str> {
+        self.columns().iter().map(|c| &*c.name)
     }
 
     /// Generates a statement of the form `INSERT INTO $tbl ($cols) VALUES (?, ...) ON CONFLICT (id)
@@ -141,22 +145,6 @@ impl<'a> From<&'a Table> for SchemaTable<'a> {
     }
 }
 
-enum SchemaTableColumnIterator<'a> {
-    Json(slice::Iter<'a, Column>),
-    Raw(slice::Iter<'a, String>),
-}
-
-impl<'a> Iterator for SchemaTableColumnIterator<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(match self {
-            Self::Json(iter) => &iter.next()?.name,
-            Self::Raw(iter) => iter.next()?.as_ref(),
-        })
-    }
-}
-
 #[derive(Default)]
 pub struct ColumnFilter {
     sorted_names: Vec<String>,
@@ -200,7 +188,7 @@ mod test {
     use core::assert_matches;
 
     use crate::schema::{
-        PendingStatementValue, RawTable, SchemaTable, raw_table::InferredTableStructure,
+        Column, PendingStatementValue, RawTable, SchemaTable, raw_table::InferredTableStructure,
         table_info::RawTableSchema,
     };
 
@@ -214,7 +202,16 @@ mod test {
             clear: None,
         };
         let structure = InferredTableStructure {
-            columns: vec!["foo".to_string(), "bar".to_string()],
+            columns: vec![
+                Column {
+                    name: "foo".to_string(),
+                    type_name: "TEXT".to_string(),
+                },
+                Column {
+                    name: "bar".to_string(),
+                    type_name: "TEXT".to_string(),
+                },
+            ],
         };
         let schema_table = SchemaTable::Raw {
             definition: &raw_table,

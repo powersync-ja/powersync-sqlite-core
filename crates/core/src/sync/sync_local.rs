@@ -360,7 +360,7 @@ impl<'a> ParsedDatabaseSchema<'a> {
     fn add_from_db(&mut self, db: Database) -> Result<()> {
         let tables = ExistingTable::list(db)?;
         for table in tables {
-            if !table.local_only {
+            if !table.local_only && !self.tables.contains_key(&table.name) {
                 let visible_name = table.name;
 
                 self.tables.insert(
