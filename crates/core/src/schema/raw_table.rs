@@ -25,6 +25,7 @@ impl InferredTableStructure {
         table_name: &str,
         db: Database,
         synced_columns: &Option<ColumnFilter>,
+        is_direct: bool,
     ) -> Result<Self> {
         let stmt = db.prepare_v2("select name, type from pragma_table_info(?)")?;
         stmt.bind_text(1, table_name, Destructor::STATIC)?;
@@ -42,6 +43,8 @@ impl InferredTableStructure {
                 && !filter.matches(name)
             {
                 // This column isn't part of the synced columns, skip.
+            } else if is_direct && name == "_rest" {
+                // _rest column is an artifact of direct tables, skip.
             } else {
                 columns.push(Column {
                     name: name.to_owned(),
@@ -136,6 +139,7 @@ impl SchemaCacheEntry {
             local_table_name,
             db,
             &table.schema.synced_columns,
+            false,
         )?;
         let schema_table = SchemaTable::Raw {
             definition: table,
@@ -161,7 +165,7 @@ pub fn generate_raw_table_trigger(
     let local_table_name = table.require_table_name()?;
     let synced_columns = &table.schema.synced_columns;
     let resolved_table =
-        InferredTableStructure::read_from_database(local_table_name, db, synced_columns)?;
+        InferredTableStructure::read_from_database(local_table_name, db, synced_columns, false)?;
 
     let as_schema_table = SchemaTable::Raw {
         definition: table,
@@ -218,18 +222,19 @@ pub fn generate_schema_table_trigger(
             buffer.push_str("SELECT RAISE(FAIL, 'Unexpected update on insert-only table');\n");
         } else if !flags.local_only() {
             // Insert-only tables use manual CRUD writes so they don't block incoming data.
-            let fragment = table_columns_to_json_object("NEW", &table)?;
+            let fragment = table_columns_to_json_object("NEW", table.columns())?;
             buffer.powersync_crud_manual_put(table.name(), &fragment);
         }
     } else {
         if write == WriteType::Update {
             // Updates must not change the id.
             buffer.check_id_not_changed();
+            has_stmt = true;
         }
 
-        let json_fragment_new = table_columns_to_json_object("NEW", &table)?;
+        let json_fragment_new = table_columns_to_json_object("NEW", table.columns())?;
         let json_fragment_old = if write == WriteType::Update {
-            Some(table_columns_to_json_object("OLD", &table)?)
+            Some(table_columns_to_json_object("OLD", table.columns())?)
         } else {
             None
         };
@@ -247,19 +252,6 @@ pub fn generate_schema_table_trigger(
 
             write!(f, ", {json_fragment_new}))")
         });
-
-        if write != WriteType::Delete
-            && let Some(data_column) = table.data_column()
-        {
-            // If the table has a __data column storing the full JSON row, we also need to update
-            // that.
-            let _ = write!(
-                &mut buffer,
-                "UPDATE {local_table_name} SET {data_column} = {json_fragment_new} WHERE id = NEW.id;\n"
-            );
-
-            has_stmt = true;
-        }
 
         if !flags.local_only() {
             has_stmt = true;

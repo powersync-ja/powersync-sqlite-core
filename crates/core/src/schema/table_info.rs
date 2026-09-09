@@ -4,11 +4,13 @@ use alloc::rc::Rc;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::{collections::btree_set::BTreeSet, format, string::String, vec::Vec};
+use powersync_sqlite_nostd::Destructor;
 use serde::{Deserialize, de::Visitor};
 
 use crate::error::PowerSyncError;
 use crate::schema::raw_table::generate_schema_table_trigger;
 use crate::schema::{ColumnFilter, SchemaTable};
+use crate::sync::PreparedPendingStatement;
 use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, WriteType};
 
@@ -87,32 +89,44 @@ impl Table {
     }
 
     pub fn move_from_ps_untyped(&self, db: Database) -> Result<(), PowerSyncError> {
-        let mut stmt = SqlBuffer::default();
         let direct = self.direct;
 
-        stmt.push_str("INSERT INTO ");
-        self.write_name(&mut stmt);
-        let _ = write!(&mut stmt, "(id, {}", self.data_column_name());
+        let mut delete_stmt = SqlBuffer::new();
+        delete_stmt.push_str("DELETE FROM ps_untyped WHERE type = ?");
 
         if direct {
-            for column in &self.columns {
-                stmt.push_char(',');
-                let _ = stmt.identifier().write_str(&column.name);
+            // Copying into direct tables reqires extracting from JSON. This essentially replays a
+            // sync_local step for the table, using ps_untyped as source.
+            let stmt = Rc::new(SchemaTable::Json(self).infer_put_stmt(&self.name));
+            let stmt = PreparedPendingStatement::prepare(db, stmt)?;
+
+            let _ = delete_stmt.write_str(" RETURNING id, data");
+            let source = db.prepare_v2(&delete_stmt.sql)?;
+            source.bind_text(1, &self.name, Destructor::STATIC)?;
+
+            while source.step()? {
+                let id = source.column_text(0)?;
+                let data = source.column_text(1)?;
+
+                let parsed: serde_json::Value =
+                    serde_json::from_str(data).map_err(PowerSyncError::json_local_error)?;
+                let json_object = parsed.as_object().ok_or_else(|| {
+                    PowerSyncError::argument_error("expected oplog data to be an object")
+                })?;
+                let rest = stmt.render_rest_object(json_object)?;
+                stmt.bind_for_put(id, data, Some(json_object), rest.as_ref())?;
+                stmt.exec(&self.name, id, Some(&data))?;
             }
+        } else {
+            let mut stmt = SqlBuffer::default();
+            stmt.push_str("INSERT INTO ");
+            self.write_name(&mut stmt);
+            let _ = stmt.write_str(" (id, data) SELECT id, data FROM ps_untyped WHERE type = ?");
+            let _ = db.exec_text(&stmt.sql, &self.name);
+            db.exec_text(&delete_stmt.sql, &self.name)?;
         }
 
-        stmt.push_str(") SELECT id, data");
-        if direct {
-            for column in &self.columns {
-                stmt.push_char(',');
-                stmt.json_extract_and_cast("data", &column.name, &column.type_name);
-            }
-        }
-
-        stmt.push_str(" FROM ps_untyped WHERE type = ?");
-
-        db.exec_text(&stmt.sql, &self.name)?;
-        db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &self.name)
+        Ok(())
     }
 
     pub fn write_name(&self, buffer: &mut SqlBuffer) {
@@ -122,10 +136,6 @@ impl Table {
         } else {
             buffer.quote_internal_name(&self.name, self.local_only());
         }
-    }
-
-    pub fn data_column_name(&self) -> &'static str {
-        data_column_name(self.direct)
     }
 
     pub fn generate_direct_trigger(&self, write: WriteType) -> Result<String, PowerSyncError> {
@@ -138,10 +148,6 @@ impl Table {
             write,
         )
     }
-}
-
-pub fn data_column_name(is_direct: bool) -> &'static str {
-    if is_direct { "__data" } else { "data" }
 }
 
 impl RawTable {
@@ -367,6 +373,7 @@ pub struct PendingStatement {
     pub named_parameters_index: Option<RestColumnIndex>,
 }
 
+#[derive(Default)]
 pub struct RestColumnIndex {
     /// All column names referenced by this statement.
     pub named_parameters: BTreeSet<String>,
