@@ -1,3 +1,5 @@
+use core::fmt::Write;
+
 use alloc::borrow::ToOwned;
 use alloc::{format, vec};
 use alloc::{string::String, vec::Vec};
@@ -6,6 +8,7 @@ use crate::error::Result;
 use crate::schema::raw_table::InferredTableStructure;
 use crate::utils::SqlBuffer;
 use crate::utils::database::Database;
+use crate::views::table_columns_to_json_object;
 
 /// An existing PowerSync-managed view that was found in the schema.
 #[derive(PartialEq)]
@@ -113,15 +116,16 @@ impl ExistingTable {
                     local_only: local_only,
                     direct: None,
                 });
-            } else if sql.contains("/* ps-managed */") && !ignore_direct {
+            } else if sql.contains("/* ps-managed") && !ignore_direct {
                 results.push(ExistingTable {
                     internal_name: internal_name.to_owned(),
                     name: internal_name.to_owned(),
-                    local_only: false,
+                    local_only: sql.contains("local-only"),
                     direct: Some(InferredTableStructure::read_from_database(
                         internal_name,
                         db,
                         &None,
+                        true,
                     )?),
                 });
             }
@@ -144,5 +148,30 @@ impl ExistingTable {
         } else {
             None
         }
+    }
+
+    pub fn move_into_ps_untyped(&self, db: Database) -> Result<()> {
+        if self.local_only {
+            return Ok(());
+        }
+
+        let mut buffer = SqlBuffer::new();
+        buffer.push_str("INSERT INTO ps_untyped(type, id, data) SELECT ?, id, ");
+
+        if let Some(ref schema) = self.direct {
+            buffer.push_str("powersync_json_merge(");
+            buffer.push_str(&table_columns_to_json_object(
+                &self.internal_name,
+                &schema.columns,
+            )?);
+            buffer.push_str(", _rest)");
+        } else {
+            buffer.push_str("data");
+        }
+
+        buffer.push_str(" FROM ");
+        let _ = buffer.identifier().write_str(&self.internal_name);
+
+        db.exec_text(&buffer.sql, &self.name)
     }
 }

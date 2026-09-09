@@ -16,7 +16,7 @@ use sqlite::{Connection, ResultCode, Value};
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
 use crate::schema::inspection::{ExistingTable, ExistingView};
-use crate::schema::table_info::{Index, data_column_name};
+use crate::schema::table_info::Index;
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
@@ -55,24 +55,26 @@ fn update_tables(db: Database, schema: &Schema) -> Result<()> {
         }
 
         // New table.
-        let data_column = table.data_column_name();
         let mut create_table = SqlBuffer::default();
 
         create_table.push_str("CREATE TABLE ");
         table.write_name(&mut create_table);
-        _ = write!(
-            &mut create_table,
-            "(id TEXT PRIMARY KEY NOT NULL, {data_column} TEXT"
-        );
+        _ = write!(&mut create_table, "(id TEXT PRIMARY KEY NOT NULL");
 
         if table.direct {
-            create_table.push_str("/* ps-managed */");
+            create_table.push_str(", _rest TEXT /* ps-managed ");
+            if table.local_only() {
+                create_table.push_str("local-only ");
+            }
+            create_table.push_str("*/");
 
             for column in &table.columns {
                 create_table.push_char(',');
                 let _ = create_table.identifier().write_str(&column.name);
                 let _ = write!(&mut create_table, " {}", column.type_name);
             }
+        } else {
+            create_table.push_str(", data TEXT");
         }
         create_table.push_str(");");
         db.exec_safe_str(&create_table.sql)?;
@@ -86,16 +88,7 @@ fn update_tables(db: Database, schema: &Schema) -> Result<()> {
     // Remaining tables need to be dropped. But first, we want to move their contents to
     // ps_untyped.
     for remaining in existing_tables.values() {
-        if !remaining.local_only {
-            db.exec_text(
-                &format!(
-                    "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, {} FROM {:}",
-                    data_column_name(remaining.direct.is_some()),
-                    SqlBuffer::quote_identifier(&remaining.internal_name)
-                ),
-                &remaining.name,
-            )?;
-        }
+        remaining.move_into_ps_untyped(db)?;
     }
 
     // We cannot have any open queries on sqlite_master at the point that we drop tables, otherwise

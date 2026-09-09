@@ -123,7 +123,7 @@ impl SqlBuffer {
                 Some(include_old) => {
                     let old_values = table_columns_to_json_object_with_filter(
                         "OLD",
-                        insert.table,
+                        insert.table.columns(),
                         include_old.column_filter(),
                     )?;
 
@@ -134,7 +134,7 @@ impl SqlBuffer {
                         // only include the powersync_diff of columns matched by the filter.
                         let filtered_new_fragment = table_columns_to_json_object_with_filter(
                             "NEW",
-                            insert.table,
+                            insert.table.columns(),
                             include_old.column_filter(),
                         )?;
 

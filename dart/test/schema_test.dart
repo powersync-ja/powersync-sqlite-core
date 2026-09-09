@@ -355,7 +355,7 @@ END''',
           {
             'id': 'user-id',
             'name': 'Name',
-            '__data': '{"name":"Name","other":3}'
+            '_rest': '{"other":3}',
           },
         ]);
 
@@ -365,7 +365,7 @@ END''',
         )[0].columnAt(0);
         expect(
           createTable,
-          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL, __data TEXT/* ps-managed */,"name" text)',
+          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL, _rest TEXT /* ps-managed */,"name" text)',
         );
 
         final triggers = db
@@ -388,7 +388,6 @@ END''',
           r'''
 CREATE TRIGGER "users_trigger_UPDATE" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
-UPDATE users SET __data = json_object('name', powersync_strip_subtype(NEW."name")) WHERE id = NEW.id;
 INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'users', json(powersync_diff(json_object('name', powersync_strip_subtype(OLD."name")), json_object('name', powersync_strip_subtype(NEW."name")))), 0);
 END'''
         ]);
@@ -416,6 +415,11 @@ END'''
         expect(db.select('SELECT * FROM ps_untyped'), [
           {'type': 'users', 'id': 'id', 'data': '{"name":"name"}'}
         ]);
+
+        expect(
+            db.select(
+                'SELECT * FROM sqlite_schema WHERE type = ?', ['trigger']),
+            isEmpty);
       });
     });
   });

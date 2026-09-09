@@ -10,7 +10,7 @@ use serde::Deserialize;
 use crate::{
     schema::{
         Column, CommonTableOptions, PendingStatement, PendingStatementValue, RawTable, Table,
-        raw_table::InferredTableStructure,
+        raw_table::InferredTableStructure, table_info::RestColumnIndex,
     },
     utils::SqlBuffer,
 };
@@ -34,14 +34,6 @@ impl<'a> SchemaTable<'a> {
                 definition,
                 schema: _,
             } => &definition.name,
-        }
-    }
-
-    pub fn data_column(&self) -> Option<&'static str> {
-        if let SchemaTable::Json(table) = self {
-            Some(table.data_column_name())
-        } else {
-            None
         }
     }
 
@@ -75,13 +67,16 @@ impl<'a> SchemaTable<'a> {
     pub fn infer_put_stmt(&self, table_name: &str) -> PendingStatement {
         let mut buffer = SqlBuffer::new();
         let mut params = vec![];
-        let data_column = self.data_column();
+        let mut rest = match self {
+            SchemaTable::Json(_) => Some(("_rest", RestColumnIndex::default())),
+            SchemaTable::Raw { .. } => None,
+        };
 
         buffer.push_str("INSERT INTO ");
         let _ = buffer.identifier().write_str(table_name);
         buffer.push_str(" (id");
-        if let Some(data_column) = data_column {
-            let _ = write!(&mut buffer, ", {data_column}");
+        if let Some((column, _)) = rest {
+            let _ = write!(&mut buffer, ", {column}");
         }
 
         for column in self.column_names() {
@@ -90,23 +85,28 @@ impl<'a> SchemaTable<'a> {
         }
         buffer.push_str(") VALUES (?1");
         params.push(PendingStatementValue::Id);
-        if data_column.is_some() {
-            params.push(PendingStatementValue::Row);
+        if let Some((_, ref mut rest_index)) = rest {
+            params.push(PendingStatementValue::Rest);
             buffer.push_str(", ?2");
+            rest_index.rest_parameter_positions.push(1); // this is zero-indexed
         }
 
-        let data_start_index = if data_column.is_some() { 3 } else { 2 };
+        let data_start_index = if rest.is_some() { 3 } else { 2 };
         for (i, column) in self.column_names().enumerate() {
             buffer.comma();
             let _ = write!(&mut buffer, "?{}", i + data_start_index);
             params.push(PendingStatementValue::Column(column.to_string()));
+
+            if let Some((_, ref mut index)) = rest {
+                index.named_parameters.insert(column.to_string());
+            }
         }
         buffer.push_str(") ON CONFLICT (id) DO UPDATE SET ");
         let mut do_update = buffer.comma_separated();
 
-        if let Some(data_column) = data_column {
+        if let Some((column, _)) = rest {
             let entry = do_update.element();
-            let _ = write!(entry, "{data_column} = ?2");
+            let _ = write!(entry, "{column} = ?2");
         }
 
         // Generate an "x" = ? for all synced columns to update them without affecting local-only
@@ -120,7 +120,7 @@ impl<'a> SchemaTable<'a> {
         PendingStatement {
             sql: buffer.sql,
             params,
-            named_parameters_index: None,
+            named_parameters_index: rest.map(|e| e.1),
         }
     }
 
