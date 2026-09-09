@@ -19,6 +19,7 @@ pub use checksum::Checksum;
 
 use crate::state::DatabaseState;
 pub use streaming_sync::SyncClient;
+pub use sync_local::PreparedPendingStatement;
 
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
     interface::register(db, state)
