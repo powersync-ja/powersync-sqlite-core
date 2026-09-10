@@ -11,7 +11,7 @@ use crate::error::PowerSyncError;
 use crate::schema::raw_table::generate_schema_table_trigger;
 use crate::schema::{ColumnFilter, SchemaTable};
 use crate::sync::PreparedPendingStatement;
-use crate::utils::database::Database;
+use crate::utils::database::{Database, Statement};
 use crate::utils::{SqlBuffer, WriteType};
 
 #[derive(Deserialize)]
@@ -95,28 +95,11 @@ impl Table {
         delete_stmt.push_str("DELETE FROM ps_untyped WHERE type = ?");
 
         if direct {
-            // Copying into direct tables reqires extracting from JSON. This essentially replays a
-            // sync_local step for the table, using ps_untyped as source.
-            let stmt = Rc::new(SchemaTable::Json(self).infer_put_stmt(&self.name));
-            let stmt = PreparedPendingStatement::prepare(db, stmt)?;
-
             let _ = delete_stmt.write_str(" RETURNING id, data");
             let source = db.prepare_v2(&delete_stmt.sql)?;
             source.bind_text(1, &self.name, Destructor::STATIC)?;
 
-            while source.step()? {
-                let id = source.column_text(0)?;
-                let data = source.column_text(1)?;
-
-                let parsed: serde_json::Value =
-                    serde_json::from_str(data).map_err(PowerSyncError::json_local_error)?;
-                let json_object = parsed.as_object().ok_or_else(|| {
-                    PowerSyncError::argument_error("expected oplog data to be an object")
-                })?;
-                let rest = stmt.render_rest_object(json_object)?;
-                stmt.bind_for_put(id, data, Some(json_object), rest.as_ref())?;
-                stmt.exec(&self.name, id, Some(&data))?;
-            }
+            self.direct_move_from_stmt(db, source)?;
         } else {
             let mut stmt = SqlBuffer::default();
             stmt.push_str("INSERT INTO ");
@@ -124,6 +107,47 @@ impl Table {
             let _ = stmt.write_str(" (id, data) SELECT id, data FROM ps_untyped WHERE type = ?");
             let _ = db.exec_text(&stmt.sql, &self.name);
             db.exec_text(&delete_stmt.sql, &self.name)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn direct_move_from_json(
+        &self,
+        db: Database,
+        json_table: &str,
+    ) -> Result<(), PowerSyncError> {
+        debug_assert!(self.direct);
+
+        let mut source = SqlBuffer::new();
+        source.push_str("SELECT id, data FROM ");
+        let _ = write!(source.identifier(), "{}", json_table);
+
+        let source = db.prepare_v2(&source.sql)?;
+        self.direct_move_from_stmt(db, source)
+    }
+
+    /// For direct tables, copies data from a prepared statement returning id and data.
+    fn direct_move_from_stmt(&self, db: Database, source: Statement) -> Result<(), PowerSyncError> {
+        debug_assert!(self.direct);
+
+        // Copying into direct tables reqires extracting from JSON. This essentially replays a
+        // sync_local step for the table, using a custom source.
+        let stmt = Rc::new(SchemaTable::Json(self).infer_put_stmt(&self.name));
+        let stmt = PreparedPendingStatement::prepare(db, stmt)?;
+
+        while source.step()? {
+            let id = source.column_text(0)?;
+            let data = source.column_text(1)?;
+
+            let parsed: serde_json::Value =
+                serde_json::from_str(data).map_err(PowerSyncError::json_local_error)?;
+            let json_object = parsed.as_object().ok_or_else(|| {
+                PowerSyncError::argument_error("expected oplog data to be an object")
+            })?;
+            let rest = stmt.render_rest_object(json_object)?;
+            stmt.bind_for_put(id, data, Some(json_object), rest.as_ref())?;
+            stmt.exec(&self.name, id, Some(&data))?;
         }
 
         Ok(())

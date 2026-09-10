@@ -339,17 +339,19 @@ END''',
         };
       }
 
+      void replaceSchema(Object schema) {
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+      }
+
       test('create', () {
-        db.executeInTx('SELECT powersync_replace_schema(?)', [
-          json.encode({'tables': []})
-        ]);
+        replaceSchema({'tables': []});
         db.execute('INSERT INTO ps_untyped (type, id, data) VALUES (?, ?, ?)', [
           'users',
           'user-id',
           json.encode({'name': 'Name', 'other': 3})
         ]);
-        db.executeInTx(
-            'SELECT powersync_replace_schema(?)', [json.encode(schema())]);
+        replaceSchema(schema());
 
         expect(db.select('SELECT * FROM users'), [
           {
@@ -394,9 +396,7 @@ END'''
       });
 
       test('local-only', () {
-        db.executeInTx('SELECT powersync_replace_schema(?)', [
-          json.encode(schema(additionalOptions: {'local_only': true}))
-        ]);
+        replaceSchema(schema(additionalOptions: {'local_only': true}));
 
         db.execute(
             'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
@@ -404,8 +404,7 @@ END'''
       });
 
       test('remove from schema', () {
-        db.executeInTx(
-            'SELECT powersync_replace_schema(?)', [json.encode(schema())]);
+        replaceSchema(schema());
         db.execute(
             'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
         db.executeInTx('SELECT powersync_replace_schema(?)', [
@@ -420,6 +419,59 @@ END'''
             db.select(
                 'SELECT * FROM sqlite_schema WHERE type = ?', ['trigger']),
             isEmpty);
+      });
+
+      group('migrate', () {
+        group('from json to direct', () {
+          test('local-only', () {
+            replaceSchema(schema(
+                additionalOptions: {'local_only': true, 'direct': false}));
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+            replaceSchema(schema(additionalOptions: {'local_only': true}));
+            expect(db.select('SELECT * FROM users'), hasLength(1));
+          });
+
+          test('local-only to synced', () {
+            replaceSchema(schema(
+                additionalOptions: {'local_only': true, 'direct': false}));
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+            replaceSchema(schema(additionalOptions: {}));
+
+            // Migrating from local-only to synced tables deletes data
+            expect(db.select('SELECT * FROM users'), isEmpty);
+          });
+
+          test('synced', () {
+            replaceSchema(schema(additionalOptions: {'direct': false}));
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+            replaceSchema(schema(additionalOptions: {}));
+            expect(db.select('SELECT * FROM users'), hasLength(1));
+            expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+          });
+
+          test('synced to local-only', () {
+            replaceSchema(schema(additionalOptions: {'direct': false}));
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+            replaceSchema(schema(additionalOptions: {'local_only': true}));
+            // Data should be deleted when changing to a local-only table,
+            // previous crud entry is still there.
+            expect(db.select('SELECT * FROM users'), isEmpty);
+            expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+          });
+        });
+
+        // todo: from json to direct
+        // todo: from direct to json
+
+        // todo: add column
+        // todo: change column type
+        // todo: remove column
+        // todo: split columns
       });
     });
   });
