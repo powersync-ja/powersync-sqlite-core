@@ -17,7 +17,7 @@ pub struct ExistingView {
     pub name: String,
     /// SQL contents of the `CREATE VIEW` statement.
     ///
-    /// This is not set for as_raw_table tables, which don't have a view.
+    /// This is not set for direct tables, which don't have a view.
     pub sql: Option<String>,
     /// SQL contents of all triggers implementing deletes by forwarding to
     /// `ps_data` and `ps_crud`.
@@ -72,6 +72,10 @@ SELECT
         let q = format!("DROP VIEW IF EXISTS {:}", SqlBuffer::quote_identifier(name));
         db.exec_safe_str(&q)?;
         Ok(())
+    }
+
+    pub fn delete_from_db(&self, db: Database) -> Result<()> {
+        Self::drop_by_name(db, &self.name)
     }
 
     pub fn create(&self, db: Database) -> Result<()> {
