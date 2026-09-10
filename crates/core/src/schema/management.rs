@@ -15,6 +15,7 @@ use sqlite::{Connection, ResultCode, Value};
 
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
+use crate::migrations::initialize_database;
 use crate::schema::inspection::{ExistingTable, ExistingView};
 use crate::schema::table_info::Index;
 use crate::state::DatabaseState;
@@ -27,7 +28,11 @@ use crate::views::{
 
 use super::Schema;
 
-fn update_tables(db: Database, schema: &Schema) -> Result<()> {
+fn update_tables(
+    db: Database,
+    schema: &Schema,
+    existing_views: &mut BTreeMap<&str, &ExistingView>,
+) -> Result<()> {
     let existing_tables = ExistingTable::list(db)?;
     let mut existing_tables = {
         let mut map = BTreeMap::new();
@@ -38,59 +43,97 @@ fn update_tables(db: Database, schema: &Schema) -> Result<()> {
     };
 
     for table in &schema.tables {
-        if let Some(existing) = existing_tables.remove(&*table.name) {
-            if existing.local_only != table.local_only() {
-                // Migrating between local-only and synced tables. This works by deleting
-                // existing and re-creating the table from scratch. We can re-create first and
-                // delete the old table afterwards because they have a different name
-                // (local-only tables have a ps_data_local prefix).
+        let mut move_data_from = None::<&str>;
 
-                // To delete the old existing table in the end.
-                existing_tables.insert(&existing.name, existing);
-            } else {
-                // Compatible table exists already, nothing to do.
-                continue;
+        if let Some(existing) = existing_tables.remove(&*table.name) {
+            match (&existing.direct, table.direct) {
+                (None, false) => {
+                    // JSON-based table before and now. We might have to migrate between synced and
+                    // local-only tables.
+                    if existing.local_only != table.local_only() {
+                        // Migrating between local-only and synced tables. This works by deleting
+                        // existing and re-creating the table from scratch. We can re-create first
+                        // and delete the old table afterwards because they have a different name
+                        // (local-only tables have a ps_data_local prefix).
+
+                        // To delete the old existing table in the end.
+                        existing_tables.insert(&existing.name, existing);
+                    } else {
+                        // Compatible table exists already, nothing to do.
+                        continue;
+                    }
+                }
+                (None, true) => {
+                    // When migrating from JSON-based to direct tables, there are four cases to
+                    // consider:
+                    //  1. Local-only to direct local-only: We copy data; delete the old table.
+                    //  2. Local-only to synced: Delete old table, copy from ps_untyped for new.
+                    //  3. Synced to local-only: Move old into ps_untyped; create new from scratch.
+                    //  4. Synced to synced: Copy data; delete old table.
+                    if existing.local_only == table.local_only() {
+                        // Case 1 or 4.
+                        move_data_from = Some(&existing.internal_name);
+                    } else {
+                        // Case 2 and 3 is the default, we'll delete the old table in the end which
+                        // moves to ps_untyped if necessary.
+                    }
+
+                    // To delete the existing table in the end.
+                    existing_tables.insert(&existing.name, existing);
+
+                    // The direct table we create conflicts with the view. So delete that one first.
+                    if let Some(old_view) = existing_views.remove(&*existing.name) {
+                        old_view.delete_from_db(db)?;
+                    }
+                }
+                (Some(_), false) => {
+                    return Err(PowerSyncError::argument_error(
+                        "Switching from direct to json-based tables is not yet implemented.",
+                    ));
+                }
+                (Some(_), true) => {
+                    // TODO: Consider migrations in schema tables.
+                }
             }
         }
 
         // New table.
-        let quoted_internal_name = SqlBuffer::quote_identifier(&table.internal_name());
+        let mut create_table = SqlBuffer::default();
 
-        db.exec_safe_str(&format!(
-            "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
-            quoted_internal_name
-        ))?;
+        create_table.push_str("CREATE TABLE ");
+        table.write_name(&mut create_table);
+        _ = write!(&mut create_table, "(id TEXT PRIMARY KEY NOT NULL");
 
-        if !table.local_only() {
+        if table.direct {
+            create_table.push_str(", _rest TEXT /* ps-managed ");
+            if table.local_only() {
+                create_table.push_str("local-only ");
+            }
+            create_table.push_str("*/");
+
+            for column in &table.columns {
+                create_table.push_char(',');
+                let _ = create_table.identifier().write_str(&column.name);
+                let _ = write!(&mut create_table, " {}", column.type_name);
+            }
+        } else {
+            create_table.push_str(", data TEXT");
+        }
+        create_table.push_str(");");
+        db.exec_safe_str(&create_table.sql)?;
+
+        if let Some(old_json_table) = move_data_from {
+            table.direct_move_from_json(db, old_json_table)?;
+        } else if !table.local_only() {
             // MOVE data if any
-            db.exec_text(
-                &format!(
-                    "INSERT INTO {:}(id, data)
-    SELECT id, data
-    FROM ps_untyped
-    WHERE type = ?",
-                    quoted_internal_name
-                ),
-                &table.name,
-            )?;
-
-            // language=SQLite
-            db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
+            table.move_from_ps_untyped(db)?;
         }
     }
 
     // Remaining tables need to be dropped. But first, we want to move their contents to
     // ps_untyped.
     for remaining in existing_tables.values() {
-        if !remaining.local_only {
-            db.exec_text(
-                &format!(
-                    "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}",
-                    SqlBuffer::quote_identifier(&remaining.internal_name)
-                ),
-                &remaining.name,
-            )?;
-        }
+        remaining.move_into_ps_untyped(db)?;
     }
 
     // We cannot have any open queries on sqlite_master at the point that we drop tables, otherwise
@@ -205,19 +248,17 @@ SELECT
     Ok(())
 }
 
-fn update_views(db: Database, schema: &Schema) -> Result<()> {
-    // First, find all existing views and index them by name.
-    let existing = ExistingView::list(db)?;
-    let mut existing = {
-        let mut map = BTreeMap::new();
-        for entry in &existing {
-            map.insert(&*entry.name, entry);
-        }
-        map
-    };
-
+fn update_views(
+    db: Database,
+    schema: &Schema,
+    existing: &mut BTreeMap<&str, &ExistingView>,
+) -> Result<()> {
     for table in &schema.tables {
-        let view_sql = powersync_view_sql(table);
+        let view_sql = if table.direct {
+            None
+        } else {
+            Some(powersync_view_sql(table))
+        };
         let delete_trigger_sql = powersync_trigger_delete_sql(table)?;
         let insert_trigger_sql = powersync_trigger_insert_sql(table)?;
         let update_trigger_sql = powersync_trigger_update_sql(table)?;
@@ -265,12 +306,20 @@ fn powersync_replace_schema_impl(
     let parsed_schema =
         serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::as_argument_error)?;
 
-    // language=SQLite
-    db.exec_safe(c"SELECT powersync_init()")?;
+    initialize_database(db)?;
 
-    update_tables(db, &parsed_schema)?;
+    let views = ExistingView::list(db)?;
+    let mut existing_views = {
+        let mut map = BTreeMap::new();
+        for entry in &views {
+            map.insert(&*entry.name, entry);
+        }
+        map
+    };
+
+    update_tables(db, &parsed_schema, &mut existing_views)?;
     update_indexes(db, &parsed_schema)?;
-    update_views(db, &parsed_schema)?;
+    update_views(db, &parsed_schema, &mut existing_views)?;
 
     state.set_schema(parsed_schema);
     Ok(String::from(""))

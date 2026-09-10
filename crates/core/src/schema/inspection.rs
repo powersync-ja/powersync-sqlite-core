@@ -1,10 +1,14 @@
+use core::fmt::Write;
+
 use alloc::borrow::ToOwned;
 use alloc::{format, vec};
 use alloc::{string::String, vec::Vec};
 
 use crate::error::Result;
+use crate::schema::raw_table::InferredTableStructure;
 use crate::utils::SqlBuffer;
 use crate::utils::database::Database;
+use crate::views::table_columns_to_json_object;
 
 /// An existing PowerSync-managed view that was found in the schema.
 #[derive(PartialEq)]
@@ -12,7 +16,9 @@ pub struct ExistingView {
     /// The name of the view itself.
     pub name: String,
     /// SQL contents of the `CREATE VIEW` statement.
-    pub sql: String,
+    ///
+    /// This is not set for direct tables, which don't have a view.
+    pub sql: Option<String>,
     /// SQL contents of all triggers implementing deletes by forwarding to
     /// `ps_data` and `ps_crud`.
     pub delete_trigger_sql: String,
@@ -52,7 +58,7 @@ SELECT
 
             results.push(ExistingView {
                 name,
-                sql,
+                sql: Some(sql),
                 delete_trigger_sql: delete,
                 insert_trigger_sql: insert,
                 update_trigger_sql: update,
@@ -68,9 +74,15 @@ SELECT
         Ok(())
     }
 
+    pub fn delete_from_db(&self, db: Database) -> Result<()> {
+        Self::drop_by_name(db, &self.name)
+    }
+
     pub fn create(&self, db: Database) -> Result<()> {
-        Self::drop_by_name(db, &self.name)?;
-        db.exec_safe_str(&self.sql)?;
+        if let Some(create_view) = &self.sql {
+            Self::drop_by_name(db, &self.name)?;
+            db.exec_safe_str(create_view)?;
+        }
         db.exec_safe_str(&self.delete_trigger_sql)?;
         db.exec_safe_str(&self.insert_trigger_sql)?;
         db.exec_safe_str(&self.update_trigger_sql)?;
@@ -83,28 +95,44 @@ pub struct ExistingTable {
     pub name: String,
     pub internal_name: String,
     pub local_only: bool,
+    pub direct: Option<InferredTableStructure>,
 }
 
 impl ExistingTable {
     pub fn list(db: Database) -> Result<Vec<Self>> {
+        Self::list_filtered(db, false)
+    }
+
+    pub fn list_filtered(db: Database, ignore_direct: bool) -> Result<Vec<Self>> {
         let mut results = vec![];
-        let stmt = db.prepare_v2(
-            "
-SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'ps_data_*';
-        ",
-        )?;
+        let stmt = db.prepare_v2("SELECT name, sql FROM sqlite_master WHERE type = 'table';")?;
 
         while stmt.step()? {
             let internal_name = stmt.column_text(0)?;
-            let Some((name, local_only)) = Self::external_name(internal_name) else {
+            let Ok(sql) = stmt.column_text(1) else {
                 continue;
             };
 
-            results.push(ExistingTable {
-                internal_name: internal_name.to_owned(),
-                name: name.to_owned(),
-                local_only: local_only,
-            });
+            if let Some((name, local_only)) = Self::external_name(internal_name) {
+                results.push(ExistingTable {
+                    internal_name: internal_name.to_owned(),
+                    name: name.to_owned(),
+                    local_only: local_only,
+                    direct: None,
+                });
+            } else if sql.contains("/* ps-managed") && !ignore_direct {
+                results.push(ExistingTable {
+                    internal_name: internal_name.to_owned(),
+                    name: internal_name.to_owned(),
+                    local_only: sql.contains("local-only"),
+                    direct: Some(InferredTableStructure::read_from_database(
+                        internal_name,
+                        db,
+                        &None,
+                        true,
+                    )?),
+                });
+            }
         }
 
         Ok(results)
@@ -124,5 +152,30 @@ SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'ps_data_*';
         } else {
             None
         }
+    }
+
+    pub fn move_into_ps_untyped(&self, db: Database) -> Result<()> {
+        if self.local_only {
+            return Ok(());
+        }
+
+        let mut buffer = SqlBuffer::new();
+        buffer.push_str("INSERT INTO ps_untyped(type, id, data) SELECT ?, id, ");
+
+        if let Some(ref schema) = self.direct {
+            buffer.push_str("powersync_json_merge(");
+            buffer.push_str(&table_columns_to_json_object(
+                &self.internal_name,
+                &schema.columns,
+            )?);
+            buffer.push_str(", _rest)");
+        } else {
+            buffer.push_str("data");
+        }
+
+        buffer.push_str(" FROM ");
+        let _ = buffer.identifier().write_str(&self.internal_name);
+
+        db.exec_text(&buffer.sql, &self.name)
     }
 }

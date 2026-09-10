@@ -6,8 +6,8 @@ use core::ffi::c_int;
 use crate::constants::SUBTYPE_JSON;
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
-use powersync_sqlite_nostd as sqlite;
 use powersync_sqlite_nostd::bindings::{SQLITE_RESULT_SUBTYPE, SQLITE_SUBTYPE};
+use powersync_sqlite_nostd::{self as sqlite, ColumnType};
 use powersync_sqlite_nostd::{Connection, Context, Value};
 use sqlite::ResultCode;
 
@@ -38,6 +38,10 @@ fn powersync_json_merge_impl(
     }
     let mut result = String::from("{");
     for arg in args {
+        if arg.value_type() == ColumnType::Null {
+            continue;
+        }
+
         let chunk = arg.text();
         if chunk.is_empty() || !chunk.starts_with('{') || !chunk.ends_with('}') {
             return Err(PowerSyncError::argument_error("Expected json object"));

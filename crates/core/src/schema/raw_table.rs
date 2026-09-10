@@ -4,25 +4,20 @@ use core::{
 };
 
 use alloc::{
-    collections::btree_map::BTreeMap,
-    format,
-    rc::Rc,
-    string::{String, ToString},
-    vec,
+    borrow::ToOwned, collections::btree_map::BTreeMap, format, rc::Rc, string::String, vec,
     vec::Vec,
 };
 use powersync_sqlite_nostd::Destructor;
 
 use crate::{
     error::{PowerSyncError, Result},
-    schema::{ColumnFilter, PendingStatement, PendingStatementValue, RawTable, SchemaTable},
+    schema::{Column, ColumnFilter, PendingStatement, RawTable, SchemaTable},
     utils::{InsertIntoCrud, SqlBuffer, WriteType, database::Database},
     views::table_columns_to_json_object,
 };
 
 pub struct InferredTableStructure {
-    pub name: String,
-    pub columns: Vec<String>,
+    pub columns: Vec<Column>,
 }
 
 impl InferredTableStructure {
@@ -30,8 +25,9 @@ impl InferredTableStructure {
         table_name: &str,
         db: Database,
         synced_columns: &Option<ColumnFilter>,
+        is_direct: bool,
     ) -> Result<Self> {
-        let stmt = db.prepare_v2("select name from pragma_table_info(?)")?;
+        let stmt = db.prepare_v2("select name, type from pragma_table_info(?)")?;
         stmt.bind_text(1, table_name, Destructor::STATIC)?;
 
         let mut has_id_column = false;
@@ -39,14 +35,21 @@ impl InferredTableStructure {
 
         while stmt.step()? {
             let name = stmt.column_text(0)?;
+            let column_type = stmt.column_text(1)?;
+
             if name == "id" {
                 has_id_column = true;
             } else if let Some(filter) = synced_columns
                 && !filter.matches(name)
             {
                 // This column isn't part of the synced columns, skip.
+            } else if is_direct && name == "_rest" {
+                // _rest column is an artifact of direct tables, skip.
             } else {
-                columns.push(name.to_string());
+                columns.push(Column {
+                    name: name.to_owned(),
+                    type_name: column_type.to_owned(),
+                });
             }
         }
 
@@ -59,61 +62,7 @@ impl InferredTableStructure {
                 "Table {table_name} has no id column."
             )))
         } else {
-            Ok(Self {
-                name: table_name.to_string(),
-                columns,
-            })
-        }
-    }
-
-    /// Generates a statement of the form `INSERT INTO $tbl ($cols) VALUES (?, ...) ON CONFLICT (id)
-    /// DO UPDATE SET ...` for the sync client.
-    pub fn infer_put_stmt(&self) -> PendingStatement {
-        let mut buffer = SqlBuffer::new();
-        let mut params = vec![];
-
-        buffer.push_str("INSERT INTO ");
-        let _ = buffer.identifier().write_str(&self.name);
-        buffer.push_str(" (id");
-        for column in &self.columns {
-            buffer.comma();
-            let _ = buffer.identifier().write_str(column);
-        }
-        buffer.push_str(") VALUES (?1");
-        params.push(PendingStatementValue::Id);
-        for (i, column) in self.columns.iter().enumerate() {
-            buffer.comma();
-            let _ = write!(&mut buffer, "?{}", i + 2);
-            params.push(PendingStatementValue::Column(column.clone()));
-        }
-        buffer.push_str(") ON CONFLICT (id) DO UPDATE SET ");
-        let mut do_update = buffer.comma_separated();
-        // Generated an "x" = ? for all synced columns to update them without affecting local-only
-        // columns.
-        for (i, column) in self.columns.iter().enumerate() {
-            let entry = do_update.element();
-            let _ = entry.identifier().write_str(column);
-            let _ = write!(entry, " = ?{}", i + 2);
-        }
-
-        PendingStatement {
-            sql: buffer.sql,
-            params,
-            named_parameters_index: None,
-        }
-    }
-
-    /// Generates a statement of the form `DELETE FROM $tbl WHERE id = ?` for the sync client.
-    pub fn infer_delete_stmt(&self) -> PendingStatement {
-        let mut buffer = SqlBuffer::new();
-        buffer.push_str("DELETE FROM ");
-        let _ = buffer.identifier().write_str(&self.name);
-        buffer.push_str(" WHERE id = ?");
-
-        PendingStatement {
-            sql: buffer.sql,
-            params: vec![PendingStatementValue::Id],
-            named_parameters_index: None,
+            Ok(Self { columns })
         }
     }
 }
@@ -141,7 +90,7 @@ impl InferredSchemaCache {
         schema_version: usize,
         tbl: &RawTable,
     ) -> Result<Rc<PendingStatement>> {
-        self.with_entry(db, schema_version, tbl, SchemaCacheEntry::put)
+        self.with_entry(db, schema_version, tbl, |entry| entry.put_stmt.clone())
     }
 
     pub fn infer_delete_statement(
@@ -150,7 +99,7 @@ impl InferredSchemaCache {
         schema_version: usize,
         tbl: &RawTable,
     ) -> Result<Rc<PendingStatement>> {
-        self.with_entry(db, schema_version, tbl, SchemaCacheEntry::delete)
+        self.with_entry(db, schema_version, tbl, |entry| entry.delete_stmt.clone())
     }
 
     fn with_entry(
@@ -179,9 +128,8 @@ impl InferredSchemaCache {
 
 pub struct SchemaCacheEntry {
     schema_version: usize,
-    structure: InferredTableStructure,
-    put_stmt: Option<Rc<PendingStatement>>,
-    delete_stmt: Option<Rc<PendingStatement>>,
+    pub put_stmt: Rc<PendingStatement>,
+    pub delete_stmt: Rc<PendingStatement>,
 }
 
 impl SchemaCacheEntry {
@@ -191,26 +139,18 @@ impl SchemaCacheEntry {
             local_table_name,
             db,
             &table.schema.synced_columns,
+            false,
         )?;
+        let schema_table = SchemaTable::Raw {
+            definition: table,
+            schema: &structure,
+        };
 
         Ok(Self {
             schema_version,
-            structure,
-            put_stmt: None,
-            delete_stmt: None,
+            put_stmt: Rc::new(schema_table.infer_put_stmt(local_table_name)),
+            delete_stmt: Rc::new(schema_table.infer_delete_stmt(local_table_name)),
         })
-    }
-
-    fn put(&mut self) -> Rc<PendingStatement> {
-        self.put_stmt
-            .get_or_insert_with(|| Rc::new(self.structure.infer_put_stmt()))
-            .clone()
-    }
-
-    fn delete(&mut self) -> Rc<PendingStatement> {
-        self.delete_stmt
-            .get_or_insert_with(|| Rc::new(self.structure.infer_delete_stmt()))
-            .clone()
     }
 }
 
@@ -225,13 +165,29 @@ pub fn generate_raw_table_trigger(
     let local_table_name = table.require_table_name()?;
     let synced_columns = &table.schema.synced_columns;
     let resolved_table =
-        InferredTableStructure::read_from_database(local_table_name, db, synced_columns)?;
+        InferredTableStructure::read_from_database(local_table_name, db, synced_columns, false)?;
 
     let as_schema_table = SchemaTable::Raw {
         definition: table,
         schema: &resolved_table,
     };
 
+    generate_schema_table_trigger(
+        local_table_name,
+        as_schema_table,
+        synced_columns.as_ref(),
+        trigger_name,
+        write,
+    )
+}
+
+pub fn generate_schema_table_trigger(
+    local_table_name: &str,
+    table: SchemaTable,
+    synced_columns: Option<&ColumnFilter>,
+    trigger_name: &str,
+    write: WriteType,
+) -> Result<String> {
     let mut buffer = SqlBuffer::new();
     buffer.create_trigger("", trigger_name);
     buffer.trigger_after(write, local_table_name);
@@ -242,7 +198,7 @@ pub fn generate_raw_table_trigger(
         buffer.push_str(" AND\n(");
         // If we have a filter for synced columns (instead of syncing all of them), we want to add
         // additional WHEN clauses to enesure the trigger runs for updates on those columns only.
-        for (i, name) in as_schema_table.column_names().enumerate() {
+        for (i, name) in table.column_names().enumerate() {
             if i != 0 {
                 buffer.push_str(" OR ");
             }
@@ -257,25 +213,28 @@ pub fn generate_raw_table_trigger(
     }
 
     buffer.push_str(" BEGIN\n");
+    let flags = table.common_options().flags;
+    let mut has_stmt = false;
 
-    if table.schema.options.flags.insert_only() {
+    if flags.insert_only() {
         if write != WriteType::Insert {
             // Prevent illegal writes to a table marked as insert-only by raising errors here.
             buffer.push_str("SELECT RAISE(FAIL, 'Unexpected update on insert-only table');\n");
-        } else {
+        } else if !flags.local_only() {
             // Insert-only tables use manual CRUD writes so they don't block incoming data.
-            let fragment = table_columns_to_json_object("NEW", &as_schema_table)?;
-            buffer.powersync_crud_manual_put(&table.name, &fragment);
+            let fragment = table_columns_to_json_object("NEW", table.columns())?;
+            buffer.powersync_crud_manual_put(table.name(), &fragment);
         }
     } else {
         if write == WriteType::Update {
             // Updates must not change the id.
             buffer.check_id_not_changed();
+            has_stmt = true;
         }
 
-        let json_fragment_new = table_columns_to_json_object("NEW", &as_schema_table)?;
+        let json_fragment_new = table_columns_to_json_object("NEW", table.columns())?;
         let json_fragment_old = if write == WriteType::Update {
-            Some(table_columns_to_json_object("OLD", &as_schema_table)?)
+            Some(table_columns_to_json_object("OLD", table.columns())?)
         } else {
             None
         };
@@ -294,61 +253,31 @@ pub fn generate_raw_table_trigger(
             write!(f, ", {json_fragment_new}))")
         });
 
-        buffer.insert_into_powersync_crud(InsertIntoCrud {
-            op: write,
-            table: &as_schema_table,
-            id_expr: if write == WriteType::Delete {
-                "OLD.id"
-            } else {
-                "NEW.id"
-            },
-            type_name: &table.name,
-            data: match write {
-                // There is no data for deleted rows.
-                WriteType::Delete => None,
-                _ => Some(&write_data),
-            },
-            metadata: None::<&'static str>,
-        })?;
+        if !flags.local_only() {
+            has_stmt = true;
+            buffer.insert_into_powersync_crud(InsertIntoCrud {
+                op: write,
+                table: &table,
+                id_expr: if write == WriteType::Delete {
+                    "OLD.id"
+                } else {
+                    "NEW.id"
+                },
+                type_name: table.name(),
+                data: match write {
+                    // There is no data for deleted rows.
+                    WriteType::Delete => None,
+                    _ => Some(&write_data),
+                },
+                metadata: None::<&'static str>,
+            })?;
+        }
+    }
+
+    if !has_stmt {
+        return Ok(Default::default());
     }
 
     buffer.trigger_end();
     Ok(buffer.sql)
-}
-
-#[cfg(test)]
-mod test {
-    use alloc::{string::ToString, vec};
-    use core::assert_matches;
-
-    use crate::schema::{PendingStatementValue, raw_table::InferredTableStructure};
-
-    #[test]
-    fn infer_sync_statements() {
-        let structure = InferredTableStructure {
-            name: "tbl".to_string(),
-            columns: vec!["foo".to_string(), "bar".to_string()],
-        };
-
-        let put = structure.infer_put_stmt();
-        assert_eq!(
-            put.sql,
-            r#"INSERT INTO "tbl" (id, "foo", "bar") VALUES (?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET "foo" = ?2, "bar" = ?3"#
-        );
-        assert_eq!(put.params.len(), 3);
-        assert_matches!(put.params[0], PendingStatementValue::Id);
-        assert_matches!(
-            put.params[1],
-            PendingStatementValue::Column(ref name) if name == "foo"
-        );
-        assert_matches!(
-            put.params[2],
-            PendingStatementValue::Column(ref name) if name == "bar"
-        );
-
-        let delete = structure.infer_delete_stmt();
-        assert_eq!(delete.sql, r#"DELETE FROM "tbl" WHERE id = ?"#);
-        assert_eq!(delete.params.len(), 1);
-        assert_matches!(delete.params[0], PendingStatementValue::Id);
-    }
 }
