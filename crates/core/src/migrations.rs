@@ -4,7 +4,6 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use powersync_sqlite_nostd::Context;
 use powersync_sqlite_nostd::{self as sqlite, Destructor};
 use serde::Serialize;
 use serde_json::json;
@@ -15,12 +14,16 @@ use crate::fix_data::apply_v035_fix;
 use crate::schema::inspection::ExistingView;
 use crate::sync::BucketPriority;
 use crate::utils::database::Database;
+use crate::utils::verify_in_transaction;
 
 pub const LATEST_VERSION: i32 = 14;
 
-pub fn powersync_migrate(ctx: *mut sqlite::context, target_version: i32) -> Result<()> {
-    let local_db = Database::from(ctx.db_handle());
+pub fn initialize_database(db: Database) -> Result<()> {
+    verify_in_transaction(db)?;
+    powersync_migrate(db, LATEST_VERSION)
+}
 
+pub fn powersync_migrate(local_db: Database, target_version: i32) -> Result<()> {
     // language=SQLite
     local_db.exec_safe(
         c"\
