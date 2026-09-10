@@ -12,7 +12,7 @@ use sqlite::{ResultCode, Value};
 
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
-use crate::migrations::{LATEST_VERSION, powersync_migrate};
+use crate::migrations::{initialize_database, powersync_migrate};
 use crate::schema::inspection::ExistingView;
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
@@ -34,8 +34,7 @@ extern "C" fn powersync_drop_view(
 
 fn powersync_init_impl(ctx: *mut sqlite::context, _args: &[*mut sqlite::value]) -> Result<String> {
     let db = Database::from(ctx.db_handle());
-    verify_in_transaction(db)?;
-    powersync_migrate(ctx, LATEST_VERSION)?;
+    initialize_database(db)?;
 
     Ok(String::from(""))
 }
@@ -50,7 +49,7 @@ fn powersync_test_migration_impl(
     verify_in_transaction(db)?;
 
     let target_version = args[0].int();
-    powersync_migrate(ctx, target_version)?;
+    powersync_migrate(db, target_version)?;
 
     Ok(String::from(""))
 }
