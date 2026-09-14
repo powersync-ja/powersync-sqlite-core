@@ -129,7 +129,6 @@ impl ExistingTable {
                         internal_name,
                         db,
                         &None,
-                        true,
                     )?),
                 });
             }
@@ -163,12 +162,10 @@ impl ExistingTable {
         buffer.push_str("INSERT INTO ps_untyped(type, id, data) SELECT ?, id, ");
 
         if let Some(ref schema) = self.direct {
-            buffer.push_str("powersync_json_merge(");
             buffer.push_str(&table_columns_to_json_object(
                 &self.internal_name,
                 &schema.columns,
             )?);
-            buffer.push_str(", _rest)");
         } else {
             buffer.push_str("data");
         }
