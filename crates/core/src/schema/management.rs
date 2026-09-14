@@ -1,11 +1,12 @@
 extern crate alloc;
 
 use alloc::borrow::ToOwned;
+use alloc::collections::BTreeSet;
 use alloc::collections::btree_map::BTreeMap;
+use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
-use alloc::{format, vec};
 use core::ffi::c_int;
 use core::fmt::Write;
 
@@ -16,6 +17,7 @@ use sqlite::{Connection, ResultCode, Value};
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
 use crate::migrations::initialize_database;
+use crate::schema::Table;
 use crate::schema::inspection::{ExistingTable, ExistingView};
 use crate::schema::table_info::Index;
 use crate::state::DatabaseState;
@@ -149,18 +151,28 @@ fn update_tables(
     Ok(())
 }
 
-fn create_index_stmt(table_name: &str, index_name: &str, index: &Index) -> String {
+fn create_index_stmt(table: &Table, index_name: &str, index: &Index) -> String {
     let mut sql = SqlBuffer::new();
     sql.push_str("CREATE INDEX ");
     let _ = sql.identifier().write_str(&index_name);
+    if table.direct {
+        // We use this to identify old indexes to remove them. This is only required for direct
+        // tables, for json tables we use the ps_data prefix.
+        sql.push_str("/* ps-managed */");
+    }
     sql.push_str(" ON ");
-    let _ = sql.identifier().write_str(&table_name);
+    table.write_name(&mut sql);
     sql.push_char('(');
     {
         let mut sql = sql.comma_separated();
         for indexed_column in &index.columns {
             let sql = sql.element();
-            sql.json_extract_and_cast("data", &indexed_column.name, &indexed_column.type_name);
+
+            if table.direct {
+                let _ = sql.identifier().write_str(&indexed_column.name);
+            } else {
+                sql.json_extract_and_cast("data", &indexed_column.name, &indexed_column.type_name);
+            }
 
             if !indexed_column.ascending {
                 sql.push_str(" DESC");
@@ -174,7 +186,7 @@ fn create_index_stmt(table_name: &str, index_name: &str, index: &Index) -> Strin
 
 fn update_indexes(db: Database, schema: &Schema) -> Result<()> {
     let mut statements: Vec<String> = alloc::vec![];
-    let mut expected_index_names: Vec<String> = vec![];
+    let mut expected_index_names: BTreeSet<String> = Default::default();
 
     {
         // In a block so that the statement is finalized before dropping indexes
@@ -201,7 +213,7 @@ fn update_indexes(db: Database, schema: &Schema) -> Result<()> {
                     result
                 };
 
-                let sql = create_index_stmt(&table_name, &index_name, index);
+                let sql = create_index_stmt(&table, &index_name, index);
                 if existing_sql.is_none() {
                     statements.push(sql);
                 } else if existing_sql != Some(&sql) {
@@ -212,30 +224,23 @@ fn update_indexes(db: Database, schema: &Schema) -> Result<()> {
                     statements.push(sql);
                 }
 
-                expected_index_names.push(index_name);
+                expected_index_names.insert(index_name);
             }
         }
 
-        // In a block so that the statement is finalized before dropping indexes
         // language=SQLite
         let statement = db.prepare_v2(
             "\
-SELECT
-    sqlite_master.name as index_name
-      FROM sqlite_master
-          WHERE sqlite_master.type = 'index'
-            AND sqlite_master.name GLOB 'ps_data_*'
-            AND sqlite_master.name NOT IN (SELECT value FROM json_each(?))
-",
+SELECT name FROM sqlite_master
+    WHERE type = 'index'
+    AND (name GLOB 'ps_data_*' OR sqlite_master.sql GLOB '* ps-managed *')",
         )?;
-        let json_names = serde_json::to_string(&expected_index_names)
-            .map_err(PowerSyncError::as_argument_error)?;
-        statement.bind_text(1, &json_names, sqlite::Destructor::STATIC)?;
 
         while statement.step()? {
             let name = statement.column_text(0)?;
-
-            statements.push(format!("DROP INDEX {}", SqlBuffer::quote_identifier(name)));
+            if !expected_index_names.contains(name) {
+                statements.push(format!("DROP INDEX {}", SqlBuffer::quote_identifier(name)));
+            }
         }
     }
 
@@ -353,14 +358,26 @@ pub fn register(
 mod test {
     use alloc::{string::ToString, vec};
 
-    use crate::schema::table_info::{Index, IndexedColumn};
+    use crate::schema::{
+        Table,
+        table_info::{Index, IndexedColumn},
+    };
 
     use super::create_index_stmt;
 
     #[test]
     fn test_create_index() {
+        let table = Table {
+            name: "table".to_string(),
+            view_name_override: None,
+            columns: Default::default(),
+            indexes: Default::default(),
+            options: Default::default(),
+            direct: false,
+        };
+
         let stmt = create_index_stmt(
-            "table",
+            &table,
             "index",
             &Index {
                 name: "unused".to_string(),
@@ -381,7 +398,7 @@ mod test {
 
         assert_eq!(
             stmt,
-            r#"CREATE INDEX "index" ON "table"(CAST(json_extract(data, '$.a') as text), CAST(json_extract(data, '$.b') as integer) DESC)"#
+            r#"CREATE INDEX "index" ON "ps_data__table"(CAST(json_extract(data, '$.a') as text), CAST(json_extract(data, '$.b') as integer) DESC)"#
         )
     }
 }
