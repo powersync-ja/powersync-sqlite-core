@@ -11,7 +11,8 @@ use serde::ser::SerializeMap;
 use crate::error::{PowerSyncError, Result};
 use crate::schema::inspection::ExistingTable;
 use crate::schema::{
-    InferredSchemaCache, PendingStatement, PendingStatementValue, RawTable, Schema,
+    InferredSchemaCache, PendingStatement, PendingStatementValue, RawTable, Schema, SchemaTable,
+    Table,
 };
 use crate::state::DatabaseState;
 use crate::sync::BucketPriority;
@@ -124,7 +125,6 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
                                     "expected oplog data to be an object",
                                 )
                             })?;
-
                             let rest = stmt.render_rest_object(json_object)?;
                             stmt.bind_for_put(id, data, Some(json_object), rest.as_ref())?;
                             stmt.exec(type_name, id, Some(&data))?;
@@ -340,6 +340,15 @@ impl<'a> ParsedDatabaseSchema<'a> {
     }
 
     fn add_from_schema(&mut self, schema: &'a Schema) {
+        for regular in &schema.tables {
+            if regular.direct && !regular.local_only() {
+                self.tables.insert(
+                    regular.name.clone(),
+                    ParsedSchemaTable::new(TableDefinition::Direct(regular)),
+                );
+            }
+        }
+
         for raw in &schema.raw_tables {
             self.tables.insert(
                 raw.name.clone(),
@@ -349,9 +358,11 @@ impl<'a> ParsedDatabaseSchema<'a> {
     }
 
     fn add_from_db(&mut self, db: Database) -> Result<()> {
-        let tables = ExistingTable::list(db)?;
+        // Ignore direct tables here, we can rely on them being added via add_from_schema.
+        // TODO: Remove this function, SDKs should always pass the used schema when they connect.
+        let tables = ExistingTable::list_filtered(db, true)?;
         for table in tables {
-            if !table.local_only {
+            if !table.local_only && !self.tables.contains_key(&table.name) {
                 let visible_name = table.name;
 
                 self.tables.insert(
@@ -420,6 +431,9 @@ impl<'a> ParsedSchemaTable<'a> {
                         named_parameters_index: None,
                     })
                 }
+                TableDefinition::Direct(table) => {
+                    Rc::new(SchemaTable::Json(table).infer_put_stmt(&table.name))
+                }
             })
         })
     }
@@ -448,6 +462,9 @@ impl<'a> ParsedSchemaTable<'a> {
                         named_parameters_index: None,
                     })
                 }
+                TableDefinition::Direct(table) => {
+                    Rc::new(SchemaTable::Json(table).infer_delete_stmt(&table.name))
+                }
             })
         })
     }
@@ -456,12 +473,13 @@ impl<'a> ParsedSchemaTable<'a> {
 enum TableDefinition<'a> {
     Raw(&'a RawTable),
     JsonView { local_table: String },
+    Direct(&'a Table),
 }
 
-struct PreparedPendingStatement {
+pub struct PreparedPendingStatement {
     stmt: Statement,
-    definition: Rc<PendingStatement>,
     needs_parsed_json: bool,
+    definition: Rc<PendingStatement>,
 }
 
 impl PreparedPendingStatement {
