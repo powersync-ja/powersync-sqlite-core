@@ -60,7 +60,7 @@ pub fn powersync_view_sql(table_info: &Table) -> String {
 
 pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String> {
     if table_info.direct {
-        return table_info.generate_direct_trigger(WriteType::Delete);
+        return table_info.generate_direct_trigger(None, WriteType::Delete);
     }
 
     if table_info.options.flags.insert_only() {
@@ -122,7 +122,7 @@ pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String> {
 
 pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String> {
     if table_info.direct {
-        return table_info.generate_direct_trigger(WriteType::Insert);
+        return table_info.generate_direct_trigger(None, WriteType::Insert);
     }
 
     let name = &table_info.name;
@@ -177,7 +177,7 @@ pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String> {
 
 pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
     if table_info.direct {
-        return table_info.generate_direct_trigger(WriteType::Update);
+        return table_info.generate_direct_trigger(None, WriteType::Update);
     }
 
     if table_info.options.flags.insert_only() {

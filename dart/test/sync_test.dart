@@ -2319,7 +2319,6 @@ CREATE TRIGGER users_ref_delete
         {
           'id': 'my_user',
           'name': 'First user',
-          '_rest': null,
         }
       ]);
 
