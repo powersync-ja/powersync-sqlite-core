@@ -357,7 +357,6 @@ END''',
           {
             'id': 'user-id',
             'name': 'Name',
-            '_rest': '{"other":3}',
           },
         ]);
 
@@ -367,7 +366,7 @@ END''',
         )[0].columnAt(0);
         expect(
           createTable,
-          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL, _rest TEXT /* ps-managed */,"name" text)',
+          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL /* ps-managed */,"name" text)',
         );
 
         final triggers = db
@@ -465,7 +464,6 @@ END'''
           });
         });
 
-        // todo: from json to direct
         // todo: from direct to json
 
         // todo: add column

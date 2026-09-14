@@ -145,8 +145,7 @@ impl Table {
             let json_object = parsed.as_object().ok_or_else(|| {
                 PowerSyncError::argument_error("expected oplog data to be an object")
             })?;
-            let rest = stmt.render_rest_object(json_object)?;
-            stmt.bind_for_put(id, data, Some(json_object), rest.as_ref())?;
+            stmt.bind_for_put(id, data, Some(json_object), None)?;
             stmt.exec(&self.name, id, Some(&data))?;
         }
 
@@ -162,15 +161,24 @@ impl Table {
         }
     }
 
-    pub fn generate_direct_trigger(&self, write: WriteType) -> Result<String, PowerSyncError> {
+    pub fn generate_direct_trigger(
+        &self,
+        mut trigger_name: Option<String>,
+        write: WriteType,
+    ) -> Result<String, PowerSyncError> {
         debug_assert!(self.direct);
+
         generate_schema_table_trigger(
             &self.name,
             SchemaTable::Json(self),
             None,
-            &format!("{}_trigger_{}", self.name, write),
+            trigger_name.get_or_insert_with(|| self.direct_trigger_name(write)),
             write,
         )
+    }
+
+    pub fn direct_trigger_name(&self, write: WriteType) -> String {
+        format!("{}_trigger_{}", self.name, write)
     }
 }
 
