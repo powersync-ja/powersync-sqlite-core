@@ -105,7 +105,7 @@ fn update_tables(
         _ = write!(&mut create_table, "(id TEXT PRIMARY KEY NOT NULL");
 
         if table.direct {
-            create_table.push_str(", _rest TEXT /* ps-managed ");
+            create_table.push_str(" /* ps-managed ");
             if table.local_only() {
                 create_table.push_str("local-only ");
             }
