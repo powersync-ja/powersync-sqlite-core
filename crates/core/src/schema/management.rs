@@ -4,7 +4,7 @@ use alloc::borrow::ToOwned;
 use alloc::collections::BTreeSet;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::rc::Rc;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::{format, vec};
 use core::ffi::c_int;
@@ -17,7 +17,7 @@ use sqlite::{Connection, ResultCode, Value};
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
 use crate::migrations::initialize_database;
-use crate::schema::inspection::{ExistingTable, ExistingView};
+use crate::schema::inspection::{ExistingTable, ExistingView, ViewKey};
 use crate::schema::raw_table::InferredTableStructure;
 use crate::schema::table_info::{CreateTableStatement, Index};
 use crate::schema::{Column, Table};
@@ -34,12 +34,12 @@ use super::Schema;
 fn update_tables(
     db: Database,
     schema: &Schema,
+    existing_tables: &[ExistingTable],
     existing_views: &mut BTreeMap<&str, &ExistingView>,
 ) -> Result<()> {
-    let existing_tables = ExistingTable::list(db)?;
     let mut existing_tables = {
         let mut map = BTreeMap::new();
-        for table in &existing_tables {
+        for table in existing_tables {
             map.insert(&*table.name, table);
         }
         map
@@ -198,7 +198,7 @@ fn direct_table_migration(db: Database, old: &InferredTableStructure, new: &Tabl
             let index_name = stmt.column_text(0)?;
 
             let mut stmt = SqlBuffer::new();
-            stmt.drop_index(&index_name);
+            stmt.drop("INDEX", false, &index_name);
             db.exec_safe_str(&stmt.sql)?;
         }
     }
@@ -251,7 +251,7 @@ fn direct_table_migration(db: Database, old: &InferredTableStructure, new: &Tabl
     for dropped_column in deleted_columns {
         let mut stmt = SqlBuffer::new();
         stmt.alter_table(&new.name);
-        stmt.drop_column(&dropped_column.name);
+        stmt.drop("COLUMN", false, &dropped_column.name);
         db.exec_safe_str(&stmt.sql)?;
     }
 
@@ -325,7 +325,7 @@ fn update_indexes(db: Database, schema: &Schema) -> Result<()> {
                     statements.push(sql);
                 } else if existing_sql != Some(&sql) {
                     let mut drop_stmt = SqlBuffer::new();
-                    drop_stmt.drop_index(&index_name);
+                    drop_stmt.drop("INDEX", false, &index_name);
 
                     statements.push(drop_stmt.sql);
                     statements.push(sql);
@@ -366,18 +366,21 @@ fn update_views(
     existing: &mut BTreeMap<&str, &ExistingView>,
 ) -> Result<()> {
     for table in &schema.tables {
-        let view_sql = if table.direct {
-            None
-        } else {
-            Some(powersync_view_sql(table))
-        };
         let delete_trigger_sql = powersync_trigger_delete_sql(table)?;
         let insert_trigger_sql = powersync_trigger_insert_sql(table)?;
         let update_trigger_sql = powersync_trigger_update_sql(table)?;
 
         let wanted_view = ExistingView {
-            name: table.view_name().to_owned(),
-            sql: view_sql,
+            key: if table.direct {
+                ViewKey::DirectTable {
+                    table_name: table.name.to_string(),
+                }
+            } else {
+                ViewKey::JsonTable {
+                    name: table.view_name().to_owned(),
+                    sql: powersync_view_sql(table),
+                }
+            },
             delete_trigger_sql,
             insert_trigger_sql,
             update_trigger_sql,
@@ -396,7 +399,7 @@ fn update_views(
 
     // Delete old views.
     for remaining in existing.values() {
-        ExistingView::drop_by_name(db, &remaining.name)?;
+        remaining.delete_from_db(db)?;
     }
 
     Ok(())
@@ -420,16 +423,17 @@ fn powersync_replace_schema_impl(
 
     initialize_database(db)?;
 
-    let views: Vec<ExistingView> = ExistingView::list(db)?;
+    let existing_tables = ExistingTable::list(db)?;
+    let views: Vec<ExistingView> = ExistingView::list(db, &existing_tables)?;
     let mut existing_views = {
         let mut map = BTreeMap::new();
         for entry in &views {
-            map.insert(&*entry.name, entry);
+            map.insert(entry.name(), entry);
         }
         map
     };
 
-    update_tables(db, &parsed_schema, &mut existing_views)?;
+    update_tables(db, &parsed_schema, &existing_tables, &mut existing_views)?;
     update_indexes(db, &parsed_schema)?;
     update_views(db, &parsed_schema, &mut existing_views)?;
 

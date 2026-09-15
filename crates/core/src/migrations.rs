@@ -11,7 +11,7 @@ use sqlite::ResultCode;
 
 use crate::error::{PowerSyncError, Result};
 use crate::fix_data::apply_v035_fix;
-use crate::schema::inspection::ExistingView;
+use crate::schema::inspection::{ExistingTable, ExistingView};
 use crate::sync::BucketPriority;
 use crate::utils::database::Database;
 use crate::utils::verify_in_transaction;
@@ -173,7 +173,8 @@ VALUES(4,
         // Down migrations are less common, so we're okay about that breaking
         // in some cases.
 
-        for mut view in ExistingView::list(local_db)? {
+        let tables = ExistingTable::list(local_db)?;
+        for mut view in ExistingView::list(local_db, &tables)? {
             view.delete_trigger_sql = String::default();
             view.update_trigger_sql = String::default();
             view.insert_trigger_sql = String::default();
