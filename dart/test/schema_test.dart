@@ -333,7 +333,8 @@ END''',
             {
               'name': 'users',
               'columns': [
-                {'name': 'name', 'type': 'text'}
+                {'name': 'name', 'type': 'text'},
+                ...additionalColumns,
               ],
               'direct': true,
               ...additionalOptions,
@@ -479,6 +480,15 @@ END'''
             {'name': 'new-1', 'type': 'text'},
             {'name': 'new-2', 'type': 'integer'},
           ]));
+
+          expect(db.select('SELECT * FROM users'), [
+            {
+              'id': 'id',
+              'name': 'name',
+              'new-1': null,
+              'new-2': null,
+            }
+          ]);
         });
 
         // todo: change column type
