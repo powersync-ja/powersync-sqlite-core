@@ -324,7 +324,10 @@ END''',
     });
 
     group('direct tables', () {
-      Object schema({Map<String, Object?> additionalOptions = const {}}) {
+      Object schema({
+        Map<String, Object?> additionalOptions = const {},
+        List<Object?> additionalColumns = const [],
+      }) {
         return {
           'tables': [
             {
@@ -467,6 +470,17 @@ END'''
         // todo: from direct to json
 
         // todo: add column
+        test('adding columns', () {
+          replaceSchema(schema());
+          db.execute(
+              'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'new-1', 'type': 'text'},
+            {'name': 'new-2', 'type': 'integer'},
+          ]));
+        });
+
         // todo: change column type
         // todo: remove column
         // todo: split columns
