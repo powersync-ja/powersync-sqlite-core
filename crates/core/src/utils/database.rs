@@ -1,4 +1,4 @@
-use core::ffi::{CStr, c_char};
+use core::ffi::{CStr, c_char, c_int};
 
 use alloc::ffi::CString;
 use num_traits::FromPrimitive;
@@ -82,6 +82,37 @@ impl Database {
         let statement = self.prepare_v2(sql)?;
         statement.bind_text(1, param, Destructor::STATIC)?;
         statement.exec()
+    }
+
+    pub fn has_writable_schema(self) -> bool {
+        let mut result: c_int = 0;
+        let _ = sqlite::db_config(
+            self.sqlite,
+            sqlite::DBCONFIG_WRITABLE_SCHEMA,
+            -1, // negative to leave the setting unchanged.
+            &mut result,
+        );
+        result != 0
+    }
+
+    pub fn set_writable_schema(self, enable: bool) -> Result<()> {
+        let mut result = 0;
+        let expected_result = if enable { 1 } else { 0 };
+
+        let _ = sqlite::db_config(
+            self.sqlite,
+            sqlite::DBCONFIG_WRITABLE_SCHEMA,
+            expected_result,
+            &mut result,
+        );
+
+        if expected_result != result {
+            return Err(PowerSyncError::state_error(
+                "Could not apply writable schema",
+            ));
+        }
+
+        Ok(())
     }
 }
 

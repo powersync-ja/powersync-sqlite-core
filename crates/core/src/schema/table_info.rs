@@ -473,3 +473,41 @@ pub enum PendingStatementValue {
     /// The full JSON object for the row, as received from the PowerSync service.
     Row,
 }
+
+pub struct CreateTableStatement {
+    create_table: SqlBuffer,
+}
+
+impl From<&Table> for CreateTableStatement {
+    fn from(value: &Table) -> Self {
+        let mut create_table = SqlBuffer::new();
+
+        create_table.push_str("CREATE TABLE ");
+        value.write_name(&mut create_table);
+        create_table.push_str("(id TEXT PRIMARY KEY NOT NULL");
+
+        if value.direct {
+            create_table.push_str(" /* ps-managed ");
+            if value.local_only() {
+                create_table.push_str("local-only ");
+            }
+            create_table.push_str("*/");
+        } else {
+            create_table.push_str(", data TEXT");
+        }
+
+        Self { create_table }
+    }
+}
+
+impl CreateTableStatement {
+    pub fn push_column(&mut self, name: &str, type_name: &str) {
+        self.create_table.push_char(',');
+        self.create_table.column_definition(name, type_name);
+    }
+
+    pub fn finish(mut self) -> SqlBuffer {
+        self.create_table.push_str(");");
+        self.create_table
+    }
+}
