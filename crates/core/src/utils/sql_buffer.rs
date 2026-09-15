@@ -109,28 +109,18 @@ impl SqlBuffer {
         );
     }
 
-    pub fn drop_index(&mut self, index_name: &str) {
-        self.push_str("DROP INDEX ");
-        let _ = self.identifier().write_str(index_name);
-    }
-
     pub fn alter_table(&mut self, table: &str) {
         self.push_str("ALTER TABLE ");
         let _ = self.identifier().write_str(table);
         self.push_char(' ');
     }
 
-    pub fn drop_column(&mut self, name: &str) {
-        self.drop("COLUMN", name);
-    }
-
-    pub fn drop_trigger(&mut self, name: &str) {
-        self.drop("TRIGGER", name);
-    }
-
-    fn drop(&mut self, _type: &str, name: &str) {
+    pub fn drop(&mut self, _type: &str, if_exists: bool, name: &str) {
         self.push_str("DROP ");
         self.push_str(_type);
+        if if_exists {
+            self.push_str(" IF EXISTS");
+        }
         self.push_char(' ');
         let _ = self.identifier().write_str(name);
     }
@@ -359,6 +349,8 @@ pub enum WriteType {
 }
 
 impl WriteType {
+    pub const VALUES: &[WriteType] = &[WriteType::Insert, WriteType::Update, WriteType::Delete];
+
     pub fn ps_crud_op_type(&self) -> &'static str {
         match self {
             WriteType::Insert => "PUT",

@@ -172,13 +172,13 @@ impl Table {
             &self.name,
             SchemaTable::Json(self),
             None,
-            trigger_name.get_or_insert_with(|| self.direct_trigger_name(write)),
+            trigger_name.get_or_insert_with(|| Self::direct_trigger_name(&self.name, write)),
             write,
         )
     }
 
-    pub fn direct_trigger_name(&self, write: WriteType) -> String {
-        format!("{}_trigger_{}", self.name, write)
+    pub fn direct_trigger_name(name: &str, write: WriteType) -> String {
+        format!("{}_trigger_{}", name, write)
     }
 }
 
