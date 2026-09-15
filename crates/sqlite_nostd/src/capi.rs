@@ -7,6 +7,7 @@ use alloc::borrow::ToOwned;
 use alloc::ffi::CString;
 
 pub use crate::bindings::{
+    SQLITE_DBCONFIG_WRITABLE_SCHEMA as DBCONFIG_WRITABLE_SCHEMA,
     SQLITE_DETERMINISTIC as DETERMINISTIC, SQLITE_DIRECTONLY as DIRECTONLY,
     SQLITE_INDEX_CONSTRAINT_EQ as INDEX_CONSTRAINT_EQ,
     SQLITE_INDEX_CONSTRAINT_GE as INDEX_CONSTRAINT_GE,
@@ -49,12 +50,13 @@ mod aliased {
         sqlite3_column_value as column_value, sqlite3_commit_hook as commit_hook,
         sqlite3_context_db_handle as context_db_handle,
         sqlite3_create_function_v2 as create_function_v2,
-        sqlite3_create_module_v2 as create_module_v2, sqlite3_declare_vtab as declare_vtab,
-        sqlite3_errcode as errcode, sqlite3_errmsg as errmsg, sqlite3_error_offset as error_offset,
-        sqlite3_exec as exec, sqlite3_finalize as finalize, sqlite3_free as free,
-        sqlite3_get_autocommit as get_autocommit, sqlite3_get_auxdata as get_auxdata,
-        sqlite3_libversion as libversion, sqlite3_libversion_number as libversion_number,
-        sqlite3_malloc as malloc, sqlite3_malloc64 as malloc64, sqlite3_mutex_alloc as mutex_alloc,
+        sqlite3_create_module_v2 as create_module_v2, sqlite3_db_config as db_config,
+        sqlite3_declare_vtab as declare_vtab, sqlite3_errcode as errcode, sqlite3_errmsg as errmsg,
+        sqlite3_error_offset as error_offset, sqlite3_exec as exec, sqlite3_finalize as finalize,
+        sqlite3_free as free, sqlite3_get_autocommit as get_autocommit,
+        sqlite3_get_auxdata as get_auxdata, sqlite3_libversion as libversion,
+        sqlite3_libversion_number as libversion_number, sqlite3_malloc as malloc,
+        sqlite3_malloc64 as malloc64, sqlite3_mutex_alloc as mutex_alloc,
         sqlite3_mutex_enter as mutex_enter, sqlite3_mutex_free as mutex_free,
         sqlite3_mutex_leave as mutex_leave, sqlite3_mutex_try as mutex_try,
         sqlite3_next_stmt as next_stmt, sqlite3_open as open, sqlite3_prepare_v2 as prepare_v2,
@@ -223,6 +225,16 @@ pub fn bind_parameter_name(stmt: *mut stmt, c: c_int) -> *const c_char {
 
 pub fn close(db: *mut sqlite3) -> c_int {
     unsafe { invoke_sqlite!(close, db) }
+}
+
+pub extern "C" fn db_config(
+    db: *mut sqlite3,
+    op: c_uint,
+    option: c_int,
+    result: &mut c_int,
+) -> c_int {
+    let ptr = core::ptr::from_mut(result);
+    unsafe { invoke_sqlite!(db_config, db, op as c_int, option, ptr) }
 }
 
 pub fn vtab_config(db: *mut sqlite3, options: u32) -> c_int {

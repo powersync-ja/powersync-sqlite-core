@@ -3,23 +3,24 @@ extern crate alloc;
 use alloc::borrow::ToOwned;
 use alloc::collections::BTreeSet;
 use alloc::collections::btree_map::BTreeMap;
-use alloc::format;
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
+use alloc::{format, vec};
 use core::ffi::c_int;
 use core::fmt::Write;
 
-use powersync_sqlite_nostd as sqlite;
 use powersync_sqlite_nostd::Context;
+use powersync_sqlite_nostd::{self as sqlite, Destructor};
 use sqlite::{Connection, ResultCode, Value};
 
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
 use crate::migrations::initialize_database;
-use crate::schema::Table;
 use crate::schema::inspection::{ExistingTable, ExistingView};
-use crate::schema::table_info::Index;
+use crate::schema::raw_table::InferredTableStructure;
+use crate::schema::table_info::{CreateTableStatement, Index};
+use crate::schema::{Column, Table};
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
@@ -93,35 +94,24 @@ fn update_tables(
                         "Switching from direct to json-based tables is not yet implemented.",
                     ));
                 }
-                (Some(_), true) => {
-                    // TODO: Consider migrations in schema tables.
+                (Some(previous), true) => {
+                    direct_table_migration(db, previous, table)?;
+                    continue;
                 }
             }
         }
 
         // New table.
-        let mut create_table = SqlBuffer::default();
-
-        create_table.push_str("CREATE TABLE ");
-        table.write_name(&mut create_table);
-        _ = write!(&mut create_table, "(id TEXT PRIMARY KEY NOT NULL");
-
-        if table.direct {
-            create_table.push_str(" /* ps-managed ");
-            if table.local_only() {
-                create_table.push_str("local-only ");
+        let create_table = {
+            let mut create = CreateTableStatement::from(table);
+            if table.direct {
+                for column in &table.columns {
+                    create.push_column(&column.name, &column.type_name);
+                }
             }
-            create_table.push_str("*/");
 
-            for column in &table.columns {
-                create_table.push_char(',');
-                let _ = create_table.identifier().write_str(&column.name);
-                let _ = write!(&mut create_table, " {}", column.type_name);
-            }
-        } else {
-            create_table.push_str(", data TEXT");
-        }
-        create_table.push_str(");");
+            create.finish()
+        };
         db.exec_safe_str(&create_table.sql)?;
 
         if let Some(old_json_table) = move_data_from {
@@ -146,6 +136,123 @@ fn update_tables(
             SqlBuffer::quote_identifier(&remaining.internal_name)
         );
         db.exec_safe_str(&q)?;
+    }
+
+    Ok(())
+}
+
+fn direct_table_migration(db: Database, old: &InferredTableStructure, new: &Table) -> Result<()> {
+    debug_assert!(new.direct);
+
+    struct ExistingColumn<'a> {
+        column: &'a Column,
+        index_in_table: usize,
+        found_in_old: bool,
+    }
+
+    let mut new_columns: Vec<_> = new
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(i, column)| ExistingColumn {
+            column,
+            index_in_table: i,
+            found_in_old: false,
+        })
+        .collect();
+    new_columns.sort_by(|a, b| a.column.name.cmp(&b.column.name));
+
+    let mut deleted_columns = vec![];
+    let mut changed_column_types = vec![];
+
+    for old_column in &old.columns {
+        let Ok(new_column_index) =
+            new_columns.binary_search_by(|probe| probe.column.name.cmp(&old_column.name))
+        else {
+            deleted_columns.push(old_column);
+            continue;
+        };
+
+        let new_column = &mut new_columns[new_column_index];
+        new_column.found_in_old = true;
+
+        if new_column.column.type_name != old_column.type_name {
+            changed_column_types.push((new_column.index_in_table, &new_column.column.type_name));
+        }
+    }
+
+    new_columns.retain(|c| !c.found_in_old);
+
+    if new_columns.is_empty() && deleted_columns.is_empty() && changed_column_types.is_empty() {
+        return Ok(()); // Nothing to migrate.
+    }
+
+    // Migrate the direct table. First, we delete every index on it (they will be re-created
+    // by update_indexes afterwards).
+    {
+        let stmt =
+            db.prepare_v2("SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL AND tbl_name = ?")?;
+        stmt.bind_text(1, &new.name, Destructor::STATIC)?;
+
+        while stmt.step()? {
+            let index_name = stmt.column_text(0)?;
+
+            let mut stmt = SqlBuffer::new();
+            stmt.drop_index(&index_name);
+            db.exec_safe_str(&stmt.sql)?;
+        }
+    }
+
+    if !changed_column_types.is_empty() {
+        // To change column types, we change the CREATE TABLE statement for the table. As long as
+        // we do this in a way that doesn't alter the order of existing columns, this doesn't
+        // corrupt data (column types in non-strict tables only affects type affinity for inserts
+        // and updates). The proper way to run this migration requires copying data, which we want
+        // to avoid.
+        let schema_writable_before = db.has_writable_schema();
+        if !schema_writable_before {
+            db.set_writable_schema(true)?;
+        }
+
+        let mut new_create_table = CreateTableStatement::from(new);
+        let mut changed_column_types = changed_column_types.iter().peekable();
+
+        for (i, column) in old.columns.iter().enumerate() {
+            let changed_type = changed_column_types
+                .next_if(|(index, _)| *index == i)
+                .map(|(_, type_name)| type_name.as_str());
+
+            new_create_table.push_column(&column.name, changed_type.unwrap_or(&column.type_name));
+        }
+
+        let new_create_table = new_create_table.finish();
+
+        {
+            let stmt = db
+                .prepare_v2("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = ?")?;
+            stmt.bind_text(1, &new_create_table.sql, Destructor::STATIC)?;
+            stmt.bind_text(2, &new.name, Destructor::STATIC)?;
+            stmt.exec()?;
+        }
+
+        if !schema_writable_before {
+            db.set_writable_schema(false)?;
+        }
+    }
+
+    // Add new columns, drop old ones
+    for new_column in new_columns {
+        let mut stmt = SqlBuffer::new();
+        stmt.alter_table(&new.name);
+        stmt.add_column(new_column.column);
+        db.exec_safe_str(&stmt.sql)?;
+    }
+
+    for dropped_column in deleted_columns {
+        let mut stmt = SqlBuffer::new();
+        stmt.alter_table(&new.name);
+        stmt.drop_column(&dropped_column.name);
+        db.exec_safe_str(&stmt.sql)?;
     }
 
     Ok(())
@@ -217,10 +324,10 @@ fn update_indexes(db: Database, schema: &Schema) -> Result<()> {
                 if existing_sql.is_none() {
                     statements.push(sql);
                 } else if existing_sql != Some(&sql) {
-                    statements.push(format!(
-                        "DROP INDEX {}",
-                        SqlBuffer::quote_identifier(&index_name)
-                    ));
+                    let mut drop_stmt = SqlBuffer::new();
+                    drop_stmt.drop_index(&index_name);
+
+                    statements.push(drop_stmt.sql);
                     statements.push(sql);
                 }
 
@@ -313,7 +420,7 @@ fn powersync_replace_schema_impl(
 
     initialize_database(db)?;
 
-    let views = ExistingView::list(db)?;
+    let views: Vec<ExistingView> = ExistingView::list(db)?;
     let mut existing_views = {
         let mut map = BTreeMap::new();
         for entry in &views {
