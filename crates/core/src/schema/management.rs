@@ -438,7 +438,7 @@ fn powersync_replace_schema_impl(
     let mut existing_views = {
         let mut map = BTreeMap::new();
         for entry in &views {
-            map.insert(entry.name(), entry);
+            map.insert(entry.key.name(), entry);
         }
         map
     };
