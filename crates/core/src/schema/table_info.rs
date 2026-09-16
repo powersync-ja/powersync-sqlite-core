@@ -12,7 +12,7 @@ use crate::schema::raw_table::generate_schema_table_trigger;
 use crate::schema::{ColumnFilter, SchemaTable};
 use crate::sync::PreparedPendingStatement;
 use crate::utils::database::{Database, Statement};
-use crate::utils::{SqlBuffer, WriteType};
+use crate::utils::{CrudTriggerName, SqlBuffer, WriteType};
 
 #[derive(Deserialize)]
 pub struct Table {
@@ -172,13 +172,18 @@ impl Table {
             &self.name,
             SchemaTable::Json(self),
             None,
-            trigger_name.get_or_insert_with(|| Self::direct_trigger_name(&self.name, write)),
+            trigger_name
+                .get_or_insert_with(|| Self::crud_trigger_name(&self.name, write).to_string()),
             write,
         )
     }
 
-    pub fn direct_trigger_name(name: &str, write: WriteType) -> String {
-        format!("{}_trigger_{}", name, write)
+    pub fn crud_trigger_name<'a>(name: &'a str, write: WriteType) -> CrudTriggerName<'a> {
+        CrudTriggerName {
+            write,
+            name_suffix: "",
+            view_name: name,
+        }
     }
 }
 
