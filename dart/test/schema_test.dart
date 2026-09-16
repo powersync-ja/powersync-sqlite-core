@@ -470,7 +470,6 @@ END'''
 
         // todo: from direct to json
 
-        // todo: add column
         test('adding columns', () {
           replaceSchema(schema());
           db.execute(
@@ -491,9 +490,68 @@ END'''
           ]);
         });
 
-        // todo: change column type
-        // todo: remove column
-        // todo: split columns
+        test('change column type', () {
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'additional', 'type': 'text'}
+          ]));
+          db.execute(
+              'INSERT INTO users (id, name, additional) VALUES (?, ?, ?)',
+              ['id', 'name', 'text']);
+
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'additional', 'type': 'integer'}
+          ]));
+
+          expect(db.select('SELECT * FROM users'), [
+            {
+              'id': 'id',
+              'name': 'name',
+              'additional': 'text',
+            }
+          ]);
+        });
+
+        test('remove column', () {
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'additional', 'type': 'text'}
+          ]));
+          db.execute(
+              'INSERT INTO users (id, name, additional) VALUES (?, ?, ?)',
+              ['id', 'name', 'text']);
+          replaceSchema(schema(additionalColumns: []));
+
+          expect(db.select('SELECT * FROM users'), [
+            {
+              'id': 'id',
+              'name': 'name',
+            }
+          ]);
+        });
+
+        test('multiple column migrations at once', () {
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'removed', 'type': 'text'},
+            {'name': 'changed-type', 'type': 'text'},
+          ]));
+          db.execute(
+            'INSERT INTO users (id, name, removed, "changed-type") VALUES (?, ?, ?, ?)',
+            ['id', 'name', 'removed', 'changed-type'],
+          );
+
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'added', 'type': 'text'},
+            {'name': 'changed-type', 'type': 'integer'},
+          ]));
+
+          expect(db.select('SELECT * FROM users'), [
+            {
+              'id': 'id',
+              'name': 'name',
+              'changed-type': 'changed-type',
+              'added': null,
+            }
+          ]);
+        });
       });
     });
   });

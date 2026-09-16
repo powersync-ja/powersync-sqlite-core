@@ -95,7 +95,7 @@ fn update_tables(
                     ));
                 }
                 (Some(previous), true) => {
-                    direct_table_migration(db, previous, table)?;
+                    direct_table_migration(db, previous, table, existing_views)?;
                     continue;
                 }
             }
@@ -141,7 +141,12 @@ fn update_tables(
     Ok(())
 }
 
-fn direct_table_migration(db: Database, old: &InferredTableStructure, new: &Table) -> Result<()> {
+fn direct_table_migration(
+    db: Database,
+    old: &InferredTableStructure,
+    new: &Table,
+    existing_views: &mut BTreeMap<&str, &ExistingView>,
+) -> Result<()> {
     debug_assert!(new.direct);
 
     struct ExistingColumn<'a> {
@@ -187,8 +192,9 @@ fn direct_table_migration(db: Database, old: &InferredTableStructure, new: &Tabl
         return Ok(()); // Nothing to migrate.
     }
 
-    // Migrate the direct table. First, we delete every index on it (they will be re-created
-    // by update_indexes afterwards).
+    // Migrate the direct table. SQLite validates associated triggers and indexes on ALTER TABLE
+    // statements, so we drop those first. A subsequent update_indexes and update_views call will
+    // create them again.
     {
         let stmt =
             db.prepare_v2("SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL AND tbl_name = ?")?;
@@ -200,6 +206,10 @@ fn direct_table_migration(db: Database, old: &InferredTableStructure, new: &Tabl
             let mut stmt = SqlBuffer::new();
             stmt.drop("INDEX", false, &index_name);
             db.exec_safe_str(&stmt.sql)?;
+        }
+
+        if let Some(old_triggers) = existing_views.remove(new.name.as_str()) {
+            old_triggers.delete_from_db(db)?;
         }
     }
 
