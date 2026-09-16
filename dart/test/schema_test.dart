@@ -383,15 +383,15 @@ END''',
 
         expect(triggers, [
           r'''
-CREATE TRIGGER "users_trigger_DELETE" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "ps_view_delete_users" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'users');
 END''',
           r'''
-CREATE TRIGGER "users_trigger_INSERT" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "ps_view_insert_users" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'users', json(powersync_diff('{}', json_object('name', powersync_strip_subtype(NEW."name")))));
 END''',
           r'''
-CREATE TRIGGER "users_trigger_UPDATE" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "ps_view_update_users" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
 INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'users', json(powersync_diff(json_object('name', powersync_strip_subtype(OLD."name")), json_object('name', powersync_strip_subtype(NEW."name")))), 0);
 END'''
@@ -425,6 +425,16 @@ END'''
       });
 
       group('migrate', () {
+        test('unchanged', () {
+          replaceSchema(schema());
+
+          final [versionBefore] = db.select('PRAGMA schema_version');
+          replaceSchema(schema());
+          final [versionAfter] = db.select('PRAGMA schema_version');
+
+          expect(versionAfter, versionBefore);
+        });
+
         group('from json to direct', () {
           test('local-only', () {
             replaceSchema(schema(
@@ -469,6 +479,34 @@ END'''
         });
 
         // todo: from direct to json
+
+        test('from synced to local', () {
+          replaceSchema(schema());
+          db.execute('INSERT INTO users (id, name) VALUES (?, ?)',
+              ['synced-id', 'name']);
+
+          replaceSchema(schema(additionalOptions: {'local_only': true}));
+
+          expect(db.select('SELECT * FROM ps_untyped'), hasLength(1));
+          expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+          expect(db.select('SELECT * FROM users'), isEmpty);
+
+          // A second write on the now local-only table should not be recorded.
+          db.execute(
+              'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['name']);
+          expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+        });
+
+        test('from local to synced', () {
+          replaceSchema(schema(additionalOptions: {'local_only': true}));
+          db.execute(
+              'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['local']);
+
+          // Migrate to synced table. Because the previous local write would
+          // never get uploaded, this clears local data.
+          replaceSchema(schema());
+          expect(db.select('SELECT * FROM users'), isEmpty);
+        });
 
         test('adding columns', () {
           replaceSchema(schema());

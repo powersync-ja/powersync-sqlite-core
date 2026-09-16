@@ -49,6 +49,7 @@ fn update_tables(
         let mut move_data_from = None::<&str>;
 
         if let Some(existing) = existing_tables.remove(&*table.name) {
+            // Migrate between JSON-based and direct tables.
             match (&existing.direct, table.direct) {
                 (None, false) => {
                     // JSON-based table before and now. We might have to migrate between synced and
@@ -95,8 +96,24 @@ fn update_tables(
                     ));
                 }
                 (Some(previous), true) => {
-                    direct_table_migration(db, previous, table, existing_views)?;
-                    continue;
+                    if existing.local_only != table.local_only() {
+                        // Unlike with json-based tables where local and synced tables have
+                        // different names, here we need to drop the old table first.
+                        existing_views.remove(existing.name.as_str());
+
+                        if !existing.local_only {
+                            existing.move_into_ps_untyped(db)?;
+                        }
+
+                        let mut buffer = SqlBuffer::new();
+                        buffer.drop("TABLE", false, &existing.internal_name);
+                        db.exec_safe_str(&buffer.sql)?;
+                    } else {
+                        // Otherwise compatible tables might still have different columns, which
+                        // requires a migration for direct tables.
+                        direct_table_migration(db, previous, table, existing_views)?;
+                        continue;
+                    }
                 }
             }
         }
@@ -131,11 +148,9 @@ fn update_tables(
     // We cannot have any open queries on sqlite_master at the point that we drop tables, otherwise
     // we get "table is locked" errors.
     for remaining in existing_tables.values() {
-        let q = format!(
-            "DROP TABLE {:}",
-            SqlBuffer::quote_identifier(&remaining.internal_name)
-        );
-        db.exec_safe_str(&q)?;
+        let mut buffer = SqlBuffer::new();
+        buffer.drop("TABLE", false, &remaining.internal_name);
+        db.exec_safe_str(&buffer.sql)?;
     }
 
     Ok(())
@@ -181,7 +196,11 @@ fn direct_table_migration(
         let new_column = &mut new_columns[new_column_index];
         new_column.found_in_old = true;
 
-        if new_column.column.type_name != old_column.type_name {
+        if !new_column
+            .column
+            .type_name
+            .eq_ignore_ascii_case(&old_column.type_name)
+        {
             changed_column_types.push((new_column.index_in_table, &new_column.column.type_name));
         }
     }
@@ -397,6 +416,16 @@ fn update_views(
         };
 
         if let Some(actual_view) = existing.remove(table.view_name()) {
+            if wanted_view.key == actual_view.key {
+                if wanted_view.delete_trigger_sql == actual_view.delete_trigger_sql {
+                    if wanted_view.update_trigger_sql == actual_view.update_trigger_sql {
+                        if wanted_view.insert_trigger_sql == actual_view.insert_trigger_sql {
+                            continue;
+                        }
+                    }
+                }
+            }
+
             if *actual_view == wanted_view {
                 // View exists with identical definition, don't re-create.
                 continue;

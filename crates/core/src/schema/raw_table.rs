@@ -185,7 +185,7 @@ pub fn generate_schema_table_trigger(
     write: WriteType,
 ) -> Result<String> {
     let mut buffer = SqlBuffer::new();
-    buffer.create_trigger("", trigger_name);
+    buffer.create_trigger(trigger_name);
     buffer.trigger_after(write, local_table_name);
     // Skip the trigger for writes during sync_local, these aren't crud writes.
     buffer.push_str("WHEN NOT powersync_in_sync_operation()");
