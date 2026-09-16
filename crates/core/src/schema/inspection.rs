@@ -47,12 +47,10 @@ impl ExistingView {
         let find_triggers = db.prepare_v2(
             "SELECT name, sql FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = ? ORDER BY name DESC",
         )?;
-        let find_view = db.prepare_v2(
-            "SELECT sql FROM sqlite_schema WHERE type = 'view' AND name = ? AND sql GLOB '*-- powersync-auto-generated'",
-        )?;
+        let find_views = db.prepare_v2("SELECT name, sql FROM sqlite_schema WHERE type = 'view' AND sql GLOB '*-- powersync-auto-generated'")?;
 
-        for table in existing_tables {
-            find_triggers.bind_text(1, &table.name, Destructor::STATIC)?;
+        let complete_triggers = |key: ViewKey| -> Result<ExistingView> {
+            find_triggers.bind_text(1, &key.name(), Destructor::STATIC)?;
 
             let mut insert_trigger_sql = String::new();
             let mut update_trigger_sql = String::new();
@@ -80,42 +78,34 @@ impl ExistingView {
             }
 
             find_triggers.reset()?;
-
-            let key = if table.direct.is_some() {
-                ViewKey::DirectTable {
-                    table_name: table.name.clone(),
-                }
-            } else {
-                find_view.bind_text(1, &table.name, Destructor::STATIC)?;
-                let sql = if find_view.step()? {
-                    find_view.column_text(0)?.to_owned()
-                } else {
-                    String::new()
-                };
-                find_view.reset()?;
-
-                ViewKey::JsonTable {
-                    name: table.name.clone(),
-                    sql,
-                }
-            };
-
-            results.push(ExistingView {
+            Ok(ExistingView {
                 key,
                 delete_trigger_sql,
                 insert_trigger_sql,
                 update_trigger_sql,
-            });
+            })
+        };
+
+        while find_views.step()? {
+            let name = find_views.column_text(0)?.to_owned();
+            let sql = find_views.column_text(1)?.to_owned();
+
+            let key = ViewKey::JsonTable { name, sql };
+            results.push(complete_triggers(key)?);
+        }
+
+        for table in existing_tables {
+            if table.direct.is_some() {
+                // Direct tables don't have a view, but we still want to collect associated
+                // triggers.
+                let key = ViewKey::DirectTable {
+                    table_name: table.name.clone(),
+                };
+                results.push(complete_triggers(key)?);
+            }
         }
 
         Ok(results)
-    }
-
-    pub fn name(&self) -> &str {
-        match &self.key {
-            ViewKey::JsonTable { name, .. } => &*name,
-            ViewKey::DirectTable { table_name } => &*table_name,
-        }
     }
 
     pub fn drop_by_name(db: Database, name: &str) -> Result<()> {
@@ -159,6 +149,15 @@ impl ExistingView {
         db.exec_safe_str(&self.update_trigger_sql)?;
 
         Ok(())
+    }
+}
+
+impl ViewKey {
+    pub fn name(&self) -> &str {
+        match &self {
+            ViewKey::JsonTable { name, .. } => name,
+            ViewKey::DirectTable { table_name } => table_name,
+        }
     }
 }
 
