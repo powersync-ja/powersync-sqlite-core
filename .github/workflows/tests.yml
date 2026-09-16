@@ -85,7 +85,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-arm64, macos-latest, windows-latest, windows-11-arm]
+        os: 
+          - ubuntu-24.04
+          - macos-latest
+          - windows-latest
+          # TODO: Restore arm testing once we get access to these runners again.
+          #- ubuntu-arm64
+          #- windows-11-arm
 
     steps:
       - uses: actions/checkout@v7
