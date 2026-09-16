@@ -71,9 +71,9 @@ impl SqlBuffer {
         let _ = write!(str, "$.{s}");
     }
 
-    pub fn create_trigger(&mut self, prefix: &str, view_name: &str) {
+    pub fn create_trigger(&mut self, name: impl Display) {
         self.push_str("CREATE TRIGGER ");
-        self.quote_identifier_prefixed(prefix, view_name);
+        let _ = write!(self.identifier(), "{}", name);
         self.push_char(' ');
     }
 
@@ -385,6 +385,28 @@ impl FromStr for WriteType {
                 )));
             }
         })
+    }
+}
+
+pub struct CrudTriggerName<'a> {
+    pub write: WriteType,
+    pub name_suffix: &'a str,
+    pub view_name: &'a str,
+}
+
+impl<'a> Display for CrudTriggerName<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}{}_{}",
+            match self.write {
+                WriteType::Insert => "ps_view_insert",
+                WriteType::Update => "ps_view_update",
+                WriteType::Delete => "ps_view_delete",
+            },
+            self.name_suffix,
+            self.view_name
+        )
     }
 }
 

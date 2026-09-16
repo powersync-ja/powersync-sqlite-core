@@ -1,6 +1,7 @@
 use core::fmt::Write;
 
 use alloc::borrow::ToOwned;
+use alloc::string::ToString;
 use alloc::vec;
 use alloc::{string::String, vec::Vec};
 use powersync_sqlite_nostd::Destructor;
@@ -127,7 +128,7 @@ impl ExistingView {
                     buffer.drop(
                         "TRIGGER",
                         true,
-                        &Table::direct_trigger_name(table_name, *write),
+                        &Table::crud_trigger_name(table_name, *write).to_string(),
                     );
 
                     db.exec_safe_str(&buffer.sql)?;

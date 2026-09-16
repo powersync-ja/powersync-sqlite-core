@@ -7,7 +7,7 @@ use core::mem;
 
 use crate::error::{PowerSyncError, Result};
 use crate::schema::{Column, ColumnFilter, SchemaTable, Table};
-use crate::utils::{InsertIntoCrud, SqlBuffer, WriteType};
+use crate::utils::{CrudTriggerName, InsertIntoCrud, SqlBuffer, WriteType};
 
 pub fn powersync_view_sql(table_info: &Table) -> String {
     let name = &table_info.name;
@@ -74,7 +74,7 @@ pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String> {
     let as_schema_table = SchemaTable::from(table_info);
 
     let mut sql = SqlBuffer::new();
-    sql.create_trigger("ps_view_delete_", view_name);
+    sql.create_trigger(Table::crud_trigger_name(view_name, WriteType::Delete));
     sql.trigger_instead_of(WriteType::Delete, view_name);
     sql.push_str("BEGIN\n");
     // First, forward to internal data table.
@@ -99,7 +99,11 @@ pub fn powersync_trigger_delete_sql(table_info: &Table) -> Result<String> {
             sql.trigger_end();
             sql.push_str(";\n");
 
-            sql.create_trigger("ps_view_delete2_", view_name);
+            sql.create_trigger(CrudTriggerName {
+                write: WriteType::Delete,
+                name_suffix: "2",
+                view_name,
+            });
             sql.trigger_instead_of(WriteType::Update, view_name);
             sql.push_str("WHEN NEW._deleted IS TRUE BEGIN DELETE FROM ");
             sql.quote_internal_name(name, local_only);
@@ -132,7 +136,7 @@ pub fn powersync_trigger_insert_sql(table_info: &Table) -> Result<String> {
     let as_schema_table = SchemaTable::from(table_info);
 
     let mut sql = SqlBuffer::new();
-    sql.create_trigger("ps_view_insert_", view_name);
+    sql.create_trigger(Table::crud_trigger_name(view_name, WriteType::Insert));
     sql.trigger_instead_of(WriteType::Insert, view_name);
     sql.push_str("BEGIN\n");
 
@@ -190,7 +194,7 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
     let local_only = table_info.options.flags.local_only();
 
     let mut sql = SqlBuffer::new();
-    sql.create_trigger("ps_view_update_", view_name);
+    sql.create_trigger(Table::crud_trigger_name(view_name, WriteType::Update));
     sql.trigger_instead_of(WriteType::Update, view_name);
 
     // If we're supposed to include metadata, we support UPDATE ... SET _deleted = TRUE with
