@@ -426,10 +426,21 @@ END'''
 
       group('migrate', () {
         test('unchanged', () {
-          replaceSchema(schema());
+          final usedSchema = schema(additionalOptions: {
+            'indexes': [
+              {
+                'name': 'test',
+                'columns': [
+                  {'name': 'name', 'type': 'text', 'ascending': true},
+                ]
+              }
+            ]
+          });
+
+          replaceSchema(usedSchema);
 
           final [versionBefore] = db.select('PRAGMA schema_version');
-          replaceSchema(schema());
+          replaceSchema(usedSchema);
           final [versionAfter] = db.select('PRAGMA schema_version');
 
           expect(versionAfter, versionBefore);
@@ -495,8 +506,6 @@ END'''
           });
         }
 
-        // todo: from direct to json
-
         test('from synced to local', () {
           replaceSchema(schema());
           db.execute('INSERT INTO users (id, name) VALUES (?, ?)',
@@ -543,6 +552,51 @@ END'''
               'new-2': null,
             }
           ]);
+        });
+
+        group('index', () {
+          final indexes = {
+            'indexes': [
+              {
+                'name': 'test',
+                'columns': [
+                  {'name': 'name', 'type': 'text', 'ascending': true},
+                ]
+              }
+            ]
+          };
+
+          test('add', () {
+            replaceSchema(schema());
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+            replaceSchema(schema(additionalOptions: indexes));
+            expect(
+              db.select(
+                  'SELECT sql FROM sqlite_schema WHERE type = ? AND tbl_name = ? AND sql IS NOT NULL',
+                  ['index', 'users']),
+              [
+                {
+                  'sql':
+                      'CREATE INDEX "ps_data__users__test"/* ps-managed */ ON "users"("name")'
+                }
+              ],
+            );
+          });
+
+          test('remove', () {
+            replaceSchema(schema(additionalOptions: indexes));
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+            replaceSchema(schema());
+            expect(
+                db.select(
+                    'SELECT sql FROM sqlite_schema WHERE type = ? AND tbl_name = ? AND sql IS NOT NULL',
+                    ['index', 'users']),
+                isEmpty);
+          });
         });
 
         test('change column type', () {
