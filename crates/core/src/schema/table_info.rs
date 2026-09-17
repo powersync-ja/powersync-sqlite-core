@@ -115,16 +115,36 @@ impl Table {
     pub fn direct_move_from_json(
         &self,
         db: Database,
-        json_table: &str,
+        json: &JsonDataSource,
     ) -> Result<(), PowerSyncError> {
-        debug_assert!(self.direct);
-
         let mut source = SqlBuffer::new();
-        source.push_str("SELECT id, data FROM ");
-        let _ = write!(source.identifier(), "{}", json_table);
+        // For direct tables, create a SELECT statement returning id and json data we then parse via
+        // direct_move_from_stmt. For json tables, we directly generate an INSERT INTO SELECT
+        // statement.
+        let direct = self.direct;
+
+        if !direct {
+            source.push_str("INSERT INTO ");
+            source.quote_internal_name(&self.name, self.local_only());
+            source.push_char(' ');
+        }
+
+        source.push_str("SELECT id, ");
+        if let Some(ref json_fragment) = json.fragment {
+            source.push_str(json_fragment);
+        } else {
+            source.push_str("data ");
+        }
+        source.push_str("FROM ");
+        let _ = write!(source.identifier(), "{}", json.table);
 
         let source = db.prepare_v2(&source.sql)?;
-        self.direct_move_from_stmt(db, source)
+
+        if direct {
+            self.direct_move_from_stmt(db, source)
+        } else {
+            source.exec()
+        }
     }
 
     /// For direct tables, copies data from a prepared statement returning id and data.
@@ -197,6 +217,11 @@ impl RawTable {
         };
         Ok(local_table_name)
     }
+}
+
+pub struct JsonDataSource<'a> {
+    pub table: &'a str,
+    pub fragment: Option<String>,
 }
 
 #[derive(Deserialize)]

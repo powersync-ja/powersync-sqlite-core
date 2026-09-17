@@ -435,48 +435,65 @@ END'''
           expect(versionAfter, versionBefore);
         });
 
-        group('from json to direct', () {
-          test('local-only', () {
-            replaceSchema(schema(
-                additionalOptions: {'local_only': true, 'direct': false}));
-            db.execute(
-                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
-            replaceSchema(schema(additionalOptions: {'local_only': true}));
-            expect(db.select('SELECT * FROM users'), hasLength(1));
+        // Test migrating from json to direct tables (and vice versa).
+        for (final startDirect in [false, true]) {
+          final fromDesc = startDirect ? 'direct' : 'json';
+          final toDesc = startDirect ? 'json' : 'direct';
+          final endDirect = !startDirect;
+
+          group('from $fromDesc to $toDesc', () {
+            test('local-only', () {
+              replaceSchema(schema(additionalOptions: {
+                'local_only': true,
+                'direct': startDirect
+              }));
+              db.execute(
+                  'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+              replaceSchema(schema(additionalOptions: {
+                'local_only': true,
+                'direct': endDirect
+              }));
+              expect(db.select('SELECT * FROM users'), hasLength(1));
+            });
+
+            test('local-only to synced', () {
+              replaceSchema(schema(additionalOptions: {
+                'local_only': true,
+                'direct': startDirect
+              }));
+              db.execute(
+                  'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+              replaceSchema(schema(additionalOptions: {'direct': endDirect}));
+
+              // Migrating from local-only to synced tables deletes data
+              expect(db.select('SELECT * FROM users'), isEmpty);
+            });
+
+            test('synced', () {
+              replaceSchema(schema(additionalOptions: {'direct': startDirect}));
+              db.execute(
+                  'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+              replaceSchema(schema(additionalOptions: {'direct': endDirect}));
+              expect(db.select('SELECT * FROM users'), hasLength(1));
+              expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+            });
+
+            test('synced to local-only', () {
+              replaceSchema(schema(additionalOptions: {'direct': startDirect}));
+              db.execute(
+                  'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+              replaceSchema(schema(additionalOptions: {
+                'local_only': true,
+                'direct': endDirect
+              }));
+              // Data should be deleted when changing to a local-only table,
+              // previous crud entry is still there.
+              expect(db.select('SELECT * FROM users'), isEmpty);
+              expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+            });
           });
-
-          test('local-only to synced', () {
-            replaceSchema(schema(
-                additionalOptions: {'local_only': true, 'direct': false}));
-            db.execute(
-                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
-            replaceSchema(schema(additionalOptions: {}));
-
-            // Migrating from local-only to synced tables deletes data
-            expect(db.select('SELECT * FROM users'), isEmpty);
-          });
-
-          test('synced', () {
-            replaceSchema(schema(additionalOptions: {'direct': false}));
-            db.execute(
-                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
-            replaceSchema(schema(additionalOptions: {}));
-            expect(db.select('SELECT * FROM users'), hasLength(1));
-            expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
-          });
-
-          test('synced to local-only', () {
-            replaceSchema(schema(additionalOptions: {'direct': false}));
-            db.execute(
-                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
-
-            replaceSchema(schema(additionalOptions: {'local_only': true}));
-            // Data should be deleted when changing to a local-only table,
-            // previous crud entry is still there.
-            expect(db.select('SELECT * FROM users'), isEmpty);
-            expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
-          });
-        });
+        }
 
         // todo: from direct to json
 
