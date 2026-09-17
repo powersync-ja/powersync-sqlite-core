@@ -6,9 +6,7 @@ use core::{
 use alloc::{format, string::String};
 
 use crate::{
-    error::PowerSyncError,
-    schema::{Column, SchemaTable},
-    views::table_columns_to_json_object_with_filter,
+    error::PowerSyncError, schema::SchemaTable, views::table_columns_to_json_object_with_filter,
 };
 
 const DOUBLE_QUOTE: char = '"';
@@ -125,9 +123,9 @@ impl SqlBuffer {
         let _ = self.identifier().write_str(name);
     }
 
-    pub fn add_column(&mut self, column: &Column) {
+    pub fn add_column(&mut self, name: &str, type_name: &str) {
         self.push_str("ADD COLUMN ");
-        self.column_definition(&column.name, &column.type_name);
+        self.column_definition(name, type_name);
     }
 
     pub fn column_definition(&mut self, name: &str, type_name: &str) {
