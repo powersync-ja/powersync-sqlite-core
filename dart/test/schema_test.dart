@@ -370,7 +370,7 @@ END''',
         )[0].columnAt(0);
         expect(
           createTable,
-          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL /* ps-managed */,"name" text)',
+          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL /* ps-managed */,"name" ANY) STRICT',
         );
 
         final triggers = db

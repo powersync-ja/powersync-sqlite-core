@@ -141,7 +141,7 @@ fn update_tables(
             let mut create = CreateTableStatement::from(table);
             if table.direct {
                 for column in &table.columns {
-                    create.push_column(&column.name, &column.type_name);
+                    create.push_any_column(&column.name);
                 }
             }
 
@@ -184,24 +184,20 @@ fn direct_table_migration(
 
     struct ExistingColumn<'a> {
         column: &'a Column,
-        index_in_table: usize,
         found_in_old: bool,
     }
 
     let mut new_columns: Vec<_> = new
         .columns
         .iter()
-        .enumerate()
-        .map(|(i, column)| ExistingColumn {
+        .map(|column| ExistingColumn {
             column,
-            index_in_table: i,
             found_in_old: false,
         })
         .collect();
     new_columns.sort_by(|a, b| a.column.name.cmp(&b.column.name));
 
     let mut deleted_columns = vec![];
-    let mut changed_column_types = vec![];
 
     for old_column in &old.columns {
         let Ok(new_column_index) =
@@ -214,18 +210,12 @@ fn direct_table_migration(
         let new_column = &mut new_columns[new_column_index];
         new_column.found_in_old = true;
 
-        if !new_column
-            .column
-            .type_name
-            .eq_ignore_ascii_case(&old_column.type_name)
-        {
-            changed_column_types.push((new_column.index_in_table, &new_column.column.type_name));
-        }
+        // For found columns, the type doesn't matter as we generate ANY types for all of them.
     }
 
     new_columns.retain(|c| !c.found_in_old);
 
-    if new_columns.is_empty() && deleted_columns.is_empty() && changed_column_types.is_empty() {
+    if new_columns.is_empty() && deleted_columns.is_empty() {
         return Ok(()); // Nothing to migrate.
     }
 
@@ -250,48 +240,11 @@ fn direct_table_migration(
         }
     }
 
-    if !changed_column_types.is_empty() {
-        // To change column types, we change the CREATE TABLE statement for the table. As long as
-        // we do this in a way that doesn't alter the order of existing columns, this doesn't
-        // corrupt data (column types in non-strict tables only affects type affinity for inserts
-        // and updates). The proper way to run this migration requires copying data, which we want
-        // to avoid.
-        let schema_writable_before = db.has_writable_schema();
-        if !schema_writable_before {
-            db.set_writable_schema(true)?;
-        }
-
-        let mut new_create_table = CreateTableStatement::from(new);
-        let mut changed_column_types = changed_column_types.iter().peekable();
-
-        for (i, column) in old.columns.iter().enumerate() {
-            let changed_type = changed_column_types
-                .next_if(|(index, _)| *index == i)
-                .map(|(_, type_name)| type_name.as_str());
-
-            new_create_table.push_column(&column.name, changed_type.unwrap_or(&column.type_name));
-        }
-
-        let new_create_table = new_create_table.finish();
-
-        {
-            let stmt = db
-                .prepare_v2("UPDATE sqlite_schema SET sql = ? WHERE type = 'table' AND name = ?")?;
-            stmt.bind_text(1, &new_create_table.sql, Destructor::STATIC)?;
-            stmt.bind_text(2, &new.name, Destructor::STATIC)?;
-            stmt.exec()?;
-        }
-
-        if !schema_writable_before {
-            db.set_writable_schema(false)?;
-        }
-    }
-
     // Add new columns, drop old ones
     for new_column in new_columns {
         let mut stmt = SqlBuffer::new();
         stmt.alter_table(&new.name);
-        stmt.add_column(new_column.column);
+        stmt.add_column(&new_column.column.name, "ANY");
         db.exec_safe_str(&stmt.sql)?;
     }
 

@@ -506,6 +506,7 @@ pub enum PendingStatementValue {
 
 pub struct CreateTableStatement {
     create_table: SqlBuffer,
+    direct: bool,
 }
 
 impl From<&Table> for CreateTableStatement {
@@ -526,18 +527,26 @@ impl From<&Table> for CreateTableStatement {
             create_table.push_str(", data TEXT");
         }
 
-        Self { create_table }
+        Self {
+            create_table,
+            direct: value.direct,
+        }
     }
 }
 
 impl CreateTableStatement {
-    pub fn push_column(&mut self, name: &str, type_name: &str) {
+    pub fn push_any_column(&mut self, name: &str) {
         self.create_table.push_char(',');
-        self.create_table.column_definition(name, type_name);
+        self.create_table.column_definition(name, "ANY");
     }
 
     pub fn finish(mut self) -> SqlBuffer {
-        self.create_table.push_str(");");
+        self.create_table.push_char(')');
+        if self.direct {
+            self.create_table.push_str(" STRICT");
+        }
+
+        self.create_table.push_char(';');
         self.create_table
     }
 }
