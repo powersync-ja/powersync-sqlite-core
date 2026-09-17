@@ -112,7 +112,7 @@ impl Table {
         Ok(())
     }
 
-    pub fn direct_move_from_json(
+    pub fn move_from_json(
         &self,
         db: Database,
         json: &JsonDataSource,

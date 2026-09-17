@@ -123,6 +123,8 @@ impl ExistingView {
                 Self::drop_by_name(db, &name)?;
             }
             ViewKey::DirectTable { table_name } => {
+                // For json tables, dropping the view also drops the triggers. For direct tables
+                // where we only want to remove triggers, we need to drop them by name manually.
                 for write in WriteType::VALUES {
                     let mut buffer = SqlBuffer::new();
                     buffer.drop(

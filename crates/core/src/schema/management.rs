@@ -150,7 +150,7 @@ fn update_tables(
         db.exec_safe_str(&create_table.sql)?;
 
         if let Some(ref old_json_table) = move_data_from {
-            table.direct_move_from_json(db, old_json_table)?;
+            table.move_from_json(db, old_json_table)?;
         } else if !table.local_only() {
             // MOVE data if any
             table.move_from_ps_untyped(db)?;
@@ -387,16 +387,6 @@ fn update_views(
         };
 
         if let Some(actual_view) = existing.remove(table.view_name()) {
-            if wanted_view.key == actual_view.key {
-                if wanted_view.delete_trigger_sql == actual_view.delete_trigger_sql {
-                    if wanted_view.update_trigger_sql == actual_view.update_trigger_sql {
-                        if wanted_view.insert_trigger_sql == actual_view.insert_trigger_sql {
-                            continue;
-                        }
-                    }
-                }
-            }
-
             if *actual_view == wanted_view {
                 // View exists with identical definition, don't re-create.
                 continue;
