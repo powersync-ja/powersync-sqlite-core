@@ -19,14 +19,14 @@ use crate::error::{PowerSyncError, Result};
 use crate::migrations::initialize_database;
 use crate::schema::inspection::{ExistingTable, ExistingView, ViewKey};
 use crate::schema::raw_table::InferredTableStructure;
-use crate::schema::table_info::{CreateTableStatement, Index};
+use crate::schema::table_info::{CreateTableStatement, Index, JsonDataSource};
 use crate::schema::{Column, Table};
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
 use crate::views::{
     powersync_trigger_delete_sql, powersync_trigger_insert_sql, powersync_trigger_update_sql,
-    powersync_view_sql,
+    powersync_view_sql, table_columns_to_json_object,
 };
 
 use super::Schema;
@@ -46,7 +46,7 @@ fn update_tables(
     };
 
     for table in &schema.tables {
-        let mut move_data_from = None::<&str>;
+        let mut move_data_from = None::<JsonDataSource>;
 
         if let Some(existing) = existing_tables.remove(&*table.name) {
             // Migrate between JSON-based and direct tables.
@@ -76,7 +76,10 @@ fn update_tables(
                     //  4. Synced to synced: Copy data; delete old table.
                     if existing.local_only == table.local_only() {
                         // Case 1 or 4.
-                        move_data_from = Some(&existing.internal_name);
+                        move_data_from = Some(JsonDataSource {
+                            table: &existing.internal_name,
+                            fragment: None,
+                        });
                     } else {
                         // Case 2 and 3 is the default, we'll delete the old table in the end which
                         // moves to ps_untyped if necessary.
@@ -90,10 +93,25 @@ fn update_tables(
                         old_view.delete_from_db(db)?;
                     }
                 }
-                (Some(_), false) => {
-                    return Err(PowerSyncError::argument_error(
-                        "Switching from direct to json-based tables is not yet implemented.",
-                    ));
+                (Some(old_direct), false) => {
+                    // The four cases to consider here match those from the other direction.
+                    if existing.local_only == table.local_only() {
+                        let json = table_columns_to_json_object(
+                            &existing.internal_name,
+                            &old_direct.columns,
+                        )?;
+
+                        move_data_from = Some(JsonDataSource {
+                            table: &existing.name,
+                            fragment: Some(json),
+                        })
+                    } else {
+                        // Also switching synced / local-only state. We'll delete data for this, no
+                        // need to copy.
+                    }
+
+                    // To delete the old table in the end.
+                    existing_tables.insert(&existing.name, existing);
                 }
                 (Some(previous), true) => {
                     if existing.local_only != table.local_only() {
@@ -131,7 +149,7 @@ fn update_tables(
         };
         db.exec_safe_str(&create_table.sql)?;
 
-        if let Some(old_json_table) = move_data_from {
+        if let Some(ref old_json_table) = move_data_from {
             table.direct_move_from_json(db, old_json_table)?;
         } else if !table.local_only() {
             // MOVE data if any
