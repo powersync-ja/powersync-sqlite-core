@@ -2,8 +2,7 @@ extern crate alloc;
 
 use alloc::format;
 use alloc::rc::Rc;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::string::String;
 use core::ffi::{c_int, c_void};
 
 use powersync_sqlite_nostd as sqlite;
@@ -13,7 +12,7 @@ use sqlite::{ResultCode, Value};
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
 use crate::migrations::{initialize_database, powersync_migrate};
-use crate::schema::inspection::ExistingView;
+use crate::schema::inspection::{ExistingTable, ExistingView};
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
@@ -88,25 +87,18 @@ DELETE FROM ps_stream_subscriptions;
     )?;
     clear_has_synced(local_db)?;
 
-    let table_glob = if flags.clear_local() {
-        "ps_data_*"
-    } else {
-        "ps_data__*"
-    };
+    // Pretend to be in a sync_local step when clearing raw and direct tables. For json-based tables
+    // we delete from underlying ps_data__ tables to sidestep crud triggers, but some tables have
+    // triggers directly on the table.
+    let _skip_crud = state.sync_local_guard();
 
-    let tables_stmt = local_db
-        .prepare_v2("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB ?1")?;
-    tables_stmt.bind_text(1, table_glob, sqlite::Destructor::STATIC)?;
+    let existing_tables = ExistingTable::list(local_db)?;
+    for table in &existing_tables {
+        if !flags.clear_local() && table.local_only {
+            continue;
+        }
 
-    let mut tables: Vec<String> = alloc::vec![];
-
-    while tables_stmt.step()? {
-        let name = tables_stmt.column_text(0)?;
-        tables.push(name.to_string());
-    }
-
-    for name in tables {
-        let quoted = SqlBuffer::quote_identifier(&name);
+        let quoted = SqlBuffer::quote_identifier(&table.internal_name);
         // The first delete statement deletes a single row, to trigger an update notification for the table.
         // The second delete statement uses the truncate optimization to delete the remainder of the data.
         let delete_sql = format!(
@@ -119,11 +111,6 @@ DELETE FROM {table};",
     }
 
     if let Some(schema) = state.view_schema() {
-        // Pretend to be in a sync_local step when clearing raw tables. Similar to the case above
-        // where we delete from the underlying table to sidestep the CRUD trigger, we don't want
-        // triggers on raw tables to record this delete in ps_crud.
-        let _skip_crud = state.sync_local_guard();
-
         for raw_table in &schema.raw_tables {
             if let Some(stmt) = &raw_table.clear {
                 local_db
