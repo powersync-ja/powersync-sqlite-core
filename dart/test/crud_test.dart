@@ -981,6 +981,29 @@ INSERT INTO ps_kv(key, value) VALUES
       });
     });
 
+    test('can clear direct tables', () {
+      db.executeInTx('SELECT powersync_replace_schema(?)', [
+        json.encode({
+          'tables': [
+            {
+              'name': 'users',
+              'columns': [
+                {'name': 'name', 'type': 'text'},
+              ],
+              'direct': true,
+            }
+          ]
+        })
+      ]);
+
+      db.execute(
+          'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['test user']);
+
+      db.executeInTx('SELECT powersync_clear(0)');
+      expect(db.select('SELECT * FROM users'), isEmpty);
+      expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+    });
+
     group('transaction ids', () {
       setUp(() {
         db.executeInTx('select powersync_replace_schema(?)', [
