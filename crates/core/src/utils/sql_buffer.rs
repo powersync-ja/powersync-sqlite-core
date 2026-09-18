@@ -69,9 +69,9 @@ impl SqlBuffer {
         let _ = write!(str, "$.{s}");
     }
 
-    pub fn create_trigger(&mut self, prefix: &str, view_name: &str) {
+    pub fn create_trigger(&mut self, name: impl Display) {
         self.push_str("CREATE TRIGGER ");
-        self.quote_identifier_prefixed(prefix, view_name);
+        let _ = write!(self.identifier(), "{}", name);
         self.push_char(' ');
     }
 
@@ -107,6 +107,33 @@ impl SqlBuffer {
         );
     }
 
+    pub fn alter_table(&mut self, table: &str) {
+        self.push_str("ALTER TABLE ");
+        let _ = self.identifier().write_str(table);
+        self.push_char(' ');
+    }
+
+    pub fn drop(&mut self, _type: &str, if_exists: bool, name: &str) {
+        self.push_str("DROP ");
+        self.push_str(_type);
+        if if_exists {
+            self.push_str(" IF EXISTS");
+        }
+        self.push_char(' ');
+        let _ = self.identifier().write_str(name);
+    }
+
+    pub fn add_column(&mut self, name: &str, type_name: &str) {
+        self.push_str("ADD COLUMN ");
+        self.column_definition(name, type_name);
+    }
+
+    pub fn column_definition(&mut self, name: &str, type_name: &str) {
+        let _ = self.identifier().write_str(&name);
+        self.push_char(' ');
+        self.push_str(&type_name);
+    }
+
     /// Writes an `INSERT INTO powersync_crud` statement.
     pub fn insert_into_powersync_crud(
         &mut self,
@@ -123,7 +150,7 @@ impl SqlBuffer {
                 Some(include_old) => {
                     let old_values = table_columns_to_json_object_with_filter(
                         "OLD",
-                        insert.table,
+                        insert.table.columns(),
                         include_old.column_filter(),
                     )?;
 
@@ -134,7 +161,7 @@ impl SqlBuffer {
                         // only include the powersync_diff of columns matched by the filter.
                         let filtered_new_fragment = table_columns_to_json_object_with_filter(
                             "NEW",
-                            insert.table,
+                            insert.table.columns(),
                             include_old.column_filter(),
                         )?;
 
@@ -320,6 +347,8 @@ pub enum WriteType {
 }
 
 impl WriteType {
+    pub const VALUES: &[WriteType] = &[WriteType::Insert, WriteType::Update, WriteType::Delete];
+
     pub fn ps_crud_op_type(&self) -> &'static str {
         match self {
             WriteType::Insert => "PUT",
@@ -354,6 +383,28 @@ impl FromStr for WriteType {
                 )));
             }
         })
+    }
+}
+
+pub struct CrudTriggerName<'a> {
+    pub write: WriteType,
+    pub name_suffix: &'a str,
+    pub view_name: &'a str,
+}
+
+impl<'a> Display for CrudTriggerName<'a> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{}{}_{}",
+            match self.write {
+                WriteType::Insert => "ps_view_insert",
+                WriteType::Update => "ps_view_update",
+                WriteType::Delete => "ps_view_delete",
+            },
+            self.name_suffix,
+            self.view_name
+        )
     }
 }
 

@@ -1,123 +1,285 @@
 extern crate alloc;
 
 use alloc::borrow::ToOwned;
+use alloc::collections::BTreeSet;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::rc::Rc;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::{format, vec};
 use core::ffi::c_int;
 use core::fmt::Write;
 
-use powersync_sqlite_nostd as sqlite;
 use powersync_sqlite_nostd::Context;
+use powersync_sqlite_nostd::{self as sqlite, Destructor};
 use sqlite::{Connection, ResultCode, Value};
 
 use crate::create_sqlite_text_fn;
 use crate::error::{PowerSyncError, Result};
-use crate::schema::inspection::{ExistingTable, ExistingView};
-use crate::schema::table_info::Index;
+use crate::migrations::initialize_database;
+use crate::schema::inspection::{ExistingTable, ExistingView, ViewKey};
+use crate::schema::raw_table::InferredTableStructure;
+use crate::schema::table_info::{CreateTableStatement, Index, JsonDataSource};
+use crate::schema::{Column, Table};
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
 use crate::views::{
     powersync_trigger_delete_sql, powersync_trigger_insert_sql, powersync_trigger_update_sql,
-    powersync_view_sql,
+    powersync_view_sql, table_columns_to_json_object,
 };
 
 use super::Schema;
 
-fn update_tables(db: Database, schema: &Schema) -> Result<()> {
-    let existing_tables = ExistingTable::list(db)?;
+fn update_tables(
+    db: Database,
+    schema: &Schema,
+    existing_tables: &[ExistingTable],
+    existing_views: &mut BTreeMap<&str, &ExistingView>,
+) -> Result<()> {
     let mut existing_tables = {
         let mut map = BTreeMap::new();
-        for table in &existing_tables {
+        for table in existing_tables {
             map.insert(&*table.name, table);
         }
         map
     };
 
     for table in &schema.tables {
-        if let Some(existing) = existing_tables.remove(&*table.name) {
-            if existing.local_only != table.local_only() {
-                // Migrating between local-only and synced tables. This works by deleting
-                // existing and re-creating the table from scratch. We can re-create first and
-                // delete the old table afterwards because they have a different name
-                // (local-only tables have a ps_data_local prefix).
+        let mut move_data_from = None::<JsonDataSource>;
 
-                // To delete the old existing table in the end.
-                existing_tables.insert(&existing.name, existing);
-            } else {
-                // Compatible table exists already, nothing to do.
-                continue;
+        if let Some(existing) = existing_tables.remove(&*table.name) {
+            // Migrate between JSON-based and direct tables.
+            match (&existing.direct, table.direct) {
+                (None, false) => {
+                    // JSON-based table before and now. We might have to migrate between synced and
+                    // local-only tables.
+                    if existing.local_only != table.local_only() {
+                        // Migrating between local-only and synced tables. This works by deleting
+                        // existing and re-creating the table from scratch. We can re-create first
+                        // and delete the old table afterwards because they have a different name
+                        // (local-only tables have a ps_data_local prefix).
+
+                        // To delete the old existing table in the end.
+                        existing_tables.insert(&existing.name, existing);
+                    } else {
+                        // Compatible table exists already, nothing to do.
+                        continue;
+                    }
+                }
+                (None, true) => {
+                    // When migrating from JSON-based to direct tables, there are four cases to
+                    // consider:
+                    //  1. Local-only to direct local-only: We copy data; delete the old table.
+                    //  2. Local-only to synced: Delete old table, copy from ps_untyped for new.
+                    //  3. Synced to local-only: Move old into ps_untyped; create new from scratch.
+                    //  4. Synced to synced: Copy data; delete old table.
+                    if existing.local_only == table.local_only() {
+                        // Case 1 or 4.
+                        move_data_from = Some(JsonDataSource {
+                            table: &existing.internal_name,
+                            fragment: None,
+                        });
+                    } else {
+                        // Case 2 and 3 is the default, we'll delete the old table in the end which
+                        // moves to ps_untyped if necessary.
+                    }
+
+                    // To delete the existing table in the end.
+                    existing_tables.insert(&existing.name, existing);
+
+                    // The direct table we create conflicts with the view. So delete that one first.
+                    if let Some(old_view) = existing_views.remove(&*existing.name) {
+                        old_view.delete_from_db(db)?;
+                    }
+                }
+                (Some(old_direct), false) => {
+                    // The four cases to consider here match those from the other direction.
+                    if existing.local_only == table.local_only() {
+                        let json = table_columns_to_json_object(
+                            &existing.internal_name,
+                            &old_direct.columns,
+                        )?;
+
+                        move_data_from = Some(JsonDataSource {
+                            table: &existing.name,
+                            fragment: Some(json),
+                        })
+                    } else {
+                        // Also switching synced / local-only state. We'll delete data for this, no
+                        // need to copy.
+                    }
+
+                    // To delete the old table in the end.
+                    existing_tables.insert(&existing.name, existing);
+                }
+                (Some(previous), true) => {
+                    if existing.local_only != table.local_only() {
+                        // Unlike with json-based tables where local and synced tables have
+                        // different names, here we need to drop the old table first.
+                        existing_views.remove(existing.name.as_str());
+
+                        if !existing.local_only {
+                            existing.move_into_ps_untyped(db)?;
+                        }
+
+                        let mut buffer = SqlBuffer::new();
+                        buffer.drop("TABLE", false, &existing.internal_name);
+                        db.exec_safe_str(&buffer.sql)?;
+                    } else {
+                        // Otherwise compatible tables might still have different columns, which
+                        // requires a migration for direct tables.
+                        direct_table_migration(db, previous, table, existing_views)?;
+                        continue;
+                    }
+                }
             }
         }
 
         // New table.
-        let quoted_internal_name = SqlBuffer::quote_identifier(&table.internal_name());
+        let create_table = {
+            let mut create = CreateTableStatement::from(table);
+            if table.direct {
+                for column in &table.columns {
+                    create.push_any_column(&column.name);
+                }
+            }
 
-        db.exec_safe_str(&format!(
-            "CREATE TABLE {:}(id TEXT PRIMARY KEY NOT NULL, data TEXT)",
-            quoted_internal_name
-        ))?;
+            create.finish()
+        };
+        db.exec_safe_str(&create_table.sql)?;
 
-        if !table.local_only() {
+        if let Some(ref old_json_table) = move_data_from {
+            table.move_from_json(db, old_json_table)?;
+        } else if !table.local_only() {
             // MOVE data if any
-            db.exec_text(
-                &format!(
-                    "INSERT INTO {:}(id, data)
-    SELECT id, data
-    FROM ps_untyped
-    WHERE type = ?",
-                    quoted_internal_name
-                ),
-                &table.name,
-            )?;
-
-            // language=SQLite
-            db.exec_text("DELETE FROM ps_untyped WHERE type = ?", &table.name)?;
+            table.move_from_ps_untyped(db)?;
         }
     }
 
     // Remaining tables need to be dropped. But first, we want to move their contents to
     // ps_untyped.
     for remaining in existing_tables.values() {
-        if !remaining.local_only {
-            db.exec_text(
-                &format!(
-                    "INSERT INTO ps_untyped(type, id, data) SELECT ?, id, data FROM {:}",
-                    SqlBuffer::quote_identifier(&remaining.internal_name)
-                ),
-                &remaining.name,
-            )?;
-        }
+        remaining.move_into_ps_untyped(db)?;
     }
 
     // We cannot have any open queries on sqlite_master at the point that we drop tables, otherwise
     // we get "table is locked" errors.
     for remaining in existing_tables.values() {
-        let q = format!(
-            "DROP TABLE {:}",
-            SqlBuffer::quote_identifier(&remaining.internal_name)
-        );
-        db.exec_safe_str(&q)?;
+        let mut buffer = SqlBuffer::new();
+        buffer.drop("TABLE", false, &remaining.internal_name);
+        db.exec_safe_str(&buffer.sql)?;
     }
 
     Ok(())
 }
 
-fn create_index_stmt(table_name: &str, index_name: &str, index: &Index) -> String {
+fn direct_table_migration(
+    db: Database,
+    old: &InferredTableStructure,
+    new: &Table,
+    existing_views: &mut BTreeMap<&str, &ExistingView>,
+) -> Result<()> {
+    debug_assert!(new.direct);
+
+    struct ExistingColumn<'a> {
+        column: &'a Column,
+        found_in_old: bool,
+    }
+
+    let mut new_columns: Vec<_> = new
+        .columns
+        .iter()
+        .map(|column| ExistingColumn {
+            column,
+            found_in_old: false,
+        })
+        .collect();
+    new_columns.sort_by(|a, b| a.column.name.cmp(&b.column.name));
+
+    let mut deleted_columns = vec![];
+
+    for old_column in &old.columns {
+        let Ok(new_column_index) =
+            new_columns.binary_search_by(|probe| probe.column.name.cmp(&old_column.name))
+        else {
+            deleted_columns.push(old_column);
+            continue;
+        };
+
+        let new_column = &mut new_columns[new_column_index];
+        new_column.found_in_old = true;
+
+        // For found columns, the type doesn't matter as we generate ANY types for all of them.
+    }
+
+    new_columns.retain(|c| !c.found_in_old);
+
+    if new_columns.is_empty() && deleted_columns.is_empty() {
+        return Ok(()); // Nothing to migrate.
+    }
+
+    // Migrate the direct table. SQLite validates associated triggers and indexes on ALTER TABLE
+    // statements, so we drop those first. A subsequent update_indexes and update_views call will
+    // create them again.
+    {
+        let stmt =
+            db.prepare_v2("SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL AND tbl_name = ?")?;
+        stmt.bind_text(1, &new.name, Destructor::STATIC)?;
+
+        while stmt.step()? {
+            let index_name = stmt.column_text(0)?;
+
+            let mut stmt = SqlBuffer::new();
+            stmt.drop("INDEX", false, &index_name);
+            db.exec_safe_str(&stmt.sql)?;
+        }
+
+        if let Some(old_triggers) = existing_views.remove(new.name.as_str()) {
+            old_triggers.delete_from_db(db)?;
+        }
+    }
+
+    // Add new columns, drop old ones
+    for new_column in new_columns {
+        let mut stmt = SqlBuffer::new();
+        stmt.alter_table(&new.name);
+        stmt.add_column(&new_column.column.name, "ANY");
+        db.exec_safe_str(&stmt.sql)?;
+    }
+
+    for dropped_column in deleted_columns {
+        let mut stmt = SqlBuffer::new();
+        stmt.alter_table(&new.name);
+        stmt.drop("COLUMN", false, &dropped_column.name);
+        db.exec_safe_str(&stmt.sql)?;
+    }
+
+    Ok(())
+}
+
+fn create_index_stmt(table: &Table, index_name: &str, index: &Index) -> String {
     let mut sql = SqlBuffer::new();
     sql.push_str("CREATE INDEX ");
     let _ = sql.identifier().write_str(&index_name);
+    if table.direct {
+        // We use this to identify old indexes to remove them. This is only required for direct
+        // tables, for json tables we use the ps_data prefix.
+        sql.push_str("/* ps-managed */");
+    }
     sql.push_str(" ON ");
-    let _ = sql.identifier().write_str(&table_name);
+    table.write_name(&mut sql);
     sql.push_char('(');
     {
         let mut sql = sql.comma_separated();
         for indexed_column in &index.columns {
             let sql = sql.element();
-            sql.json_extract_and_cast("data", &indexed_column.name, &indexed_column.type_name);
+
+            if table.direct {
+                let _ = sql.identifier().write_str(&indexed_column.name);
+            } else {
+                sql.json_extract_and_cast("data", &indexed_column.name, &indexed_column.type_name);
+            }
 
             if !indexed_column.ascending {
                 sql.push_str(" DESC");
@@ -131,7 +293,7 @@ fn create_index_stmt(table_name: &str, index_name: &str, index: &Index) -> Strin
 
 fn update_indexes(db: Database, schema: &Schema) -> Result<()> {
     let mut statements: Vec<String> = alloc::vec![];
-    let mut expected_index_names: Vec<String> = vec![];
+    let mut expected_index_names: BTreeSet<String> = Default::default();
 
     {
         // In a block so that the statement is finalized before dropping indexes
@@ -158,41 +320,34 @@ fn update_indexes(db: Database, schema: &Schema) -> Result<()> {
                     result
                 };
 
-                let sql = create_index_stmt(&table_name, &index_name, index);
+                let sql = create_index_stmt(&table, &index_name, index);
                 if existing_sql.is_none() {
                     statements.push(sql);
                 } else if existing_sql != Some(&sql) {
-                    statements.push(format!(
-                        "DROP INDEX {}",
-                        SqlBuffer::quote_identifier(&index_name)
-                    ));
+                    let mut drop_stmt = SqlBuffer::new();
+                    drop_stmt.drop("INDEX", false, &index_name);
+
+                    statements.push(drop_stmt.sql);
                     statements.push(sql);
                 }
 
-                expected_index_names.push(index_name);
+                expected_index_names.insert(index_name);
             }
         }
 
-        // In a block so that the statement is finalized before dropping indexes
         // language=SQLite
         let statement = db.prepare_v2(
             "\
-SELECT
-    sqlite_master.name as index_name
-      FROM sqlite_master
-          WHERE sqlite_master.type = 'index'
-            AND sqlite_master.name GLOB 'ps_data_*'
-            AND sqlite_master.name NOT IN (SELECT value FROM json_each(?))
-",
+SELECT name FROM sqlite_master
+    WHERE type = 'index'
+    AND (name GLOB 'ps_data_*' OR sqlite_master.sql GLOB '* ps-managed *')",
         )?;
-        let json_names = serde_json::to_string(&expected_index_names)
-            .map_err(PowerSyncError::as_argument_error)?;
-        statement.bind_text(1, &json_names, sqlite::Destructor::STATIC)?;
 
         while statement.step()? {
             let name = statement.column_text(0)?;
-
-            statements.push(format!("DROP INDEX {}", SqlBuffer::quote_identifier(name)));
+            if !expected_index_names.contains(name) {
+                statements.push(format!("DROP INDEX {}", SqlBuffer::quote_identifier(name)));
+            }
         }
     }
 
@@ -205,26 +360,27 @@ SELECT
     Ok(())
 }
 
-fn update_views(db: Database, schema: &Schema) -> Result<()> {
-    // First, find all existing views and index them by name.
-    let existing = ExistingView::list(db)?;
-    let mut existing = {
-        let mut map = BTreeMap::new();
-        for entry in &existing {
-            map.insert(&*entry.name, entry);
-        }
-        map
-    };
-
+fn update_views(
+    db: Database,
+    schema: &Schema,
+    existing: &mut BTreeMap<&str, &ExistingView>,
+) -> Result<()> {
     for table in &schema.tables {
-        let view_sql = powersync_view_sql(table);
         let delete_trigger_sql = powersync_trigger_delete_sql(table)?;
         let insert_trigger_sql = powersync_trigger_insert_sql(table)?;
         let update_trigger_sql = powersync_trigger_update_sql(table)?;
 
         let wanted_view = ExistingView {
-            name: table.view_name().to_owned(),
-            sql: view_sql,
+            key: if table.direct {
+                ViewKey::DirectTable {
+                    table_name: table.name.to_string(),
+                }
+            } else {
+                ViewKey::JsonTable {
+                    name: table.view_name().to_owned(),
+                    sql: powersync_view_sql(table),
+                }
+            },
             delete_trigger_sql,
             insert_trigger_sql,
             update_trigger_sql,
@@ -243,7 +399,7 @@ fn update_views(db: Database, schema: &Schema) -> Result<()> {
 
     // Delete old views.
     for remaining in existing.values() {
-        ExistingView::drop_by_name(db, &remaining.name)?;
+        remaining.delete_from_db(db)?;
     }
 
     Ok(())
@@ -265,12 +421,21 @@ fn powersync_replace_schema_impl(
     let parsed_schema =
         serde_json::from_str::<Schema>(schema).map_err(PowerSyncError::as_argument_error)?;
 
-    // language=SQLite
-    db.exec_safe(c"SELECT powersync_init()")?;
+    initialize_database(db)?;
 
-    update_tables(db, &parsed_schema)?;
+    let existing_tables = ExistingTable::list(db)?;
+    let views: Vec<ExistingView> = ExistingView::list(db, &existing_tables)?;
+    let mut existing_views = {
+        let mut map = BTreeMap::new();
+        for entry in &views {
+            map.insert(entry.key.name(), entry);
+        }
+        map
+    };
+
+    update_tables(db, &parsed_schema, &existing_tables, &mut existing_views)?;
     update_indexes(db, &parsed_schema)?;
-    update_views(db, &parsed_schema)?;
+    update_views(db, &parsed_schema, &mut existing_views)?;
 
     state.set_schema(parsed_schema);
     Ok(String::from(""))
@@ -304,14 +469,26 @@ pub fn register(
 mod test {
     use alloc::{string::ToString, vec};
 
-    use crate::schema::table_info::{Index, IndexedColumn};
+    use crate::schema::{
+        Table,
+        table_info::{Index, IndexedColumn},
+    };
 
     use super::create_index_stmt;
 
     #[test]
     fn test_create_index() {
+        let table = Table {
+            name: "table".to_string(),
+            view_name_override: None,
+            columns: Default::default(),
+            indexes: Default::default(),
+            options: Default::default(),
+            direct: false,
+        };
+
         let stmt = create_index_stmt(
-            "table",
+            &table,
             "index",
             &Index {
                 name: "unused".to_string(),
@@ -332,7 +509,7 @@ mod test {
 
         assert_eq!(
             stmt,
-            r#"CREATE INDEX "index" ON "table"(CAST(json_extract(data, '$.a') as text), CAST(json_extract(data, '$.b') as integer) DESC)"#
+            r#"CREATE INDEX "index" ON "ps_data__table"(CAST(json_extract(data, '$.a') as text), CAST(json_extract(data, '$.b') as integer) DESC)"#
         )
     }
 }

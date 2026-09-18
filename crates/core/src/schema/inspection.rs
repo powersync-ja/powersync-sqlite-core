@@ -1,18 +1,23 @@
+use core::fmt::Write;
+
 use alloc::borrow::ToOwned;
-use alloc::{format, vec};
+use alloc::string::ToString;
+use alloc::vec;
 use alloc::{string::String, vec::Vec};
+use powersync_sqlite_nostd::Destructor;
 
 use crate::error::Result;
-use crate::utils::SqlBuffer;
+use crate::schema::Table;
+use crate::schema::raw_table::InferredTableStructure;
 use crate::utils::database::Database;
+use crate::utils::{SqlBuffer, WriteType};
+use crate::views::table_columns_to_json_object;
 
 /// An existing PowerSync-managed view that was found in the schema.
 #[derive(PartialEq)]
 pub struct ExistingView {
     /// The name of the view itself.
-    pub name: String,
-    /// SQL contents of the `CREATE VIEW` statement.
-    pub sql: String,
+    pub key: ViewKey,
     /// SQL contents of all triggers implementing deletes by forwarding to
     /// `ps_data` and `ps_crud`.
     pub delete_trigger_sql: String,
@@ -22,55 +27,126 @@ pub struct ExistingView {
     pub update_trigger_sql: String,
 }
 
+#[derive(PartialEq)]
+pub enum ViewKey {
+    JsonTable {
+        /// The name of the view itself.
+        name: String,
+        /// SQL contents of the `CREATE VIEW` statement.
+        sql: String,
+    },
+    DirectTable {
+        /// The name of the direct table for which this view has been created.
+        table_name: String,
+    },
+}
+
 impl ExistingView {
-    pub fn list(db: Database) -> Result<Vec<Self>> {
+    pub fn list(db: Database, existing_tables: &[ExistingTable]) -> Result<Vec<Self>> {
         let mut results = vec![];
-        let stmt = db.prepare_v2("
-SELECT
-    view.name,
-    view.sql,
-    ifnull(group_concat(trigger1.sql, ';\n' ORDER BY trigger1.name DESC), ''),
-    ifnull(trigger2.sql, ''),
-    ifnull(trigger3.sql, '')
-    FROM sqlite_master view
-    LEFT JOIN sqlite_master trigger1
-        ON trigger1.tbl_name = view.name AND trigger1.type = 'trigger' AND trigger1.name GLOB 'ps_view_delete*'
-    LEFT JOIN sqlite_master trigger2
-        ON trigger2.tbl_name = view.name AND trigger2.type = 'trigger' AND trigger2.name GLOB 'ps_view_insert*'
-    LEFT JOIN sqlite_master trigger3
-        ON trigger3.tbl_name = view.name AND trigger3.type = 'trigger' AND trigger3.name GLOB 'ps_view_update*'
-    WHERE view.type = 'view' AND view.sql GLOB  '*-- powersync-auto-generated'
-    GROUP BY view.name;
-        ")?;
 
-        while stmt.step()? {
-            let name = stmt.column_text(0)?.to_owned();
-            let sql = stmt.column_text(1)?.to_owned();
-            let delete = stmt.column_text(2)?.to_owned();
-            let insert = stmt.column_text(3)?.to_owned();
-            let update = stmt.column_text(4)?.to_owned();
+        let find_triggers = db.prepare_v2(
+            "SELECT name, sql FROM sqlite_schema WHERE type = 'trigger' AND tbl_name = ? ORDER BY name DESC",
+        )?;
+        let find_views = db.prepare_v2("SELECT name, sql FROM sqlite_schema WHERE type = 'view' AND sql GLOB '*-- powersync-auto-generated'")?;
 
-            results.push(ExistingView {
-                name,
-                sql,
-                delete_trigger_sql: delete,
-                insert_trigger_sql: insert,
-                update_trigger_sql: update,
-            });
+        let complete_triggers = |key: ViewKey| -> Result<ExistingView> {
+            find_triggers.bind_text(1, &key.name(), Destructor::STATIC)?;
+
+            let mut insert_trigger_sql = String::new();
+            let mut update_trigger_sql = String::new();
+            let mut delete_trigger_sql = String::new();
+
+            while find_triggers.step()? {
+                let trigger_name = find_triggers.column_text(0)?;
+                let trigger_sql = find_triggers.column_text(1)?;
+
+                let stmt = if trigger_name.starts_with("ps_view_delete") {
+                    &mut delete_trigger_sql
+                } else if trigger_name.starts_with("ps_view_insert") {
+                    &mut insert_trigger_sql
+                } else if trigger_name.starts_with("ps_view_update") {
+                    &mut update_trigger_sql
+                } else {
+                    continue;
+                };
+
+                if !stmt.is_empty() {
+                    stmt.push_str(";\n");
+                }
+
+                stmt.push_str(trigger_sql);
+            }
+
+            find_triggers.reset()?;
+            Ok(ExistingView {
+                key,
+                delete_trigger_sql,
+                insert_trigger_sql,
+                update_trigger_sql,
+            })
+        };
+
+        while find_views.step()? {
+            let name = find_views.column_text(0)?.to_owned();
+            let sql = find_views.column_text(1)?.to_owned();
+
+            let key = ViewKey::JsonTable { name, sql };
+            results.push(complete_triggers(key)?);
+        }
+
+        for table in existing_tables {
+            if table.direct.is_some() {
+                // Direct tables don't have a view, but we still want to collect associated
+                // triggers.
+                let key = ViewKey::DirectTable {
+                    table_name: table.name.clone(),
+                };
+                results.push(complete_triggers(key)?);
+            }
         }
 
         Ok(results)
     }
 
     pub fn drop_by_name(db: Database, name: &str) -> Result<()> {
-        let q = format!("DROP VIEW IF EXISTS {:}", SqlBuffer::quote_identifier(name));
-        db.exec_safe_str(&q)?;
+        let mut buffer = SqlBuffer::new();
+        buffer.drop("VIEW", true, name);
+
+        db.exec_safe_str(&buffer.sql)?;
+        Ok(())
+    }
+
+    pub fn delete_from_db(&self, db: Database) -> Result<()> {
+        match &self.key {
+            ViewKey::JsonTable { name, .. } => {
+                Self::drop_by_name(db, &name)?;
+            }
+            ViewKey::DirectTable { table_name } => {
+                // For json tables, dropping the view also drops the triggers. For direct tables
+                // where we only want to remove triggers, we need to drop them by name manually.
+                for write in WriteType::VALUES {
+                    let mut buffer = SqlBuffer::new();
+                    buffer.drop(
+                        "TRIGGER",
+                        true,
+                        &Table::crud_trigger_name(table_name, *write).to_string(),
+                    );
+
+                    db.exec_safe_str(&buffer.sql)?;
+                }
+            }
+        }
+
         Ok(())
     }
 
     pub fn create(&self, db: Database) -> Result<()> {
-        Self::drop_by_name(db, &self.name)?;
-        db.exec_safe_str(&self.sql)?;
+        self.delete_from_db(db)?;
+
+        if let ViewKey::JsonTable { sql, .. } = &self.key {
+            db.exec_safe_str(sql)?;
+        }
         db.exec_safe_str(&self.delete_trigger_sql)?;
         db.exec_safe_str(&self.insert_trigger_sql)?;
         db.exec_safe_str(&self.update_trigger_sql)?;
@@ -79,32 +155,56 @@ SELECT
     }
 }
 
+impl ViewKey {
+    pub fn name(&self) -> &str {
+        match &self {
+            ViewKey::JsonTable { name, .. } => name,
+            ViewKey::DirectTable { table_name } => table_name,
+        }
+    }
+}
+
 pub struct ExistingTable {
     pub name: String,
     pub internal_name: String,
     pub local_only: bool,
+    pub direct: Option<InferredTableStructure>,
 }
 
 impl ExistingTable {
     pub fn list(db: Database) -> Result<Vec<Self>> {
+        Self::list_filtered(db, false)
+    }
+
+    pub fn list_filtered(db: Database, ignore_direct: bool) -> Result<Vec<Self>> {
         let mut results = vec![];
-        let stmt = db.prepare_v2(
-            "
-SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'ps_data_*';
-        ",
-        )?;
+        let stmt = db.prepare_v2("SELECT name, sql FROM sqlite_master WHERE type = 'table';")?;
 
         while stmt.step()? {
             let internal_name = stmt.column_text(0)?;
-            let Some((name, local_only)) = Self::external_name(internal_name) else {
+            let Ok(sql) = stmt.column_text(1) else {
                 continue;
             };
 
-            results.push(ExistingTable {
-                internal_name: internal_name.to_owned(),
-                name: name.to_owned(),
-                local_only: local_only,
-            });
+            if let Some((name, local_only)) = Self::external_name(internal_name) {
+                results.push(ExistingTable {
+                    internal_name: internal_name.to_owned(),
+                    name: name.to_owned(),
+                    local_only: local_only,
+                    direct: None,
+                });
+            } else if sql.contains("/* ps-managed") && !ignore_direct {
+                results.push(ExistingTable {
+                    internal_name: internal_name.to_owned(),
+                    name: internal_name.to_owned(),
+                    local_only: sql.contains("local-only"),
+                    direct: Some(InferredTableStructure::read_from_database(
+                        internal_name,
+                        db,
+                        &None,
+                    )?),
+                });
+            }
         }
 
         Ok(results)
@@ -124,5 +224,28 @@ SELECT name FROM sqlite_master WHERE type = 'table' AND name GLOB 'ps_data_*';
         } else {
             None
         }
+    }
+
+    pub fn move_into_ps_untyped(&self, db: Database) -> Result<()> {
+        if self.local_only {
+            return Ok(());
+        }
+
+        let mut buffer = SqlBuffer::new();
+        buffer.push_str("INSERT INTO ps_untyped(type, id, data) SELECT ?, id, ");
+
+        if let Some(ref schema) = self.direct {
+            buffer.push_str(&table_columns_to_json_object(
+                &self.internal_name,
+                &schema.columns,
+            )?);
+        } else {
+            buffer.push_str("data");
+        }
+
+        buffer.push_str(" FROM ");
+        let _ = buffer.identifier().write_str(&self.internal_name);
+
+        db.exec_text(&buffer.sql, &self.name)
     }
 }
