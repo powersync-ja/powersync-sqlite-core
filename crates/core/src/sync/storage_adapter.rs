@@ -2,7 +2,6 @@ use core::fmt::Display;
 
 use alloc::{rc::Rc, string::ToString, vec::Vec};
 use powersync_sqlite_nostd::{self as sqlite};
-use serde::Serialize;
 
 use crate::{
     error::{PowerSyncError, Result},
@@ -273,51 +272,22 @@ WHERE bucket = ?1",
             self.persist_last_seen_checkpoint_request_id(*checkpoint_request_id)?;
         }
 
-        #[derive(Serialize)]
-        struct PartialArgs<'a> {
-            priority: BucketPriority,
-            buckets: Vec<&'a str>,
-        }
         let now = self.now()?;
 
-        let sync_result = match priority {
-            None => {
-                let mut sync = SyncOperation::new(state, self.db, None, now);
-                sync.use_schema(schema);
-                sync.apply()
-            }
-            Some(priority) => {
-                let args = PartialArgs {
+        let mut sync = match priority {
+            None => SyncOperation::new(state, self.db, None, now),
+            Some(priority) => SyncOperation::new(
+                state,
+                self.db,
+                Some(PartialSyncOperation {
                     priority,
-                    buckets: checkpoint
-                        .buckets
-                        .values()
-                        .filter_map(|item| {
-                            if item.is_in_priority(Some(priority)) {
-                                Some(item.bucket.as_str())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect(),
-                };
-
-                // TODO: Avoid this serialization, it's currently used to bind JSON SQL parameters.
-                let serialized_args =
-                    serde_json::to_string(&args).map_err(PowerSyncError::internal)?;
-                let mut sync = SyncOperation::new(
-                    state,
-                    self.db,
-                    Some(PartialSyncOperation {
-                        priority,
-                        args: &serialized_args,
-                    }),
-                    now,
-                );
-                sync.use_schema(schema);
-                sync.apply()
-            }
-        }?;
+                    involved_buckets: checkpoint.list_buckets(Some(priority)).collect(),
+                }),
+                now,
+            ),
+        };
+        sync.use_schema(schema);
+        let sync_result = sync.apply()?;
 
         if sync_result == 1 {
             if priority.is_none() {
