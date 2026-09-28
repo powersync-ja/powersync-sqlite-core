@@ -89,9 +89,8 @@ jobs:
           - ubuntu-24.04
           - macos-latest
           - windows-latest
-          # TODO: Restore arm testing once we get access to these runners again.
-          #- ubuntu-arm64
-          #- windows-11-arm
+          - ubuntu-arm64
+          - windows-11-arm
 
     steps:
       - uses: actions/checkout@v7
