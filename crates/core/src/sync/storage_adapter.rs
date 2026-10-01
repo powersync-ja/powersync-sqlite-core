@@ -59,7 +59,7 @@ impl StorageAdapter {
 
         // language=SQLite
         let progress =
-            db.prepare_v2("SELECT name, count_at_last, count_since_last FROM ps_buckets")?;
+            db.prepare_v2("SELECT id, name, count_at_last, count_since_last FROM ps_buckets")?;
 
         // language=SQLite
         let time = db.prepare_v2("SELECT CAST(unixepoch('subsec') * 1000000 as integer)")?;
@@ -192,11 +192,13 @@ WHERE bucket = ?1",
 
     pub fn step_progress(&'_ self) -> Result<Option<PersistedBucketProgress<'_>>> {
         if self.progress_stmt.step()? {
-            let bucket = self.progress_stmt.column_text(0)?;
-            let count_at_last = self.progress_stmt.column_int64(1);
-            let count_since_last = self.progress_stmt.column_int64(2);
+            let bucket_id = self.progress_stmt.column_int64(0);
+            let bucket = self.progress_stmt.column_text(1)?;
+            let count_at_last = self.progress_stmt.column_int64(2);
+            let count_since_last = self.progress_stmt.column_int64(3);
 
             Ok(Some(PersistedBucketProgress {
+                bucket_id,
                 bucket,
                 count_at_last,
                 count_since_last,
@@ -206,12 +208,6 @@ WHERE bucket = ?1",
             self.progress_stmt.reset()?;
             Ok(None)
         }
-    }
-
-    pub fn reset_progress(&self) -> Result<()> {
-        self.db
-            .exec_safe(c"UPDATE ps_buckets SET count_since_last = 0, count_at_last = 0;")?;
-        Ok(())
     }
 
     pub fn lookup_bucket(&self, bucket: &str) -> Result<BucketInfo> {
@@ -681,6 +677,7 @@ pub enum SyncLocalResult {
 /// operations have been inserted in the meantime.
 pub struct PersistedBucketProgress<'a> {
     pub bucket: &'a str,
+    pub bucket_id: i64,
     pub count_at_last: i64,
     pub count_since_last: i64,
 }

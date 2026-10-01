@@ -1226,27 +1226,37 @@ void _syncTests<T>({
     test('interrupt and defrag', () {
       applyInstructions(invokeControl('start', null));
       applyInstructions(pushCheckpoint(
-          buckets: [bucketDescription('a', count: 10)], lastOpId: 10));
-      expect(totalProgress(), (0, 10));
+        buckets: [
+          bucketDescription('a', count: 10),
+          bucketDescription('b', count: 5),
+        ],
+        lastOpId: 10,
+      ));
+      expect(totalProgress(), (0, 15));
 
       pushSyncData('a', 5);
-      expect(totalProgress(), (5, 10));
+      pushSyncData('b', 4);
+      expect(totalProgress(), (9, 15));
 
       // Emulate stream closing
       applyInstructions(invokeControl('stop', null));
       expect(progress, isNull);
 
       applyInstructions(invokeControl('start', null));
-      // A defrag in the meantime shrank the bucket.
-      applyInstructions(pushCheckpoint(
-          buckets: [bucketDescription('a', count: 4)], lastOpId: 14));
-      // So we shouldn't report 5/4.
-      expect(totalProgress(), (0, 4));
+      // A defrag in the meantime shrank bucket a.
+      applyInstructions(pushCheckpoint(buckets: [
+        bucketDescription('a', count: 4),
+        bucketDescription('b', count: 5),
+      ], lastOpId: 14));
+      // The progress in a should no longer count, e.g. we shouldn't report 9/9.
+      expect(totalProgress(), (4, 9));
 
       // This should also reset the persisted progress counters.
-      final [bucket] = db.select('SELECT * FROM ps_buckets');
-      expect(bucket, containsPair('count_since_last', 0));
-      expect(bucket, containsPair('count_at_last', 0));
+      final [a, b] = db.select('SELECT * FROM ps_buckets ORDER BY name');
+      expect(a, containsPair('count_since_last', 0));
+      expect(a, containsPair('count_at_last', 0));
+      expect(b, containsPair('count_since_last', 4));
+      expect(b, containsPair('count_at_last', 0));
     });
 
     test('different priorities', () {
