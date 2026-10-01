@@ -398,6 +398,15 @@ END'''
         ]);
       });
 
+      test('forbids view name override', () {
+        expect(
+          () => replaceSchema(
+              schema(additionalOptions: {'view_name': 'custom_view_name'})),
+          throwsA(isA<SqliteException>().having((e) => e.message, 'message',
+              contains("Direct tables can't have custom view names"))),
+        );
+      });
+
       test('local-only', () {
         replaceSchema(schema(additionalOptions: {'local_only': true}));
 

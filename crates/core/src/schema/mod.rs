@@ -23,10 +23,33 @@ use crate::{
 };
 
 #[derive(Deserialize, Default)]
+#[serde(try_from = "NonValidatedSchema")]
 pub struct Schema {
     pub tables: Vec<table_info::Table>,
-    #[serde(default)]
     pub raw_tables: Vec<table_info::RawTable>,
+}
+
+#[derive(Deserialize)]
+struct NonValidatedSchema {
+    tables: Vec<table_info::Table>,
+    #[serde(default)]
+    raw_tables: Vec<table_info::RawTable>,
+}
+
+impl TryFrom<NonValidatedSchema> for Schema {
+    type Error = &'static str;
+
+    fn try_from(value: NonValidatedSchema) -> Result<Self, Self::Error> {
+        let NonValidatedSchema { tables, raw_tables } = value;
+
+        for table in &tables {
+            if table.direct && table.view_name_override.is_some() {
+                return Err("Direct tables can't have custom view names");
+            }
+        }
+
+        Ok(Schema { tables, raw_tables })
+    }
 }
 
 pub fn register(db: *mut sqlite::sqlite3, state: Rc<DatabaseState>) -> Result<(), ResultCode> {
