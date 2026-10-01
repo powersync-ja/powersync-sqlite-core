@@ -478,6 +478,7 @@ END'''
 
               // Migrating from local-only to synced tables deletes data
               expect(db.select('SELECT * FROM users'), isEmpty);
+              expect(db.select('SELECT * FROM ps_untyped'), isEmpty);
             });
 
             test('synced', () {
@@ -487,6 +488,7 @@ END'''
               replaceSchema(schema(additionalOptions: {'direct': endDirect}));
               expect(db.select('SELECT * FROM users'), hasLength(1));
               expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+              expect(db.select('SELECT * FROM ps_untyped'), isEmpty);
             });
 
             test('synced to local-only', () {
@@ -502,6 +504,7 @@ END'''
               // previous crud entry is still there.
               expect(db.select('SELECT * FROM users'), isEmpty);
               expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+              expect(db.select('SELECT * FROM ps_untyped'), hasLength(1));
             });
           });
         }
@@ -583,6 +586,28 @@ END'''
                 }
               ],
             );
+          });
+
+          test('migrate', () {
+            final indexes = {
+              'indexes': [
+                {
+                  'name': 'test',
+                  'columns': [
+                    {'name': 'additional', 'type': 'text', 'ascending': true},
+                  ]
+                }
+              ]
+            };
+
+            replaceSchema(
+                schema(additionalOptions: indexes, additionalColumns: [
+              {'name': 'additional', 'type': 'text'},
+            ]));
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+            replaceSchema(schema());
           });
 
           test('remove', () {

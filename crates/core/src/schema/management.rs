@@ -37,10 +37,23 @@ fn update_tables(
     existing_tables: &[ExistingTable],
     existing_views: &mut BTreeMap<&str, &ExistingView>,
 ) -> Result<()> {
+    struct ExistingTableState<'a> {
+        table: &'a ExistingTable,
+        /// Whether rows from this table have been moved into a replacement table for a migration
+        /// between json-based and direct tables.
+        contents_moved: bool,
+    }
+
     let mut existing_tables = {
         let mut map = BTreeMap::new();
         for table in existing_tables {
-            map.insert(&*table.name, table);
+            map.insert(
+                &*table.name,
+                ExistingTableState {
+                    table,
+                    contents_moved: false,
+                },
+            );
         }
         map
     };
@@ -48,7 +61,10 @@ fn update_tables(
     for table in &schema.tables {
         let mut move_data_from = None::<JsonDataSource>;
 
-        if let Some(existing) = existing_tables.remove(&*table.name) {
+        if let Some(ExistingTableState {
+            table: existing, ..
+        }) = existing_tables.remove(&*table.name)
+        {
             // Migrate between JSON-based and direct tables if needed.
             match (&existing.direct, table.direct) {
                 (None, false) => {
@@ -61,7 +77,13 @@ fn update_tables(
                         // (local-only tables have a ps_data_local prefix).
 
                         // To delete the old existing table in the end.
-                        existing_tables.insert(&existing.name, existing);
+                        existing_tables.insert(
+                            &existing.name,
+                            ExistingTableState {
+                                table: existing,
+                                contents_moved: false,
+                            },
+                        );
                     } else {
                         // Compatible table exists already, nothing to do.
                         continue;
@@ -74,19 +96,27 @@ fn update_tables(
                     //  2. Local-only to synced: Delete old table, copy from ps_untyped for new.
                     //  3. Synced to local-only: Move old into ps_untyped; create new from scratch.
                     //  4. Synced to synced: Copy data; delete old table.
-                    if existing.local_only == table.local_only() {
+                    let contents_moved = if existing.local_only == table.local_only() {
                         // Case 1 or 4.
                         move_data_from = Some(JsonDataSource {
-                            table: &existing.internal_name,
+                            table: existing,
                             fragment: None,
                         });
+                        true
                     } else {
                         // Case 2 and 3 is the default, we'll delete the old table in the end which
                         // moves to ps_untyped if necessary.
-                    }
+                        false
+                    };
 
                     // To delete the existing table in the end.
-                    existing_tables.insert(&existing.name, existing);
+                    existing_tables.insert(
+                        &existing.name,
+                        ExistingTableState {
+                            table: existing,
+                            contents_moved,
+                        },
+                    );
 
                     // The direct table we create conflicts with the view. So delete that one first.
                     if let Some(old_view) = existing_views.remove(&*existing.name) {
@@ -95,23 +125,31 @@ fn update_tables(
                 }
                 (Some(old_direct), false) => {
                     // The four cases to consider here match those from the other direction.
-                    if existing.local_only == table.local_only() {
+                    let contents_moved = if existing.local_only == table.local_only() {
                         let json = table_columns_to_json_object(
                             &existing.internal_name,
                             &old_direct.columns,
                         )?;
 
                         move_data_from = Some(JsonDataSource {
-                            table: &existing.name,
+                            table: existing,
                             fragment: Some(json),
-                        })
+                        });
+                        true
                     } else {
                         // Also switching synced / local-only state. We'll delete data for this, no
                         // need to copy.
-                    }
+                        false
+                    };
 
                     // To delete the old table in the end.
-                    existing_tables.insert(&existing.name, existing);
+                    existing_tables.insert(
+                        &existing.name,
+                        ExistingTableState {
+                            table: existing,
+                            contents_moved,
+                        },
+                    );
                 }
                 (Some(previous), true) => {
                     if existing.local_only != table.local_only() {
@@ -155,15 +193,15 @@ fn update_tables(
     // Remaining tables need to be dropped. But first, we want to move their contents to
     // ps_untyped.
     for remaining in existing_tables.values() {
-        remaining.move_into_ps_untyped(db)?;
+        if !remaining.contents_moved {
+            remaining.table.move_into_ps_untyped(db)?;
+        }
     }
 
     // We cannot have any open queries on sqlite_master at the point that we drop tables, otherwise
     // we get "table is locked" errors.
     for remaining in existing_tables.values() {
-        let mut buffer = SqlBuffer::new();
-        buffer.drop("TABLE", false, &remaining.internal_name);
-        db.exec_safe_str(&buffer.sql)?;
+        remaining.table.drop(db)?;
     }
 
     Ok(())
@@ -218,22 +256,47 @@ fn direct_table_migration(
     // statements, so we drop those first. A subsequent update_indexes and update_views call will
     // create them again.
     {
-        let stmt =
-            db.prepare_v2("SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL AND tbl_name = ?")?;
+        enum ElementToDrop<'a> {
+            Index(String),
+            Triggers(&'a ExistingView),
+        }
+
+        let mut elements_to_drop = vec![];
+        let stmt = db.prepare_v2(
+            "SELECT name, sql FROM sqlite_schema WHERE type = 'index' AND tbl_name = ?",
+        )?;
         stmt.bind_text(1, &new.name, Destructor::STATIC)?;
 
         while stmt.step()? {
             let index_name = stmt.column_text(0)?;
+            let Ok(index_sql) = stmt.column_text(1) else {
+                continue;
+            };
+            if !index_sql.contains(DIRECT_INDEX_MARKER) {
+                continue;
+            }
 
-            let mut stmt = SqlBuffer::new();
-            stmt.drop("INDEX", false, &index_name);
-            db.exec_safe_str(&stmt.sql)?;
+            elements_to_drop.push(ElementToDrop::Index(index_name.to_owned()));
         }
 
         if let Some(old_triggers) = existing_views.remove(new.name.as_str()) {
-            old_triggers.delete_from_db(db)?;
+            elements_to_drop.push(ElementToDrop::Triggers(old_triggers));
         }
-    }
+
+        // We can't alter the schema while the statement selecting from sqlite_schema is active.
+        drop(stmt);
+
+        for element in &elements_to_drop {
+            match element {
+                ElementToDrop::Index(index) => {
+                    let mut stmt = SqlBuffer::new();
+                    stmt.drop("INDEX", false, &index);
+                    db.exec_safe_str(&stmt.sql)?;
+                }
+                ElementToDrop::Triggers(existing_view) => existing_view.delete_from_db(db)?,
+            }
+        }
+    };
 
     // Add new columns, drop old ones
     for new_column in new_columns {
@@ -253,6 +316,8 @@ fn direct_table_migration(
     Ok(())
 }
 
+const DIRECT_INDEX_MARKER: &str = "/* ps-managed */";
+
 fn create_index_stmt(table: &Table, index_name: &str, index: &Index) -> String {
     let mut sql = SqlBuffer::new();
     sql.push_str("CREATE INDEX ");
@@ -260,7 +325,7 @@ fn create_index_stmt(table: &Table, index_name: &str, index: &Index) -> String {
     if table.direct {
         // We use this to identify old indexes to remove them. This is only required for direct
         // tables, for json tables we use the ps_data prefix.
-        sql.push_str("/* ps-managed */");
+        sql.push_str(DIRECT_INDEX_MARKER);
     }
     sql.push_str(" ON ");
     table.write_name(&mut sql);
