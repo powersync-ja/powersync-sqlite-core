@@ -36,7 +36,7 @@ use super::{
     line::{Checkpoint, CheckpointDiff, SyncLine},
     operations::insert_bucket_operations,
     storage_adapter::{StorageAdapter, SyncLocalResult},
-    sync_status::{SyncDownloadProgress, SyncProgressFromCheckpoint, SyncStatusContainer},
+    sync_status::{SyncDownloadProgress, SyncStatusContainer},
 };
 
 /// The sync client implementation, responsible for parsing lines received by the sync service and
@@ -490,16 +490,7 @@ impl StreamingSyncIteration {
     }
 
     fn load_progress(&self, checkpoint: &OwnedCheckpoint) -> Result<SyncDownloadProgress> {
-        let SyncProgressFromCheckpoint {
-            progress,
-            needs_counter_reset,
-        } = SyncDownloadProgress::for_checkpoint(checkpoint, &self.adapter)?;
-
-        if needs_counter_reset {
-            self.adapter.reset_progress()?;
-        }
-
-        Ok(progress)
+        SyncDownloadProgress::for_checkpoint(checkpoint, &self.adapter)
     }
 
     fn try_applying_write_after_completed_upload<'a>(

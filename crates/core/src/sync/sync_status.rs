@@ -296,6 +296,8 @@ pub struct BucketProgress {
     pub at_last: i64,
     pub since_last: i64,
     pub target_count: i64,
+    #[serde(skip_serializing)]
+    pub reset_counter: bool,
 }
 
 #[derive(Hash)]
@@ -336,6 +338,7 @@ impl Serialize for SyncDownloadProgress {
                             at_last: 0,
                             since_last: progress.downloaded,
                             target_count: progress.total,
+                            reset_counter: false, // ignored
                         },
                     )?;
                 }
@@ -349,18 +352,12 @@ impl Serialize for SyncDownloadProgress {
     }
 }
 
-pub struct SyncProgressFromCheckpoint {
-    pub progress: SyncDownloadProgress,
-    pub needs_counter_reset: bool,
-}
-
 impl SyncDownloadProgress {
     pub fn for_checkpoint<'a>(
         checkpoint: &OwnedCheckpoint,
         adapter: &StorageAdapter,
-    ) -> Result<SyncProgressFromCheckpoint, PowerSyncError> {
+    ) -> Result<Self, PowerSyncError> {
         let mut buckets = BTreeMap::<String, BucketProgress>::new();
-        let mut needs_reset = false;
         for bucket in checkpoint.buckets.values() {
             buckets.insert(
                 bucket.bucket.clone(),
@@ -370,6 +367,7 @@ impl SyncDownloadProgress {
                     // Will be filled out later by iterating local_progress
                     at_last: 0,
                     since_last: 0,
+                    reset_counter: false,
                 },
             );
         }
@@ -377,6 +375,9 @@ impl SyncDownloadProgress {
         // Ignore errors here - SQLite seems to report errors from an earlier statement iteration
         // sometimes.
         let _ = adapter.progress_stmt.reset();
+        let reset_progress = adapter.db.prepare_v2(
+            "UPDATE ps_buckets SET count_since_last = 0, count_at_last = 0 WHERE id = ?;",
+        )?;
 
         // Go through local bucket states to detect pending progress from previous sync iterations
         // that may have been interrupted.
@@ -389,24 +390,21 @@ impl SyncDownloadProgress {
             progress.since_last = row.count_since_last;
 
             if progress.target_count < row.count_at_last + row.count_since_last {
-                needs_reset = true;
-                // Either due to a defrag / sync rule deploy or a compactioon operation, the size
+                // Either due to a defrag / sync rule deploy or a compaction operation, the size
                 // of the bucket shrank so much that the local ops exceed the ops in the updated
                 // bucket. We can't possibly report progress in this case (it would overshoot 100%).
-                for (_, progress) in &mut buckets {
-                    progress.at_last = 0;
-                    progress.since_last = 0;
-                }
-                break;
+                progress.reset_counter = true;
+                progress.at_last = 0;
+                progress.since_last = 0;
+
+                reset_progress.bind_int64(1, row.bucket_id)?;
+                reset_progress.exec()?;
             }
         }
 
         adapter.progress_stmt.reset()?;
 
-        Ok(SyncProgressFromCheckpoint {
-            progress: Self { buckets },
-            needs_counter_reset: needs_reset,
-        })
+        Ok(Self { buckets })
     }
 
     pub fn increment_download_count(&mut self, line: &DataLine) {
