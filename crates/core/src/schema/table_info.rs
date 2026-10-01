@@ -8,6 +8,7 @@ use powersync_sqlite_nostd::Destructor;
 use serde::{Deserialize, de::Visitor};
 
 use crate::error::PowerSyncError;
+use crate::schema::inspection::ExistingTable;
 use crate::schema::raw_table::generate_schema_table_trigger;
 use crate::schema::{ColumnFilter, SchemaTable};
 use crate::sync::PreparedPendingStatement;
@@ -105,7 +106,7 @@ impl Table {
             stmt.push_str("INSERT INTO ");
             self.write_name(&mut stmt);
             let _ = stmt.write_str(" (id, data) SELECT id, data FROM ps_untyped WHERE type = ?");
-            let _ = db.exec_text(&stmt.sql, &self.name);
+            db.exec_text(&stmt.sql, &self.name)?;
             db.exec_text(&delete_stmt.sql, &self.name)?;
         }
 
@@ -136,7 +137,7 @@ impl Table {
             source.push_str("data ");
         }
         source.push_str("FROM ");
-        let _ = write!(source.identifier(), "{}", json.table);
+        let _ = write!(source.identifier(), "{}", json.table.internal_name);
 
         let source = db.prepare_v2(&source.sql)?;
 
@@ -253,7 +254,7 @@ impl RawTable {
 }
 
 pub struct JsonDataSource<'a> {
-    pub table: &'a str,
+    pub table: &'a ExistingTable,
     pub fragment: Option<String>,
 }
 

@@ -253,4 +253,10 @@ impl ExistingTable {
 
         db.exec_text(&buffer.sql, &self.name)
     }
+
+    pub fn drop(&self, db: Database) -> Result<()> {
+        let mut buffer = SqlBuffer::new();
+        buffer.drop("TABLE", false, &self.internal_name);
+        db.exec_safe_str(&buffer.sql)
+    }
 }
