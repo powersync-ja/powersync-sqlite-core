@@ -478,8 +478,8 @@ enum TableDefinition<'a> {
 
 pub struct PreparedPendingStatement {
     stmt: Statement,
-    needs_parsed_json: bool,
     definition: Rc<PendingStatement>,
+    needs_parsed_json: bool,
 }
 
 impl PreparedPendingStatement {

@@ -181,6 +181,39 @@ impl Table {
         }
     }
 
+    /// Writes the `CREATE TABLE` statement for this managed table.
+    pub fn write_create_table_statement(&self, buffer: &mut SqlBuffer) {
+        buffer.push_str("CREATE TABLE ");
+        self.write_name(buffer);
+        buffer.push_str("(id TEXT PRIMARY KEY NOT NULL");
+
+        if self.direct {
+            // The ps-managed comment here is used by ExistingTable::list to identify this direct
+            // table (we can't give it a ps_data__ prefix because there's no view) and whether it is
+            // a local-only table.
+            buffer.push_str(" /* ps-managed ");
+            if self.local_only() {
+                buffer.push_str("local-only ");
+            }
+            buffer.push_str("*/");
+
+            for column in &self.columns {
+                buffer.push_char(',');
+                buffer.column_definition(&column.name, "ANY");
+            }
+        } else {
+            // Regular json tables just have a data column storing the json object.
+            buffer.push_str(", data TEXT");
+        }
+
+        buffer.push_char(')');
+        if self.direct {
+            buffer.push_str(" STRICT");
+        }
+
+        buffer.push_char(';');
+    }
+
     pub fn generate_direct_trigger(
         &self,
         mut trigger_name: Option<String>,
@@ -502,51 +535,4 @@ pub enum PendingStatementValue {
     Rest,
     /// The full JSON object for the row, as received from the PowerSync service.
     Row,
-}
-
-pub struct CreateTableStatement {
-    create_table: SqlBuffer,
-    direct: bool,
-}
-
-impl From<&Table> for CreateTableStatement {
-    fn from(value: &Table) -> Self {
-        let mut create_table = SqlBuffer::new();
-
-        create_table.push_str("CREATE TABLE ");
-        value.write_name(&mut create_table);
-        create_table.push_str("(id TEXT PRIMARY KEY NOT NULL");
-
-        if value.direct {
-            create_table.push_str(" /* ps-managed ");
-            if value.local_only() {
-                create_table.push_str("local-only ");
-            }
-            create_table.push_str("*/");
-        } else {
-            create_table.push_str(", data TEXT");
-        }
-
-        Self {
-            create_table,
-            direct: value.direct,
-        }
-    }
-}
-
-impl CreateTableStatement {
-    pub fn push_any_column(&mut self, name: &str) {
-        self.create_table.push_char(',');
-        self.create_table.column_definition(name, "ANY");
-    }
-
-    pub fn finish(mut self) -> SqlBuffer {
-        self.create_table.push_char(')');
-        if self.direct {
-            self.create_table.push_str(" STRICT");
-        }
-
-        self.create_table.push_char(';');
-        self.create_table
-    }
 }

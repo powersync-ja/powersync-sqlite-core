@@ -19,7 +19,7 @@ use crate::error::{PowerSyncError, Result};
 use crate::migrations::initialize_database;
 use crate::schema::inspection::{ExistingTable, ExistingView, ViewKey};
 use crate::schema::raw_table::InferredTableStructure;
-use crate::schema::table_info::{CreateTableStatement, Index, JsonDataSource};
+use crate::schema::table_info::{Index, JsonDataSource};
 use crate::schema::{Column, Table};
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
@@ -49,7 +49,7 @@ fn update_tables(
         let mut move_data_from = None::<JsonDataSource>;
 
         if let Some(existing) = existing_tables.remove(&*table.name) {
-            // Migrate between JSON-based and direct tables.
+            // Migrate between JSON-based and direct tables if needed.
             match (&existing.direct, table.direct) {
                 (None, false) => {
                     // JSON-based table before and now. We might have to migrate between synced and
@@ -138,16 +138,11 @@ fn update_tables(
 
         // New table.
         let create_table = {
-            let mut create = CreateTableStatement::from(table);
-            if table.direct {
-                for column in &table.columns {
-                    create.push_any_column(&column.name);
-                }
-            }
-
-            create.finish()
+            let mut buffer = SqlBuffer::new();
+            table.write_create_table_statement(&mut buffer);
+            buffer.sql
         };
-        db.exec_safe_str(&create_table.sql)?;
+        db.exec_safe_str(&create_table)?;
 
         if let Some(ref old_json_table) = move_data_from {
             table.move_from_json(db, old_json_table)?;
