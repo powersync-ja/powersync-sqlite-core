@@ -29,14 +29,18 @@ pub struct ExistingView {
 
 #[derive(PartialEq)]
 pub enum ViewKey {
+    /// Views and triggers created for a json-based `ps_data__` tables.
     JsonTable {
         /// The name of the view itself.
         name: String,
         /// SQL contents of the `CREATE VIEW` statement.
         sql: String,
     },
+    /// Triggers created for direct tables.
+    ///
+    /// These tables don't have a separate view.
     DirectTable {
-        /// The name of the direct table for which this view has been created.
+        /// The name of the direct table for which these triggers have been created.
         table_name: String,
     },
 }
@@ -51,7 +55,7 @@ impl ExistingView {
         let find_views = db.prepare_v2("SELECT name, sql FROM sqlite_schema WHERE type = 'view' AND sql GLOB '*-- powersync-auto-generated'")?;
 
         let complete_triggers = |key: ViewKey| -> Result<ExistingView> {
-            find_triggers.bind_text(1, &key.name(), Destructor::STATIC)?;
+            find_triggers.bind_text(1, key.name(), Destructor::STATIC)?;
 
             let mut insert_trigger_sql = String::new();
             let mut update_trigger_sql = String::new();
@@ -123,8 +127,9 @@ impl ExistingView {
                 Self::drop_by_name(db, &name)?;
             }
             ViewKey::DirectTable { table_name } => {
-                // For json tables, dropping the view also drops the triggers. For direct tables
-                // where we only want to remove triggers, we need to drop them by name manually.
+                // For json tables, dropping the view also drops the INSTEAD OF triggers. For direct
+                // tables where we only want to remove triggers, we need to drop them by name
+                // manually.
                 for write in WriteType::VALUES {
                     let mut buffer = SqlBuffer::new();
                     buffer.drop(
@@ -193,7 +198,7 @@ impl ExistingTable {
                     local_only: local_only,
                     direct: None,
                 });
-            } else if sql.contains("/* ps-managed") && !ignore_direct {
+            } else if !ignore_direct && sql.contains("/* ps-managed") {
                 results.push(ExistingTable {
                     internal_name: internal_name.to_owned(),
                     name: internal_name.to_owned(),
