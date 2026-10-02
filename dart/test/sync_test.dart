@@ -1312,7 +1312,10 @@ void _syncTests<T>({
         containsPair('LogLine', {
           'severity': 'INFO',
           'line': contains('Will retry at completed upload')
-        })
+        }),
+        {
+          'CheckpointDelayedDueToLocalData': {},
+        },
       ]);
 
       // Now complete the upload process.
@@ -1364,7 +1367,10 @@ void _syncTests<T>({
         containsPair('LogLine', {
           'severity': 'INFO',
           'line': contains('Will retry at completed upload')
-        })
+        }),
+        {
+          'CheckpointDelayedDueToLocalData': {},
+        },
       ]);
 
       // Now the upload is complete and requests a write checkpoint
@@ -1398,7 +1404,10 @@ void _syncTests<T>({
         containsPair('LogLine', {
           'severity': 'INFO',
           'line': contains('Will retry at completed upload')
-        })
+        }),
+        {
+          'CheckpointDelayedDueToLocalData': {},
+        },
       ]);
 
       // Second local write during sync

@@ -182,6 +182,15 @@ pub enum Instruction {
         #[serde_as(as = "Option<DisplayFromStr>")]
         applied_checkpoint_request_id: Option<i64>,
     },
+    /// The sync client has received a `checkpoint_complete` message that couldn't be applied due to
+    /// pending local writes that have not been uploaded yet.
+    ///
+    /// SDKs notify the sync client (via [SyncEvent::UploadFinished]) once writes have been
+    /// uploaded, which the client uses as a signal to try applying the checkpoint again.
+    ///
+    /// SDKs connected in download-only mode raise this as an error, since these sync-preventing
+    /// writes would never be uploaded. Otherwise, handling this instruction is a noop.
+    CheckpointDelayedDueToLocalData {},
 
     /// Handle a diagnostic event.
     ///

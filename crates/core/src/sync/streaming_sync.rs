@@ -237,6 +237,9 @@ impl StreamingSyncIteration {
                                     severity: LogSeverity::INFO,
                                     line: "Could not apply checkpoint due to local data. Will retry at completed upload or next checkpoint.".into(),
                                 });
+                        event
+                            .instructions
+                            .push(Instruction::CheckpointDelayedDueToLocalData {});
 
                         SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
                             validated_but_not_applied: target.clone(),
@@ -287,6 +290,10 @@ impl StreamingSyncIteration {
                         SyncStateMachineTransition::CloseIteration(Default::default())
                     }
                     SyncLocalResult::PendingLocalChanges => {
+                        event
+                            .instructions
+                            .push(Instruction::CheckpointDelayedDueToLocalData {});
+
                         // If we have pending uploads, we can't complete new checkpoints outside
                         // of priority 0. We'll resolve this for a complete checkpoint later.
                         SyncStateMachineTransition::EmptyAndConnected
