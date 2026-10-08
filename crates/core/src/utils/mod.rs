@@ -6,7 +6,7 @@ use core::{cmp::Ordering, fmt::Display, hash::Hash};
 use alloc::{boxed::Box, string::String};
 use serde::Serialize;
 use serde_json::value::RawValue;
-pub use sql_buffer::{InsertIntoCrud, SqlBuffer, WriteType};
+pub use sql_buffer::{CrudTriggerName, InsertIntoCrud, SqlBuffer, WriteType};
 
 use crate::{
     error::{PowerSyncError, RawPowerSyncError},
