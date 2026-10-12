@@ -282,36 +282,26 @@ WHERE bucket = ?1",
         sync.use_schema(schema);
 
         Ok(if sync.apply()? {
-            match priority {
-                None => {
-                    // Reset progress counters. We only do this for a complete sync, as we want a
-                    // download progress to always cover a complete checkpoint instead of resetting for
-                    // partial completions.
-                    let update = self.db.prepare_v2(
+            if priority.is_none() {
+                // Reset progress counters. We only do this for a complete sync, as we want a
+                // download progress to always cover a complete checkpoint instead of resetting for
+                // partial completions.
+                let update = self.db.prepare_v2(
                     "UPDATE ps_buckets SET count_since_last = 0, count_at_last = ? WHERE name = ?",
                 )?;
 
-                    for bucket in checkpoint.buckets.values() {
-                        if let Some(count) = bucket.count {
-                            update.bind_int64(1, count)?;
-                            update.bind_text(
-                                2,
-                                bucket.bucket.as_str(),
-                                sqlite::Destructor::STATIC,
-                            )?;
+                for bucket in checkpoint.buckets.values() {
+                    if let Some(count) = bucket.count {
+                        update.bind_int64(1, count)?;
+                        update.bind_text(2, bucket.bucket.as_str(), sqlite::Destructor::STATIC)?;
 
-                            update.exec()?;
-                            update.reset()?;
-                        }
+                        update.exec()?;
+                        update.reset()?;
                     }
-
-                    SyncLocalResult::ChangesApplied { timestamp: now }
                 }
-                Some(priority) => SyncLocalResult::AppliedPartially {
-                    timestamp: now,
-                    priority,
-                },
             }
+
+            SyncLocalResult::ChangesApplied { timestamp: now }
         } else {
             // There are pending local changes preventing a full sync. If all buckets in the tracked
             // checkpoint are priority 0, we can make some progress by retrying as a partial sync.
@@ -330,9 +320,8 @@ WHERE bucket = ?1",
                     involved_buckets: checkpoint.list_buckets(Some(retry_priority)).collect(),
                 });
                 if sync.apply()? {
-                    return Ok(SyncLocalResult::AppliedPartially {
+                    return Ok(SyncLocalResult::PendingLocalChangesAppliedPartially {
                         timestamp: now,
-                        priority: retry_priority,
                     });
                 }
             }
@@ -701,10 +690,11 @@ pub enum SyncLocalResult {
     PendingLocalChanges,
     /// The checkpoint has been applied and changes have been published.
     ChangesApplied { timestamp: TimestampMicros },
-    AppliedPartially {
-        timestamp: TimestampMicros,
-        priority: BucketPriority,
-    },
+    /// A full checkpoint could not be applied due to pending local changes, but since all of its
+    /// buckets have priority 0, they have been applied as a partial checkpoint instead.
+    ///
+    /// Like [Self::PendingLocalChanges], the full checkpoint still needs to be applied later.
+    PendingLocalChangesAppliedPartially { timestamp: TimestampMicros },
 }
 
 /// Information about the amount of operations a bucket had at the last checkpoint and how many

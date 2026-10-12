@@ -220,7 +220,7 @@ impl StreamingSyncIteration {
                 };
                 let target = &checkpoint.checkpoint;
                 let result = self.sync_local(target, None)?;
-                self.handle_sync_local_result(false, result, target, event)?
+                self.handle_sync_local_result(None, result, target, event)?
             }
             SyncLine::CheckpointPartiallyComplete(complete) => {
                 let priority = complete.priority;
@@ -231,7 +231,7 @@ impl StreamingSyncIteration {
                 };
 
                 let result = self.sync_local(&target.checkpoint, Some(priority))?;
-                self.handle_sync_local_result(true, result, &target.checkpoint, event)?
+                self.handle_sync_local_result(Some(priority), result, &target.checkpoint, event)?
             }
             SyncLine::Data(data_line) => {
                 insert_bucket_operations(&self.adapter, &data_line, source.len())?;
@@ -328,8 +328,18 @@ impl StreamingSyncIteration {
             }
             SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
                 validated_but_not_applied,
+                partially_applied_at,
             } => {
                 self.validated_but_not_applied = Some(validated_but_not_applied);
+
+                if let Some(timestamp) = partially_applied_at {
+                    self.status.update(
+                        |status| {
+                            status.partial_checkpoint_complete(BucketPriority::HIGHEST, timestamp);
+                        },
+                        &mut event.instructions,
+                    );
+                }
             }
             SyncStateMachineTransition::SyncLocalChangesApplied {
                 applied_checkpoint_request_id,
@@ -464,7 +474,15 @@ impl StreamingSyncIteration {
                     line: "Could not apply pending checkpoint even after completed upload".into(),
                 });
 
-                SyncStateMachineTransition::Empty
+                if let SyncLocalResult::PendingLocalChangesAppliedPartially { timestamp } = result {
+                    // We've still published priority 0 buckets, so report that.
+                    SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
+                        validated_but_not_applied: checkpoint.clone(),
+                        partially_applied_at: Some(timestamp),
+                    }
+                } else {
+                    SyncStateMachineTransition::Empty
+                }
             }
         })
     }
@@ -663,11 +681,10 @@ impl StreamingSyncIteration {
             .sync_local(&*state, target, priority, &self.options.schema)?;
 
         let applied_sync = match result {
-            SyncLocalResult::ChangesApplied { timestamp } => Some((timestamp, None)),
-            SyncLocalResult::AppliedPartially {
-                timestamp,
-                priority,
-            } => Some((timestamp, Some(priority))),
+            SyncLocalResult::ChangesApplied { timestamp } => Some((timestamp, priority)),
+            SyncLocalResult::PendingLocalChangesAppliedPartially { timestamp } => {
+                Some((timestamp, Some(BucketPriority::HIGHEST)))
+            }
             _ => None,
         };
 
@@ -696,7 +713,7 @@ impl StreamingSyncIteration {
 
     fn handle_sync_local_result<'a>(
         &self,
-        was_partial: bool,
+        partial: Option<BucketPriority>,
         result: SyncLocalResult,
         target: &OwnedCheckpoint,
         event: &mut ActiveEvent<'_>,
@@ -712,12 +729,13 @@ impl StreamingSyncIteration {
                 });
                 SyncStateMachineTransition::CloseIteration(Default::default())
             }
-            SyncLocalResult::PendingLocalChanges => {
+            SyncLocalResult::PendingLocalChanges
+            | SyncLocalResult::PendingLocalChangesAppliedPartially { .. } => {
                 event
                     .instructions
                     .push(Instruction::CheckpointDelayedDueToLocalData {});
 
-                if was_partial {
+                if partial.is_some() {
                     // We'll resolve this for a complete checkpoint later.
                     SyncStateMachineTransition::EmptyAndConnected
                 } else {
@@ -726,39 +744,43 @@ impl StreamingSyncIteration {
                                     line: "Could not apply checkpoint due to local data. Will retry at completed upload or next checkpoint.".into(),
                                 });
 
+                    let partially_applied_at = match result {
+                        SyncLocalResult::PendingLocalChangesAppliedPartially { timestamp } => {
+                            Some(timestamp)
+                        }
+                        _ => None,
+                    };
+
                     SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
                         validated_but_not_applied: target.clone(),
+                        partially_applied_at,
                     }
                 }
             }
             SyncLocalResult::ChangesApplied { timestamp } => {
-                event.instructions.push(Instruction::LogLine {
-                    severity: LogSeverity::DEBUG,
-                    line: "Validated and applied checkpoint".into(),
-                });
+                let applied_checkpoint_request_id = if partial.is_none() {
+                    event.instructions.push(Instruction::LogLine {
+                        severity: LogSeverity::DEBUG,
+                        line: "Validated and applied checkpoint".into(),
+                    });
 
-                // Persist here so that all database writes happen while preparing the
-                // transition, keeping apply_transition infallible.
-                if let Some(request_id) = target.write_checkpoint {
-                    self.adapter
-                        .persist_last_applied_checkpoint_request_id(request_id)?;
-                }
+                    // Persist here so that all database writes happen while preparing the
+                    // transition, keeping apply_transition infallible.
+                    if let Some(request_id) = target.write_checkpoint {
+                        self.adapter
+                            .persist_last_applied_checkpoint_request_id(request_id)?;
+                    }
 
-                SyncStateMachineTransition::SyncLocalChangesApplied {
-                    applied_checkpoint_request_id: target.write_checkpoint,
-                    partial: None,
-                    timestamp,
-                }
-            }
-            SyncLocalResult::AppliedPartially {
-                timestamp,
-                priority,
-            } => {
-                SyncStateMachineTransition::SyncLocalChangesApplied {
+                    target.write_checkpoint
+                } else {
                     // A checkpoint request is only considered applied once the full
                     // checkpoint has been applied, not for partial completions.
-                    applied_checkpoint_request_id: None,
-                    partial: Some(priority),
+                    None
+                };
+
+                SyncStateMachineTransition::SyncLocalChangesApplied {
+                    applied_checkpoint_request_id,
+                    partial,
                     timestamp,
                 }
             }
@@ -1047,6 +1069,8 @@ enum SyncStateMachineTransition<'a> {
     },
     SyncLocalFailedDueToPendingCrud {
         validated_but_not_applied: OwnedCheckpoint,
+        /// Set if buckets with priority 0 could be applied despite pending local changes.
+        partially_applied_at: Option<TimestampMicros>,
     },
     SyncLocalChangesApplied {
         applied_checkpoint_request_id: Option<i64>,

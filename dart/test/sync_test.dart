@@ -396,6 +396,14 @@ void _syncTests<T>({
 
       final results = pushCheckpointComplete();
       expect(results, [
+        // The full checkpoint is still delayed, we only applied prio 0 buckets.
+        {
+          'CheckpointDelayedDueToLocalData': {},
+        },
+        containsPair('LogLine', {
+          'severity': 'INFO',
+          'line': contains('Will retry at completed upload')
+        }),
         {
           'UpdateSyncStatus': {
             'status': {
@@ -1363,6 +1371,46 @@ void _syncTests<T>({
       );
 
       // This should apply the pending write checkpoint.
+      expect(fetchRows(), [
+        {'id': 'row-0', 'col': 'hi'}
+      ]);
+    });
+
+    test('write checkpoint before upload complete, only prio 0', () {
+      // local write while offline
+      db.execute("insert into items (id, col) values ('local', 'data');");
+      invokeControl('start', null);
+
+      db.execute('DELETE FROM ps_crud');
+      pushCheckpoint(
+          buckets: [bucketDescription('prio0', priority: 0)],
+          writeCheckpoint: '1');
+      pushSyncData('prio0', '1', 'row-0', 'PUT', {'col': 'hi'});
+      expect(
+          pushCheckpointComplete(),
+          containsAllInOrder([
+            {
+              'CheckpointDelayedDueToLocalData': {},
+            },
+            containsPair('LogLine', {
+              'severity': 'INFO',
+              'line': contains('Will retry at completed upload')
+            }),
+          ]));
+
+      // Prio 0 buckets have been applied as a partial checkpoint already.
+      expect(fetchRows(), [
+        {'id': 'local', 'col': 'data'},
+        {'id': 'row-0', 'col': 'hi'},
+      ]);
+
+      // Completing the upload should apply the full checkpoint.
+      probeTargetCheckpointRequestId(1);
+      expect(
+        invokeControl('completed_upload', null),
+        contains(containsPair('LogLine',
+            {'severity': 'DEBUG', 'line': 'Applied checkpoint request id 1'})),
+      );
       expect(fetchRows(), [
         {'id': 'row-0', 'col': 'hi'}
       ]);
