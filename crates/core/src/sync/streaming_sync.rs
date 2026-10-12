@@ -662,7 +662,16 @@ impl StreamingSyncIteration {
             .adapter
             .sync_local(&*state, target, priority, &self.options.schema)?;
 
-        if let SyncLocalResult::ChangesApplied { timestamp } = result {
+        let applied_sync = match result {
+            SyncLocalResult::ChangesApplied { timestamp } => Some((timestamp, None)),
+            SyncLocalResult::AppliedPartially {
+                timestamp,
+                priority,
+            } => Some((timestamp, Some(priority))),
+            _ => None,
+        };
+
+        if let Some((timestamp, priority)) = applied_sync {
             // Update affected stream subscriptions to mark them as synced.
             let mut status = self.status.inner().borrow_mut();
 
