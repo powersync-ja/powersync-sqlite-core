@@ -34,7 +34,7 @@ pub struct SyncOperation<'a> {
     state: &'a DatabaseState,
     db: Database,
     schema: ParsedDatabaseSchema<'a>,
-    partial: Option<PartialSyncOperation<'a>>,
+    pub partial: Option<PartialSyncOperation<'a>>,
     time: TimestampMicros,
 }
 
@@ -90,11 +90,11 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
         Ok(true)
     }
 
-    pub fn apply(&mut self) -> Result<i64> {
+    pub fn apply(&mut self) -> Result<bool> {
         let guard = self.state.sync_local_guard();
 
         if !self.can_apply_sync_changes()? {
-            return Ok(0);
+            return Ok(false);
         }
 
         self.collect_tables()?;
@@ -184,7 +184,7 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
         self.mark_completed()?;
 
         drop(guard);
-        Ok(1)
+        Ok(true)
     }
 
     fn collect_tables(&mut self) -> Result<()> {

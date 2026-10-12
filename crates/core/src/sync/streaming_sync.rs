@@ -220,51 +220,7 @@ impl StreamingSyncIteration {
                 };
                 let target = &checkpoint.checkpoint;
                 let result = self.sync_local(target, None)?;
-
-                match result {
-                    SyncLocalResult::ChecksumFailure(checkpoint_result) => {
-                        // This means checksums failed. Start again with a new checkpoint.
-                        // TODO: better back-off
-                        // await new Promise((resolve) => setTimeout(resolve, 50));
-                        event.instructions.push(Instruction::LogLine {
-                            severity: LogSeverity::WARNING,
-                            line: format!("Could not apply checkpoint, {checkpoint_result}").into(),
-                        });
-                        SyncStateMachineTransition::CloseIteration(Default::default())
-                    }
-                    SyncLocalResult::PendingLocalChanges => {
-                        event.instructions.push(Instruction::LogLine {
-                                    severity: LogSeverity::INFO,
-                                    line: "Could not apply checkpoint due to local data. Will retry at completed upload or next checkpoint.".into(),
-                                });
-                        event
-                            .instructions
-                            .push(Instruction::CheckpointDelayedDueToLocalData {});
-
-                        SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
-                            validated_but_not_applied: target.clone(),
-                        }
-                    }
-                    SyncLocalResult::ChangesApplied { timestamp } => {
-                        event.instructions.push(Instruction::LogLine {
-                            severity: LogSeverity::DEBUG,
-                            line: "Validated and applied checkpoint".into(),
-                        });
-
-                        // Persist here so that all database writes happen while preparing the
-                        // transition, keeping apply_transition infallible.
-                        if let Some(request_id) = target.write_checkpoint {
-                            self.adapter
-                                .persist_last_applied_checkpoint_request_id(request_id)?;
-                        }
-
-                        SyncStateMachineTransition::SyncLocalChangesApplied {
-                            applied_checkpoint_request_id: target.write_checkpoint,
-                            partial: None,
-                            timestamp,
-                        }
-                    }
-                }
+                self.handle_sync_local_result(false, result, target, event)?
             }
             SyncLine::CheckpointPartiallyComplete(complete) => {
                 let priority = complete.priority;
@@ -273,41 +229,9 @@ impl StreamingSyncIteration {
                         "Received checkpoint complete without previous checkpoint",
                     ));
                 };
+
                 let result = self.sync_local(&target.checkpoint, Some(priority))?;
-
-                match result {
-                    SyncLocalResult::ChecksumFailure(checkpoint_result) => {
-                        // This means checksums failed. Start again with a new checkpoint.
-                        // TODO: better back-off
-                        // await new Promise((resolve) => setTimeout(resolve, 50));
-                        event.instructions.push(Instruction::LogLine {
-                            severity: LogSeverity::WARNING,
-                            line: format!(
-                                "Could not apply partial checkpoint, {checkpoint_result}"
-                            )
-                            .into(),
-                        });
-                        SyncStateMachineTransition::CloseIteration(Default::default())
-                    }
-                    SyncLocalResult::PendingLocalChanges => {
-                        event
-                            .instructions
-                            .push(Instruction::CheckpointDelayedDueToLocalData {});
-
-                        // If we have pending uploads, we can't complete new checkpoints outside
-                        // of priority 0. We'll resolve this for a complete checkpoint later.
-                        SyncStateMachineTransition::EmptyAndConnected
-                    }
-                    SyncLocalResult::ChangesApplied { timestamp } => {
-                        SyncStateMachineTransition::SyncLocalChangesApplied {
-                            // A checkpoint request is only considered applied once the full
-                            // checkpoint has been applied, not for partial completions.
-                            applied_checkpoint_request_id: None,
-                            partial: Some(priority),
-                            timestamp,
-                        }
-                    }
-                }
+                self.handle_sync_local_result(true, result, &target.checkpoint, event)?
             }
             SyncLine::Data(data_line) => {
                 insert_bucket_operations(&self.adapter, &data_line, source.len())?;
@@ -759,6 +683,77 @@ impl StreamingSyncIteration {
         }
 
         Ok(result)
+    }
+
+    fn handle_sync_local_result<'a>(
+        &self,
+        was_partial: bool,
+        result: SyncLocalResult,
+        target: &OwnedCheckpoint,
+        event: &mut ActiveEvent<'_>,
+    ) -> Result<SyncStateMachineTransition<'a>> {
+        Ok(match result {
+            SyncLocalResult::ChecksumFailure(checkpoint_result) => {
+                // This means checksums failed. Start again with a new checkpoint.
+                // TODO: better back-off
+                // await new Promise((resolve) => setTimeout(resolve, 50));
+                event.instructions.push(Instruction::LogLine {
+                    severity: LogSeverity::WARNING,
+                    line: format!("Could not apply checkpoint, {checkpoint_result}").into(),
+                });
+                SyncStateMachineTransition::CloseIteration(Default::default())
+            }
+            SyncLocalResult::PendingLocalChanges => {
+                event
+                    .instructions
+                    .push(Instruction::CheckpointDelayedDueToLocalData {});
+
+                if was_partial {
+                    // We'll resolve this for a complete checkpoint later.
+                    SyncStateMachineTransition::EmptyAndConnected
+                } else {
+                    event.instructions.push(Instruction::LogLine {
+                                    severity: LogSeverity::INFO,
+                                    line: "Could not apply checkpoint due to local data. Will retry at completed upload or next checkpoint.".into(),
+                                });
+
+                    SyncStateMachineTransition::SyncLocalFailedDueToPendingCrud {
+                        validated_but_not_applied: target.clone(),
+                    }
+                }
+            }
+            SyncLocalResult::ChangesApplied { timestamp } => {
+                event.instructions.push(Instruction::LogLine {
+                    severity: LogSeverity::DEBUG,
+                    line: "Validated and applied checkpoint".into(),
+                });
+
+                // Persist here so that all database writes happen while preparing the
+                // transition, keeping apply_transition infallible.
+                if let Some(request_id) = target.write_checkpoint {
+                    self.adapter
+                        .persist_last_applied_checkpoint_request_id(request_id)?;
+                }
+
+                SyncStateMachineTransition::SyncLocalChangesApplied {
+                    applied_checkpoint_request_id: target.write_checkpoint,
+                    partial: None,
+                    timestamp,
+                }
+            }
+            SyncLocalResult::AppliedPartially {
+                timestamp,
+                priority,
+            } => {
+                SyncStateMachineTransition::SyncLocalChangesApplied {
+                    // A checkpoint request is only considered applied once the full
+                    // checkpoint has been applied, not for partial completions.
+                    applied_checkpoint_request_id: None,
+                    partial: Some(priority),
+                    timestamp,
+                }
+            }
+        })
     }
 
     /// Prepares a sync iteration by handling the initial [SyncEvent::Initialize].
