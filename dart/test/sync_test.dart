@@ -368,19 +368,61 @@ void _syncTests<T>({
     ]);
   });
 
-  test('publishes with local data for prio=0 buckets', () {
-    invokeControl('start', null);
-    pushCheckpoint(buckets: priorityBuckets);
-    expect(fetchRows(), isEmpty);
-    db.execute("insert into items (id, col) values ('local', 'data');");
+  group('publishes with local data for prio=0 buckets', () {
+    test('for explicit partial checkpoint', () {
+      invokeControl('start', null);
+      pushCheckpoint(buckets: priorityBuckets);
+      expect(fetchRows(), isEmpty);
+      db.execute("insert into items (id, col) values ('local', 'data');");
 
-    pushSyncData('prio0', '1', 'row-0', 'PUT', {'col': 'hi'});
+      pushSyncData('prio0', '1', 'row-0', 'PUT', {'col': 'hi'});
 
-    pushCheckpointComplete(priority: 0);
-    expect(fetchRows(), [
-      {'id': 'local', 'col': 'data'},
-      {'id': 'row-0', 'col': 'hi'},
-    ]);
+      pushCheckpointComplete(priority: 0);
+      expect(fetchRows(), [
+        {'id': 'local', 'col': 'data'},
+        {'id': 'row-0', 'col': 'hi'},
+      ]);
+    });
+
+    test('for full checkpoint', () {
+      // A full checkpoint might consist entirely of prio 0 buckets, in which
+      // case it should still be applied.
+      invokeControl('start', null);
+      pushCheckpoint(buckets: [bucketDescription('prio0', priority: 0)]);
+      expect(fetchRows(), isEmpty);
+      db.execute("insert into items (id, col) values ('local', 'data');");
+
+      pushSyncData('prio0', '1', 'row-0', 'PUT', {'col': 'hi'});
+
+      final results = pushCheckpointComplete();
+      expect(results, [
+        // The full checkpoint is still delayed, we only applied prio 0 buckets.
+        {
+          'CheckpointDelayedDueToLocalData': {},
+        },
+        containsPair('LogLine', {
+          'severity': 'INFO',
+          'line': contains('Will retry at completed upload')
+        }),
+        {
+          'UpdateSyncStatus': {
+            'status': {
+              'connected': true,
+              'connecting': false,
+              'priority_status': [
+                {'priority': 0, 'last_synced_at': isNotNull, 'has_synced': true}
+              ],
+              'downloading': isNotNull,
+              'streams': [],
+            },
+          }
+        }
+      ]);
+      expect(fetchRows(), [
+        {'id': 'local', 'col': 'data'},
+        {'id': 'row-0', 'col': 'hi'},
+      ]);
+    });
   });
 
   test('does not publish with pending local data', () {
@@ -1309,13 +1351,13 @@ void _syncTests<T>({
       pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
       pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
       expect(pushCheckpointComplete(), [
+        {
+          'CheckpointDelayedDueToLocalData': {},
+        },
         containsPair('LogLine', {
           'severity': 'INFO',
           'line': contains('Will retry at completed upload')
         }),
-        {
-          'CheckpointDelayedDueToLocalData': {},
-        },
       ]);
 
       // Now complete the upload process.
@@ -1329,6 +1371,46 @@ void _syncTests<T>({
       );
 
       // This should apply the pending write checkpoint.
+      expect(fetchRows(), [
+        {'id': 'row-0', 'col': 'hi'}
+      ]);
+    });
+
+    test('write checkpoint before upload complete, only prio 0', () {
+      // local write while offline
+      db.execute("insert into items (id, col) values ('local', 'data');");
+      invokeControl('start', null);
+
+      db.execute('DELETE FROM ps_crud');
+      pushCheckpoint(
+          buckets: [bucketDescription('prio0', priority: 0)],
+          writeCheckpoint: '1');
+      pushSyncData('prio0', '1', 'row-0', 'PUT', {'col': 'hi'});
+      expect(
+          pushCheckpointComplete(),
+          containsAllInOrder([
+            {
+              'CheckpointDelayedDueToLocalData': {},
+            },
+            containsPair('LogLine', {
+              'severity': 'INFO',
+              'line': contains('Will retry at completed upload')
+            }),
+          ]));
+
+      // Prio 0 buckets have been applied as a partial checkpoint already.
+      expect(fetchRows(), [
+        {'id': 'local', 'col': 'data'},
+        {'id': 'row-0', 'col': 'hi'},
+      ]);
+
+      // Completing the upload should apply the full checkpoint.
+      probeTargetCheckpointRequestId(1);
+      expect(
+        invokeControl('completed_upload', null),
+        contains(containsPair('LogLine',
+            {'severity': 'DEBUG', 'line': 'Applied checkpoint request id 1'})),
+      );
       expect(fetchRows(), [
         {'id': 'row-0', 'col': 'hi'}
       ]);
@@ -1364,13 +1446,13 @@ void _syncTests<T>({
       pushCheckpoint(buckets: priorityBuckets);
       pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
       expect(pushCheckpointComplete(), [
+        {
+          'CheckpointDelayedDueToLocalData': {},
+        },
         containsPair('LogLine', {
           'severity': 'INFO',
           'line': contains('Will retry at completed upload')
         }),
-        {
-          'CheckpointDelayedDueToLocalData': {},
-        },
       ]);
 
       // Now the upload is complete and requests a write checkpoint
@@ -1401,13 +1483,13 @@ void _syncTests<T>({
       pushCheckpoint(buckets: priorityBuckets, writeCheckpoint: '1');
       pushSyncData('prio1', '1', 'row-0', 'PUT', {'col': 'hi'});
       expect(pushCheckpointComplete(), [
+        {
+          'CheckpointDelayedDueToLocalData': {},
+        },
         containsPair('LogLine', {
           'severity': 'INFO',
           'line': contains('Will retry at completed upload')
         }),
-        {
-          'CheckpointDelayedDueToLocalData': {},
-        },
       ]);
 
       // Second local write during sync

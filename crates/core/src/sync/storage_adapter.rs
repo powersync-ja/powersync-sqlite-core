@@ -270,22 +270,18 @@ WHERE bucket = ?1",
 
         let now = self.now()?;
 
-        let mut sync = match priority {
-            None => SyncOperation::new(state, self.db, None, now),
-            Some(priority) => SyncOperation::new(
-                state,
-                self.db,
-                Some(PartialSyncOperation {
-                    priority,
-                    involved_buckets: checkpoint.list_buckets(Some(priority)).collect(),
-                }),
-                now,
-            ),
-        };
+        let mut sync = SyncOperation::new(
+            state,
+            self.db,
+            priority.map(|priority| PartialSyncOperation {
+                priority,
+                involved_buckets: checkpoint.list_buckets(Some(priority)).collect(),
+            }),
+            now,
+        );
         sync.use_schema(schema);
-        let sync_result = sync.apply()?;
 
-        if sync_result == 1 {
+        Ok(if sync.apply()? {
             if priority.is_none() {
                 // Reset progress counters. We only do this for a complete sync, as we want a
                 // download progress to always cover a complete checkpoint instead of resetting for
@@ -305,10 +301,33 @@ WHERE bucket = ?1",
                 }
             }
 
-            Ok(SyncLocalResult::ChangesApplied { timestamp: now })
+            SyncLocalResult::ChangesApplied { timestamp: now }
         } else {
-            Ok(SyncLocalResult::PendingLocalChanges)
-        }
+            // There are pending local changes preventing a full sync. If all buckets in the tracked
+            // checkpoint are priority 0, we can make some progress by retrying as a partial sync.
+            // The sync service doesn't send a partial_checkpoint_complete message when all buckets
+            // have the same priority, this emulates that line.
+            if priority.is_none()
+                && !checkpoint.buckets.is_empty()
+                && checkpoint
+                    .buckets
+                    .iter()
+                    .all(|(_, bkt)| bkt.priority.may_publish_with_outstanding_uploads())
+            {
+                let retry_priority = BucketPriority::HIGHEST;
+                sync.partial = Some(PartialSyncOperation {
+                    priority: retry_priority,
+                    involved_buckets: checkpoint.list_buckets(Some(retry_priority)).collect(),
+                });
+                if sync.apply()? {
+                    return Ok(SyncLocalResult::PendingLocalChangesAppliedPartially {
+                        timestamp: now,
+                    });
+                }
+            }
+
+            SyncLocalResult::PendingLocalChanges
+        })
     }
 
     pub fn collect_subscription_requests(
@@ -671,6 +690,11 @@ pub enum SyncLocalResult {
     PendingLocalChanges,
     /// The checkpoint has been applied and changes have been published.
     ChangesApplied { timestamp: TimestampMicros },
+    /// A full checkpoint could not be applied due to pending local changes, but since all of its
+    /// buckets have priority 0, they have been applied as a partial checkpoint instead.
+    ///
+    /// Like [Self::PendingLocalChanges], the full checkpoint still needs to be applied later.
+    PendingLocalChangesAppliedPartially { timestamp: TimestampMicros },
 }
 
 /// Information about the amount of operations a bucket had at the last checkpoint and how many
