@@ -2281,6 +2281,182 @@ CREATE TRIGGER users_ref_delete
     });
   });
 
+  group('direct tables', () {
+    Object schema({
+      Map<String, Object?> additionalOptions = const {},
+      List<Object?> additionalColumns = const [],
+    }) {
+      return {
+        'tables': [
+          {
+            'name': 'users',
+            'columns': [
+              {'name': 'name', 'type': 'text'},
+              ...additionalColumns,
+            ],
+            'direct': true,
+            ...additionalOptions,
+          }
+        ]
+      };
+    }
+
+    test('smoke test', () {
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(schema())]);
+      invokeControl('start', json.encode({'schema': schema()}));
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      final users = db.select('SELECT * FROM users;');
+      expect(users, [
+        {
+          'id': 'my_user',
+          'name': 'First user',
+        }
+      ]);
+
+      // Delete
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'REMOVE',
+        null,
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('SELECT * FROM users'), isEmpty);
+    });
+
+    test('local only', () {
+      final localOnlySchema = schema(additionalOptions: {'local_only': true});
+
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(localOnlySchema)]);
+      invokeControl('start', json.encode({'schema': localOnlySchema}));
+
+      // Insert
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+
+      expect(db.select('SELECT * FROM ps_untyped'), hasLength(1));
+    });
+
+    test('re-applies data after adding new column', () {
+      final initialSchema = schema();
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(initialSchema)]);
+      invokeControl('start', json.encode({'schema': initialSchema}));
+
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user', 'email': 'powersync@example.com'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+      invokeControl('stop', null);
+
+      // Adding a new column should resync from ps_oplog on the next checkpoint.
+      final updatedSchema = schema(additionalColumns: [
+        {'name': 'email', 'type': 'text'},
+      ]);
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(updatedSchema)]);
+      invokeControl('start', json.encode({'schema': updatedSchema}));
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushCheckpointComplete();
+      expect(db.select('SELECT name, email FROM users'), [
+        {'name': 'First user', 'email': 'powersync@example.com'}
+      ]);
+    });
+  });
+
+  test('binds numbers correctly', () {
+    // Regression test for https://github.com/powersync-ja/powersync-sqlite-core/pull/221#pullrequestreview-5534872991.
+    final schema = {
+      'tables': [
+        {
+          'name': 'tbl',
+          'columns': [
+            {'name': 'value', 'type': 'real'}
+          ],
+          'direct': true,
+        }
+      ]
+    };
+    db.executeInTx('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+    invokeControl('start', json.encode({'schema': schema}));
+
+    // Insert
+    pushCheckpoint(buckets: [bucketDescription('a')]);
+
+    (String, String, String) expectExact(String formatted, String type) {
+      return (formatted, formatted, type);
+    }
+
+    final testValues = [
+      expectExact('10', 'integer'),
+      expectExact('9007199254740993', 'integer'),
+      expectExact('9223372036854775807', 'integer'), // max i64
+      expectExact('-9223372036854775808', 'integer'), // min i64
+      // Out of bound i64 formatted as float
+      ('9223372036854775808', '9.22337203685478e+18', 'real'),
+      expectExact('10.2', 'real')
+    ];
+    syncLine({
+      'data': {
+        'bucket': 'a',
+        'has_more': false,
+        'after': null,
+        'next_after': null,
+        'data': [
+          for (final (i, (number, _, _)) in testValues.indexed)
+            {
+              'op_id': '${i + 1}',
+              'op': 'PUT',
+              'object_type': 'tbl',
+              'object_id': '${i + 1}',
+              'checksum': 0,
+              'data': '{"value": $number}',
+            }
+        ],
+      },
+    });
+    pushCheckpointComplete(lastOpId: '${testValues.length}');
+
+    final results =
+        db.select('SELECT CAST(value AS TEXT), typeof(value) FROM tbl;');
+    for (final (i, (_, number, type)) in testValues.indexed) {
+      expect(results[i].values, [number, type]);
+    }
+    expect(results, hasLength(testValues.length));
+  });
+
   test('can close database while iteration is active', () {
     // The sync client caches prepared statements, we need to ensure those are
     // freed when we close the connection since SQLite would keep files open

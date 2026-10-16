@@ -1,11 +1,19 @@
+use core::fmt::Write;
+
 use alloc::rc::Rc;
 use alloc::string::ToString;
 use alloc::vec;
 use alloc::{collections::btree_set::BTreeSet, format, string::String, vec::Vec};
+use powersync_sqlite_nostd::Destructor;
 use serde::{Deserialize, de::Visitor};
 
 use crate::error::PowerSyncError;
-use crate::schema::ColumnFilter;
+use crate::schema::inspection::ExistingTable;
+use crate::schema::raw_table::generate_schema_table_trigger;
+use crate::schema::{ColumnFilter, SchemaTable};
+use crate::sync::PreparedPendingStatement;
+use crate::utils::database::{Database, Statement};
+use crate::utils::{CrudTriggerName, SqlBuffer, WriteType};
 
 #[derive(Deserialize)]
 pub struct Table {
@@ -17,6 +25,8 @@ pub struct Table {
     pub indexes: Vec<Index>,
     #[serde(flatten)]
     pub options: CommonTableOptions,
+    #[serde(default)]
+    pub direct: bool,
 }
 
 /// Options shared between regular and raw tables.
@@ -78,6 +88,157 @@ impl Table {
             format!("ps_data__{:}", self.name)
         }
     }
+
+    pub fn move_from_ps_untyped(&self, db: Database) -> Result<(), PowerSyncError> {
+        let direct = self.direct;
+
+        let mut delete_stmt = SqlBuffer::new();
+        delete_stmt.push_str("DELETE FROM ps_untyped WHERE type = ?");
+
+        if direct {
+            let _ = delete_stmt.write_str(" RETURNING id, data");
+            let source = db.prepare_v2(&delete_stmt.sql)?;
+            source.bind_text(1, &self.name, Destructor::STATIC)?;
+
+            self.direct_move_from_stmt(db, source)?;
+        } else {
+            let mut stmt = SqlBuffer::default();
+            stmt.push_str("INSERT INTO ");
+            self.write_name(&mut stmt);
+            let _ = stmt.write_str(" (id, data) SELECT id, data FROM ps_untyped WHERE type = ?");
+            db.exec_text(&stmt.sql, &self.name)?;
+            db.exec_text(&delete_stmt.sql, &self.name)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn move_from_json(
+        &self,
+        db: Database,
+        json: &JsonDataSource,
+    ) -> Result<(), PowerSyncError> {
+        let mut source = SqlBuffer::new();
+        // For direct tables, create a SELECT statement returning id and json data we then parse via
+        // direct_move_from_stmt. For json tables, we directly generate an INSERT INTO SELECT
+        // statement.
+        let direct = self.direct;
+
+        if !direct {
+            source.push_str("INSERT INTO ");
+            source.quote_internal_name(&self.name, self.local_only());
+            source.push_char(' ');
+        }
+
+        source.push_str("SELECT id, ");
+        if let Some(ref json_fragment) = json.fragment {
+            source.push_str(json_fragment);
+        } else {
+            source.push_str("data ");
+        }
+        source.push_str("FROM ");
+        let _ = write!(source.identifier(), "{}", json.table.internal_name);
+
+        let source = db.prepare_v2(&source.sql)?;
+
+        if direct {
+            self.direct_move_from_stmt(db, source)
+        } else {
+            source.exec()
+        }
+    }
+
+    /// For direct tables, copies data from a prepared statement returning id and data.
+    fn direct_move_from_stmt(&self, db: Database, source: Statement) -> Result<(), PowerSyncError> {
+        debug_assert!(self.direct);
+
+        // Copying into direct tables reqires extracting from JSON. This essentially replays a
+        // sync_local step for the table, using a custom source.
+        let stmt = Rc::new(SchemaTable::Json(self).infer_put_stmt(&self.name));
+        let stmt = PreparedPendingStatement::prepare(db, stmt)?;
+
+        while source.step()? {
+            let id = source.column_text(0)?;
+            let data = source.column_text(1)?;
+
+            let parsed: serde_json::Value =
+                serde_json::from_str(data).map_err(PowerSyncError::json_local_error)?;
+            let json_object = parsed.as_object().ok_or_else(|| {
+                PowerSyncError::argument_error("expected oplog data to be an object")
+            })?;
+            stmt.bind_for_put(id, data, Some(json_object), None)?;
+            stmt.exec(&self.name, id, Some(&data))?;
+        }
+
+        Ok(())
+    }
+
+    pub fn write_name(&self, buffer: &mut SqlBuffer) {
+        if self.direct {
+            // Direct tables don't have views, so use the name of the table directly.
+            let _ = buffer.identifier().write_str(&self.name);
+        } else {
+            buffer.quote_internal_name(&self.name, self.local_only());
+        }
+    }
+
+    /// Writes the `CREATE TABLE` statement for this managed table.
+    pub fn write_create_table_statement(&self, buffer: &mut SqlBuffer) {
+        buffer.push_str("CREATE TABLE ");
+        self.write_name(buffer);
+        buffer.push_str("(id TEXT PRIMARY KEY NOT NULL");
+
+        if self.direct {
+            // The ps-managed comment here is used by ExistingTable::list to identify this direct
+            // table (we can't give it a ps_data__ prefix because there's no view) and whether it is
+            // a local-only table.
+            buffer.push_str(" /* ps-managed ");
+            if self.local_only() {
+                buffer.push_str("local-only ");
+            }
+            buffer.push_str("*/");
+
+            for column in &self.columns {
+                buffer.push_char(',');
+                buffer.column_definition(&column.name, "ANY");
+            }
+        } else {
+            // Regular json tables just have a data column storing the json object.
+            buffer.push_str(", data TEXT");
+        }
+
+        buffer.push_char(')');
+        if self.direct {
+            buffer.push_str(" STRICT");
+        }
+
+        buffer.push_char(';');
+    }
+
+    pub fn generate_direct_trigger(
+        &self,
+        mut trigger_name: Option<String>,
+        write: WriteType,
+    ) -> Result<String, PowerSyncError> {
+        debug_assert!(self.direct);
+
+        generate_schema_table_trigger(
+            &self.name,
+            SchemaTable::Json(self),
+            None,
+            trigger_name
+                .get_or_insert_with(|| Self::crud_trigger_name(&self.name, write).to_string()),
+            write,
+        )
+    }
+
+    pub fn crud_trigger_name<'a>(name: &'a str, write: WriteType) -> CrudTriggerName<'a> {
+        CrudTriggerName {
+            write,
+            name_suffix: "",
+            view_name: name,
+        }
+    }
 }
 
 impl RawTable {
@@ -90,6 +251,11 @@ impl RawTable {
         };
         Ok(local_table_name)
     }
+}
+
+pub struct JsonDataSource<'a> {
+    pub table: &'a ExistingTable,
+    pub fragment: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -303,6 +469,7 @@ pub struct PendingStatement {
     pub named_parameters_index: Option<RestColumnIndex>,
 }
 
+#[derive(Default)]
 pub struct RestColumnIndex {
     /// All column names referenced by this statement.
     pub named_parameters: BTreeSet<String>,

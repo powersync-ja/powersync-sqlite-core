@@ -245,7 +245,7 @@ INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'sync_type', 
 END''',
           update: '''
 CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
-SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
+SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (ABORT, 'Cannot update id') END;
 INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))), 0);
 END''',
           delete: '''
@@ -265,11 +265,11 @@ CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT power
 INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', 'sync_type', 'id', NEW.id, 'data', json(powersync_diff('{}', json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified"))))));END''',
           update: '''
 CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
-SELECT RAISE(FAIL, 'Unexpected update on insert-only table');
+SELECT RAISE(ABORT, 'Unexpected update on insert-only table');
 END''',
           delete: '''
 CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
-SELECT RAISE(FAIL, 'Unexpected update on insert-only table');
+SELECT RAISE(ABORT, 'Unexpected update on insert-only table');
 END''',
         ),
         // Tracking old values
@@ -285,7 +285,7 @@ INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'sync_type', 
 END''',
           update: '''
 CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
-SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
+SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (ABORT, 'Cannot update id') END;
 INSERT INTO powersync_crud(op,id,type,data,old_values,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))), json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), 0);
 END''',
           delete: '''
@@ -308,7 +308,7 @@ END''',
           update: '''
 CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() AND
 (OLD."synced_a" IS NOT NEW."synced_a" OR OLD."synced_b" IS NOT NEW."synced_b") BEGIN
-SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
+SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (ABORT, 'Cannot update id') END;
 INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('synced_a', powersync_strip_subtype(OLD."synced_a"), 'synced_b', powersync_strip_subtype(OLD."synced_b")), json_object('synced_a', powersync_strip_subtype(NEW."synced_a"), 'synced_b', powersync_strip_subtype(NEW."synced_b")))), 0);
 END''',
           delete: '''
@@ -321,6 +321,411 @@ END''',
       for (final (i, testCase) in testCases.indexed) {
         test('#$i', () => testCase.testWith(db));
       }
+    });
+
+    group('direct tables', () {
+      Object schema({
+        Map<String, Object?> additionalOptions = const {},
+        List<Object?> additionalColumns = const [],
+      }) {
+        return {
+          'tables': [
+            {
+              'name': 'users',
+              'columns': [
+                {'name': 'name', 'type': 'text'},
+                ...additionalColumns,
+              ],
+              'direct': true,
+              ...additionalOptions,
+            }
+          ]
+        };
+      }
+
+      void replaceSchema(Object schema) {
+        db.executeInTx(
+            'SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+      }
+
+      test('create', () {
+        replaceSchema({'tables': []});
+        db.execute('INSERT INTO ps_untyped (type, id, data) VALUES (?, ?, ?)', [
+          'users',
+          'user-id',
+          json.encode({'name': 'Name', 'other': 3})
+        ]);
+        replaceSchema(schema());
+
+        expect(db.select('SELECT * FROM users'), [
+          {
+            'id': 'user-id',
+            'name': 'Name',
+          },
+        ]);
+
+        final createTable = db.select(
+          'SELECT sql FROM sqlite_schema WHERE type = ? AND tbl_name = ?',
+          ['table', 'users'],
+        )[0].columnAt(0);
+        expect(
+          createTable,
+          'CREATE TABLE "users"(id TEXT PRIMARY KEY NOT NULL /* ps-managed */,"name" ANY) STRICT',
+        );
+
+        final triggers = db
+            .select(
+              'SELECT sql FROM sqlite_schema WHERE type = ? AND tbl_name = ? ORDER BY name',
+              ['trigger', 'users'],
+            )
+            .map((r) => r['sql'])
+            .toList();
+
+        expect(triggers, [
+          r'''
+CREATE TRIGGER "ps_view_delete_users" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'users');
+END''',
+          r'''
+CREATE TRIGGER "ps_view_insert_users" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'users', json(powersync_diff('{}', json_object('name', powersync_strip_subtype(NEW."name")))));
+END''',
+          r'''
+CREATE TRIGGER "ps_view_update_users" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (ABORT, 'Cannot update id') END;
+INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'users', json(powersync_diff(json_object('name', powersync_strip_subtype(OLD."name")), json_object('name', powersync_strip_subtype(NEW."name")))), 0);
+END'''
+        ]);
+      });
+
+      test('forbids view name override', () {
+        expect(
+          () => replaceSchema(
+              schema(additionalOptions: {'view_name': 'custom_view_name'})),
+          throwsA(isA<SqliteException>().having((e) => e.message, 'message',
+              contains("Direct tables can't have custom view names"))),
+        );
+      });
+
+      test('local-only', () {
+        replaceSchema(schema(additionalOptions: {'local_only': true}));
+
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        expect(db.select('SELECT * FROM ps_crud'), isEmpty);
+      });
+
+      test('remove from schema', () {
+        replaceSchema(schema());
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        db.executeInTx('SELECT powersync_replace_schema(?)', [
+          json.encode({'tables': []})
+        ]);
+
+        expect(db.select('SELECT * FROM ps_untyped'), [
+          {'type': 'users', 'id': 'id', 'data': '{"name":"name"}'}
+        ]);
+
+        expect(
+            db.select(
+                'SELECT * FROM sqlite_schema WHERE type = ?', ['trigger']),
+            isEmpty);
+      });
+
+      test('cannot change id', () {
+        replaceSchema(schema());
+
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        expect(db.select('SELECT * FROM users'), hasLength(1));
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+
+        expect(() => db.execute('UPDATE users SET id = ?', ['changed_id']),
+            throwsA(isA<SqliteException>()));
+        expect(db.select('SELECT id FROM users'), [
+          {'id': 'id'}
+        ]);
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+      });
+
+      test('insert-only', () {
+        replaceSchema(schema(additionalOptions: {'insert_only': true}));
+
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        expect(db.select('SELECT * FROM users'), hasLength(1));
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+
+        expect(() => db.execute('DELETE FROM users'),
+            throwsA(isA<SqliteException>()));
+        expect(db.select('SELECT * FROM users'), hasLength(1));
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+      });
+
+      group('migrate', () {
+        test('unchanged', () {
+          final usedSchema = schema(additionalOptions: {
+            'indexes': [
+              {
+                'name': 'test',
+                'columns': [
+                  {'name': 'name', 'type': 'text', 'ascending': true},
+                ]
+              }
+            ]
+          });
+
+          replaceSchema(usedSchema);
+
+          final [versionBefore] = db.select('PRAGMA schema_version');
+          replaceSchema(usedSchema);
+          final [versionAfter] = db.select('PRAGMA schema_version');
+
+          expect(versionAfter, versionBefore);
+        });
+
+        // Test migrating from json to direct tables (and vice versa).
+        for (final startDirect in [false, true]) {
+          final fromDesc = startDirect ? 'direct' : 'json';
+          final toDesc = startDirect ? 'json' : 'direct';
+          final endDirect = !startDirect;
+
+          group('from $fromDesc to $toDesc', () {
+            test('local-only', () {
+              replaceSchema(schema(additionalOptions: {
+                'local_only': true,
+                'direct': startDirect
+              }));
+              db.execute(
+                  'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+              replaceSchema(schema(additionalOptions: {
+                'local_only': true,
+                'direct': endDirect
+              }));
+              expect(db.select('SELECT * FROM users'), hasLength(1));
+            });
+
+            test('local-only to synced', () {
+              replaceSchema(schema(additionalOptions: {
+                'local_only': true,
+                'direct': startDirect
+              }));
+              db.execute(
+                  'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+              replaceSchema(schema(additionalOptions: {'direct': endDirect}));
+
+              // Migrating from local-only to synced tables deletes data
+              expect(db.select('SELECT * FROM users'), isEmpty);
+              expect(db.select('SELECT * FROM ps_untyped'), isEmpty);
+            });
+
+            test('synced', () {
+              replaceSchema(schema(additionalOptions: {'direct': startDirect}));
+              db.execute(
+                  'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+              replaceSchema(schema(additionalOptions: {'direct': endDirect}));
+              expect(db.select('SELECT * FROM users'), hasLength(1));
+              expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+              expect(db.select('SELECT * FROM ps_untyped'), isEmpty);
+            });
+
+            test('synced to local-only', () {
+              replaceSchema(schema(additionalOptions: {'direct': startDirect}));
+              db.execute(
+                  'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+              replaceSchema(schema(additionalOptions: {
+                'local_only': true,
+                'direct': endDirect
+              }));
+              // Data should be deleted when changing to a local-only table,
+              // previous crud entry is still there.
+              expect(db.select('SELECT * FROM users'), isEmpty);
+              expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+              expect(db.select('SELECT * FROM ps_untyped'), hasLength(1));
+            });
+          });
+        }
+
+        test('from synced to local', () {
+          replaceSchema(schema());
+          db.execute('INSERT INTO users (id, name) VALUES (?, ?)',
+              ['synced-id', 'name']);
+
+          replaceSchema(schema(additionalOptions: {'local_only': true}));
+
+          expect(db.select('SELECT * FROM ps_untyped'), hasLength(1));
+          expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+          expect(db.select('SELECT * FROM users'), isEmpty);
+
+          // A second write on the now local-only table should not be recorded.
+          db.execute(
+              'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['name']);
+          expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+        });
+
+        test('from local to synced', () {
+          replaceSchema(schema(additionalOptions: {'local_only': true}));
+          db.execute(
+              'INSERT INTO users (id, name) VALUES (uuid(), ?)', ['local']);
+
+          // Migrate to synced table. Because the previous local write would
+          // never get uploaded, this clears local data.
+          replaceSchema(schema());
+          expect(db.select('SELECT * FROM users'), isEmpty);
+        });
+
+        test('adding columns', () {
+          replaceSchema(schema());
+          db.execute(
+              'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'new-1', 'type': 'text'},
+            {'name': 'new-2', 'type': 'integer'},
+          ]));
+
+          expect(db.select('SELECT * FROM users'), [
+            {
+              'id': 'id',
+              'name': 'name',
+              'new-1': null,
+              'new-2': null,
+            }
+          ]);
+        });
+
+        group('index', () {
+          final indexes = {
+            'indexes': [
+              {
+                'name': 'test',
+                'columns': [
+                  {'name': 'name', 'type': 'text', 'ascending': true},
+                ]
+              }
+            ]
+          };
+
+          test('add', () {
+            replaceSchema(schema());
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+            replaceSchema(schema(additionalOptions: indexes));
+            expect(
+              db.select(
+                  'SELECT sql FROM sqlite_schema WHERE type = ? AND tbl_name = ? AND sql IS NOT NULL',
+                  ['index', 'users']),
+              [
+                {
+                  'sql':
+                      'CREATE INDEX "ps_data__users__test"/* ps-managed */ ON "users"("name")'
+                }
+              ],
+            );
+          });
+
+          test('migrate', () {
+            final indexes = {
+              'indexes': [
+                {
+                  'name': 'test',
+                  'columns': [
+                    {'name': 'additional', 'type': 'text', 'ascending': true},
+                  ]
+                }
+              ]
+            };
+
+            replaceSchema(
+                schema(additionalOptions: indexes, additionalColumns: [
+              {'name': 'additional', 'type': 'text'},
+            ]));
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+            replaceSchema(schema());
+          });
+
+          test('remove', () {
+            replaceSchema(schema(additionalOptions: indexes));
+            db.execute(
+                'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+
+            replaceSchema(schema());
+            expect(
+                db.select(
+                    'SELECT sql FROM sqlite_schema WHERE type = ? AND tbl_name = ? AND sql IS NOT NULL',
+                    ['index', 'users']),
+                isEmpty);
+          });
+        });
+
+        test('change column type', () {
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'additional', 'type': 'text'}
+          ]));
+          db.execute(
+              'INSERT INTO users (id, name, additional) VALUES (?, ?, ?)',
+              ['id', 'name', 'text']);
+
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'additional', 'type': 'integer'}
+          ]));
+
+          expect(db.select('SELECT * FROM users'), [
+            {
+              'id': 'id',
+              'name': 'name',
+              'additional': 'text',
+            }
+          ]);
+        });
+
+        test('remove column', () {
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'additional', 'type': 'text'}
+          ]));
+          db.execute(
+              'INSERT INTO users (id, name, additional) VALUES (?, ?, ?)',
+              ['id', 'name', 'text']);
+          replaceSchema(schema(additionalColumns: []));
+
+          expect(db.select('SELECT * FROM users'), [
+            {
+              'id': 'id',
+              'name': 'name',
+            }
+          ]);
+        });
+
+        test('multiple column migrations at once', () {
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'removed', 'type': 'text'},
+            {'name': 'changed-type', 'type': 'text'},
+          ]));
+          db.execute(
+            'INSERT INTO users (id, name, removed, "changed-type") VALUES (?, ?, ?, ?)',
+            ['id', 'name', 'removed', 'changed-type'],
+          );
+
+          replaceSchema(schema(additionalColumns: [
+            {'name': 'added', 'type': 'text'},
+            {'name': 'changed-type', 'type': 'integer'},
+          ]));
+
+          expect(db.select('SELECT * FROM users'), [
+            {
+              'id': 'id',
+              'name': 'name',
+              'changed-type': 'changed-type',
+              'added': null,
+            }
+          ]);
+        });
+      });
     });
   });
 }
