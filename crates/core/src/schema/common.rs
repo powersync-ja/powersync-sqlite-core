@@ -85,15 +85,20 @@ impl<'a> SchemaTable<'a> {
             let _ = write!(&mut buffer, "?{}", i + data_start_index);
             params.push(PendingStatementValue::Column(column.to_string()));
         }
-        buffer.push_str(") ON CONFLICT (id) DO UPDATE SET ");
-        let mut do_update = buffer.comma_separated();
+        buffer.push_str(") ON CONFLICT (id) DO ");
+        if self.columns().is_empty() {
+            buffer.push_str("NOTHING");
+        } else {
+            buffer.push_str("UPDATE SET ");
+            let mut do_update = buffer.comma_separated();
 
-        // Generate an "x" = ? for all synced columns to update them without affecting local-only
-        // columns.
-        for (i, column) in self.column_names().enumerate() {
-            let entry = do_update.element();
-            let _ = entry.identifier().write_str(column);
-            let _ = write!(entry, " = ?{}", i + data_start_index);
+            // Generate an "x" = ? for all synced columns to update them without affecting
+            // local-only columns.
+            for (i, column) in self.column_names().enumerate() {
+                let entry = do_update.element();
+                let _ = entry.identifier().write_str(column);
+                let _ = write!(entry, " = ?{}", i + data_start_index);
+            }
         }
 
         PendingStatement {
@@ -212,6 +217,35 @@ mod test {
             put.params[2],
             PendingStatementValue::Column(ref name) if name == "bar"
         );
+
+        let delete = schema_table.infer_delete_stmt("tbl");
+        assert_eq!(delete.sql, r#"DELETE FROM "tbl" WHERE id = ?"#);
+        assert_eq!(delete.params.len(), 1);
+        assert_matches!(delete.params[0], PendingStatementValue::Id);
+    }
+
+    #[test]
+    fn no_columns_statements() {
+        let raw_table = RawTable {
+            name: "users".to_string(),
+            schema: RawTableSchema::default(),
+            put: None,
+            delete: None,
+            clear: None,
+        };
+        let structure = InferredTableStructure { columns: vec![] };
+        let schema_table = SchemaTable::Raw {
+            definition: &raw_table,
+            schema: &structure,
+        };
+
+        let put = schema_table.infer_put_stmt("tbl");
+        assert_eq!(
+            put.sql,
+            r#"INSERT INTO "tbl" (id) VALUES (?1) ON CONFLICT (id) DO NOTHING"#
+        );
+        assert_eq!(put.params.len(), 1);
+        assert_matches!(put.params[0], PendingStatementValue::Id);
 
         let delete = schema_table.infer_delete_stmt("tbl");
         assert_eq!(delete.sql, r#"DELETE FROM "tbl" WHERE id = ?"#);

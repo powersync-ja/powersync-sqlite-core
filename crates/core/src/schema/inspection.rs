@@ -202,7 +202,7 @@ impl ExistingTable {
                 results.push(ExistingTable {
                     internal_name: internal_name.to_owned(),
                     name: internal_name.to_owned(),
-                    local_only: sql.contains("local-only"),
+                    local_only: sql.contains("local-only */"),
                     direct: Some(InferredTableStructure::read_from_database(
                         internal_name,
                         db,
@@ -240,16 +240,14 @@ impl ExistingTable {
         buffer.push_str("INSERT INTO ps_untyped(type, id, data) SELECT ?, id, ");
 
         if let Some(ref schema) = self.direct {
-            buffer.push_str(&table_columns_to_json_object(
-                &self.internal_name,
-                &schema.columns,
-            )?);
+            buffer.push_str(&table_columns_to_json_object("old", &schema.columns)?);
         } else {
             buffer.push_str("data");
         }
 
         buffer.push_str(" FROM ");
         let _ = buffer.identifier().write_str(&self.internal_name);
+        buffer.push_str("AS old");
 
         db.exec_text(&buffer.sql, &self.name)
     }
