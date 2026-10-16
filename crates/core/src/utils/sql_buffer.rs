@@ -82,9 +82,9 @@ impl SqlBuffer {
         self.push_str(" FOR EACH ROW ");
     }
 
-    /// Writes a `BEFORE $write_type ON $on FOR EACH ROW` segment.
-    pub fn trigger_before(&mut self, write_type: WriteType, on: &str) {
-        let _ = write!(self, "BEFORE {write_type} ON ");
+    /// Writes an `AFTER $write_type ON $on FOR EACH ROW` segment.
+    pub fn trigger_after(&mut self, write_type: WriteType, on: &str) {
+        let _ = write!(self, "AFTER {write_type} ON ");
         let _ = self.identifier().write_str(on);
         self.push_str(" FOR EACH ROW ");
     }
@@ -94,9 +94,12 @@ impl SqlBuffer {
     }
 
     /// Writes a select statement throwing in triggers if `OLD.id != NEW.id`.
-    pub fn check_id_not_changed(&mut self) {
-        self.push_str(
-            "SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;\n",
+    ///
+    /// `action` is the conflict resolution passed to `RAISE` (e.g. `FAIL` or `ABORT`).
+    pub fn check_id_not_changed(&mut self, action: &str) {
+        let _ = write!(
+            self,
+            "SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE ({action}, 'Cannot update id') END;\n"
         );
     }
 

@@ -186,7 +186,7 @@ pub fn generate_schema_table_trigger(
 ) -> Result<String> {
     let mut buffer = SqlBuffer::new();
     buffer.create_trigger(trigger_name);
-    buffer.trigger_before(write, local_table_name);
+    buffer.trigger_after(write, local_table_name);
     // Skip the trigger for writes during sync_local, these aren't crud writes.
     buffer.push_str("WHEN NOT powersync_in_sync_operation()");
 
@@ -215,7 +215,9 @@ pub fn generate_schema_table_trigger(
     if flags.insert_only() {
         if write != WriteType::Insert {
             // Prevent illegal writes to a table marked as insert-only by raising errors here.
-            buffer.push_str("SELECT RAISE(FAIL, 'Unexpected update on insert-only table');\n");
+            // ABORT (unlike FAIL) reverts the entire statement, including the write that
+            // triggered this.
+            buffer.push_str("SELECT RAISE(ABORT, 'Unexpected update on insert-only table');\n");
             has_stmt = true;
         } else if !flags.local_only() {
             // Insert-only tables use manual CRUD writes so they don't block incoming data.
@@ -225,8 +227,9 @@ pub fn generate_schema_table_trigger(
         }
     } else {
         if write == WriteType::Update {
-            // Updates must not change the id.
-            buffer.check_id_not_changed();
+            // Updates must not change the id. Using ABORT reverts the update that already
+            // happened when this AFTER trigger runs.
+            buffer.check_id_not_changed("ABORT");
             has_stmt = true;
         }
 

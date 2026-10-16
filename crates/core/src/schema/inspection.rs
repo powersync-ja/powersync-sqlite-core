@@ -247,7 +247,7 @@ impl ExistingTable {
 
         buffer.push_str(" FROM ");
         let _ = buffer.identifier().write_str(&self.internal_name);
-        buffer.push_str("AS old");
+        buffer.push_str(" AS old");
 
         db.exec_text(&buffer.sql, &self.name)
     }

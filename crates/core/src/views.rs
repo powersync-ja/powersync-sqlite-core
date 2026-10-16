@@ -203,7 +203,7 @@ pub fn powersync_trigger_update_sql(table_info: &Table) -> Result<String> {
         sql.push_str(" WHEN NEW._deleted IS NOT TRUE ");
     }
     sql.push_str("BEGIN\n");
-    sql.check_id_not_changed();
+    sql.check_id_not_changed("FAIL");
 
     let json_fragment_new = table_columns_to_json_object("NEW", &table_info.columns)?;
     let json_fragment_old = table_columns_to_json_object("OLD", &table_info.columns)?;
