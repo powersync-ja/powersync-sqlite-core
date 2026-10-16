@@ -240,16 +240,16 @@ void main() {
           createTable: createUsers,
           tableOptions: {'table_name': 'users'},
           insert: '''
-CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_insert" BEFORE INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'sync_type', json(powersync_diff('{}', json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))));
 END''',
           update: '''
-CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_update" BEFORE UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
 INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))), 0);
 END''',
           delete: '''
-CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_delete" BEFORE DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'sync_type');
 END''',
         ),
@@ -261,14 +261,14 @@ END''',
             'insert_only': true,
           },
           insert: '''
-CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_insert" BEFORE INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud_(data) VALUES(json_object('op', 'PUT', 'type', 'sync_type', 'id', NEW.id, 'data', json(powersync_diff('{}', json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified"))))));END''',
           update: '''
-CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_update" BEFORE UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 SELECT RAISE(FAIL, 'Unexpected update on insert-only table');
 END''',
           delete: '''
-CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_delete" BEFORE DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 SELECT RAISE(FAIL, 'Unexpected update on insert-only table');
 END''',
         ),
@@ -280,16 +280,16 @@ END''',
             'include_old': true,
           },
           insert: '''
-CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_insert" BEFORE INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'sync_type', json(powersync_diff('{}', json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))));
 END''',
           update: '''
-CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_update" BEFORE UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
 INSERT INTO powersync_crud(op,id,type,data,old_values,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), json_object('email', powersync_strip_subtype(NEW."email"), 'email_verified', powersync_strip_subtype(NEW."email_verified")))), json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")), 0);
 END''',
           delete: '''
-CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_delete" BEFORE DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type,old_values) VALUES ('DELETE', OLD.id, 'sync_type', json_object('email', powersync_strip_subtype(OLD."email"), 'email_verified', powersync_strip_subtype(OLD."email_verified")));
 END''',
         ),
@@ -302,17 +302,17 @@ END''',
             'synced_columns': ['synced_a', 'synced_b'],
           },
           insert: '''
-CREATE TRIGGER "test_insert" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_insert" BEFORE INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'sync_type', json(powersync_diff('{}', json_object('synced_a', powersync_strip_subtype(NEW."synced_a"), 'synced_b', powersync_strip_subtype(NEW."synced_b")))));
 END''',
           update: '''
-CREATE TRIGGER "test_update" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() AND
+CREATE TRIGGER "test_update" BEFORE UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() AND
 (OLD."synced_a" IS NOT NEW."synced_a" OR OLD."synced_b" IS NOT NEW."synced_b") BEGIN
 SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
 INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'sync_type', json(powersync_diff(json_object('synced_a', powersync_strip_subtype(OLD."synced_a"), 'synced_b', powersync_strip_subtype(OLD."synced_b")), json_object('synced_a', powersync_strip_subtype(NEW."synced_a"), 'synced_b', powersync_strip_subtype(NEW."synced_b")))), 0);
 END''',
           delete: '''
-CREATE TRIGGER "test_delete" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "test_delete" BEFORE DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'sync_type');
 END''',
         ),
@@ -383,15 +383,15 @@ END''',
 
         expect(triggers, [
           r'''
-CREATE TRIGGER "ps_view_delete_users" AFTER DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "ps_view_delete_users" BEFORE DELETE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type) VALUES ('DELETE', OLD.id, 'users');
 END''',
           r'''
-CREATE TRIGGER "ps_view_insert_users" AFTER INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "ps_view_insert_users" BEFORE INSERT ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 INSERT INTO powersync_crud(op,id,type,data) VALUES ('PUT', NEW.id, 'users', json(powersync_diff('{}', json_object('name', powersync_strip_subtype(NEW."name")))));
 END''',
           r'''
-CREATE TRIGGER "ps_view_update_users" AFTER UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
+CREATE TRIGGER "ps_view_update_users" BEFORE UPDATE ON "users" FOR EACH ROW WHEN NOT powersync_in_sync_operation() BEGIN
 SELECT CASE WHEN (OLD.id != NEW.id) THEN RAISE (FAIL, 'Cannot update id') END;
 INSERT INTO powersync_crud(op,id,type,data,options) VALUES ('PATCH', NEW.id, 'users', json(powersync_diff(json_object('name', powersync_strip_subtype(OLD."name")), json_object('name', powersync_strip_subtype(NEW."name")))), 0);
 END'''
@@ -431,6 +431,36 @@ END'''
             db.select(
                 'SELECT * FROM sqlite_schema WHERE type = ?', ['trigger']),
             isEmpty);
+      });
+
+      test('cannot change id', () {
+        replaceSchema(schema(additionalOptions: {'insert_only': true}));
+
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        expect(db.select('SELECT * FROM users'), hasLength(1));
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+
+        expect(() => db.execute('UPDATE users SET id = ?', ['changed_id']),
+            throwsA(isA<SqliteException>()));
+        expect(db.select('SELECT id FROM users'), [
+          {'id': 'id'}
+        ]);
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+      });
+
+      test('insert-only', () {
+        replaceSchema(schema(additionalOptions: {'insert_only': true}));
+
+        db.execute(
+            'INSERT INTO users (id, name) VALUES (?, ?)', ['id', 'name']);
+        expect(db.select('SELECT * FROM users'), hasLength(1));
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
+
+        expect(() => db.execute('DELETE FROM users'),
+            throwsA(isA<SqliteException>()));
+        expect(db.select('SELECT * FROM users'), hasLength(1));
+        expect(db.select('SELECT * FROM ps_crud'), hasLength(1));
       });
 
       group('migrate', () {
