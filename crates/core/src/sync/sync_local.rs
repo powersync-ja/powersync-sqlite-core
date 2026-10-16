@@ -576,12 +576,15 @@ impl PreparedPendingStatement {
                             self.stmt.bind_int(i, if *value { 1 } else { 0 })
                         }
                         Some(Value::Number(value)) => {
-                            if let Some(value) = value.as_f64() {
+                            if let Some(value) = value.as_i64() {
+                                self.stmt.bind_int64(i, value)
+                            } else if let Some(value) = value.as_f64() {
                                 self.stmt.bind_double(i, value)
-                            } else if let Some(value) = value.as_u64() {
-                                self.stmt.bind_int64(i, value as i64)
                             } else {
-                                self.stmt.bind_int64(i, value.as_i64().unwrap())
+                                // Value not representable by i64 or f64, bind null instead. This
+                                // can't happen unless the arbitrary_precision feature is enabled
+                                // (we don't do that in our builds).
+                                self.stmt.bind_null(i)
                             }
                         }
                         Some(Value::String(source)) => {

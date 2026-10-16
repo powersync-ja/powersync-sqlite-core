@@ -82,9 +82,9 @@ impl SqlBuffer {
         self.push_str(" FOR EACH ROW ");
     }
 
-    /// Writes an `AFTER $write_type ON $on FOR EACH ROW` segment.
-    pub fn trigger_after(&mut self, write_type: WriteType, on: &str) {
-        let _ = write!(self, "AFTER {write_type} ON ");
+    /// Writes a `BEFORE $write_type ON $on FOR EACH ROW` segment.
+    pub fn trigger_before(&mut self, write_type: WriteType, on: &str) {
+        let _ = write!(self, "BEFORE {write_type} ON ");
         let _ = self.identifier().write_str(on);
         self.push_str(" FOR EACH ROW ");
     }

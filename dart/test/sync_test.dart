@@ -2360,6 +2360,67 @@ CREATE TRIGGER users_ref_delete
     });
   });
 
+  test('binds numbers correctly', () {
+    // Regression test for https://github.com/powersync-ja/powersync-sqlite-core/pull/221#pullrequestreview-5534872991.
+    final schema = {
+      'tables': [
+        {
+          'name': 'tbl',
+          'columns': [
+            {'name': 'value', 'type': 'real'}
+          ],
+          'direct': true,
+        }
+      ]
+    };
+    db.executeInTx('SELECT powersync_replace_schema(?)', [json.encode(schema)]);
+    invokeControl('start', json.encode({'schema': schema}));
+
+    // Insert
+    pushCheckpoint(buckets: [bucketDescription('a')]);
+
+    (String, String, String) expectExact(String formatted, String type) {
+      return (formatted, formatted, type);
+    }
+
+    final testValues = [
+      expectExact('10', 'integer'),
+      expectExact('9007199254740993', 'integer'),
+      expectExact('9223372036854775807', 'integer'), // max i64
+      expectExact('-9223372036854775808', 'integer'), // min i64
+      // Out of bound i64 formatted as float
+      ('9223372036854775808', '9.22337203685478e+18', 'real'),
+      expectExact('10.2', 'real')
+    ];
+    syncLine({
+      'data': {
+        'bucket': 'a',
+        'has_more': false,
+        'after': null,
+        'next_after': null,
+        'data': [
+          for (final (i, (number, _, _)) in testValues.indexed)
+            {
+              'op_id': '${i + 1}',
+              'op': 'PUT',
+              'object_type': 'tbl',
+              'object_id': '${i + 1}',
+              'checksum': 0,
+              'data': '{"value": $number}',
+            }
+        ],
+      },
+    });
+    pushCheckpointComplete(lastOpId: '${testValues.length}');
+
+    final results =
+        db.select('SELECT CAST(value AS TEXT), typeof(value) FROM tbl;');
+    for (final (i, (_, number, type)) in testValues.indexed) {
+      expect(results[i].values, [number, type]);
+    }
+    expect(results, hasLength(testValues.length));
+  });
+
   test('can close database while iteration is active', () {
     // The sync client caches prepared statements, we need to ensure those are
     // freed when we close the connection since SQLite would keep files open
