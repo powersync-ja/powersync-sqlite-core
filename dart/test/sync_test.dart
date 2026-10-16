@@ -2282,13 +2282,17 @@ CREATE TRIGGER users_ref_delete
   });
 
   group('direct tables', () {
-    Object schema({Map<String, Object?> additionalOptions = const {}}) {
+    Object schema({
+      Map<String, Object?> additionalOptions = const {},
+      List<Object?> additionalColumns = const [],
+    }) {
       return {
         'tables': [
           {
             'name': 'users',
             'columns': [
-              {'name': 'name', 'type': 'text'}
+              {'name': 'name', 'type': 'text'},
+              ...additionalColumns,
             ],
             'direct': true,
             ...additionalOptions,
@@ -2357,6 +2361,38 @@ CREATE TRIGGER users_ref_delete
       pushCheckpointComplete();
 
       expect(db.select('SELECT * FROM ps_untyped'), hasLength(1));
+    });
+
+    test('re-applies data after adding new column', () {
+      final initialSchema = schema();
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(initialSchema)]);
+      invokeControl('start', json.encode({'schema': initialSchema}));
+
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushSyncData(
+        'a',
+        '1',
+        'my_user',
+        'PUT',
+        {'name': 'First user', 'email': 'powersync@example.com'},
+        objectType: 'users',
+      );
+      pushCheckpointComplete();
+      invokeControl('stop', null);
+
+      // Adding a new column should resync from ps_oplog on the next checkpoint.
+      final updatedSchema = schema(additionalColumns: [
+        {'name': 'email', 'type': 'text'},
+      ]);
+      db.executeInTx(
+          'SELECT powersync_replace_schema(?)', [json.encode(updatedSchema)]);
+      invokeControl('start', json.encode({'schema': updatedSchema}));
+      pushCheckpoint(buckets: [bucketDescription('a')]);
+      pushCheckpointComplete();
+      expect(db.select('SELECT name, email FROM users'), [
+        {'name': 'First user', 'email': 'powersync@example.com'}
+      ]);
     });
   });
 

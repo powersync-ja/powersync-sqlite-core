@@ -123,7 +123,7 @@ DELETE FROM {table};",
     Ok(String::from(""))
 }
 
-fn trigger_resync(db: Database, state: &DatabaseState) -> Result<()> {
+pub fn trigger_resync(db: Database, state: &DatabaseState) -> Result<()> {
     {
         let client = state.sync_client.borrow();
         if let Some(client) = client.as_ref()

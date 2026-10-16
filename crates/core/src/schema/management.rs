@@ -24,6 +24,7 @@ use crate::schema::{Column, Table};
 use crate::state::DatabaseState;
 use crate::utils::database::Database;
 use crate::utils::{SqlBuffer, verify_in_transaction};
+use crate::view_admin::trigger_resync;
 use crate::views::{
     powersync_trigger_delete_sql, powersync_trigger_insert_sql, powersync_trigger_update_sql,
     powersync_view_sql, table_columns_to_json_object,
@@ -31,11 +32,17 @@ use crate::views::{
 
 use super::Schema;
 
+#[derive(Default)]
+struct SchemaMigration {
+    trigger_resync: bool,
+}
+
 fn update_tables(
     db: Database,
     schema: &Schema,
     existing_tables: &[ExistingTable],
     existing_views: &mut BTreeMap<&str, &ExistingView>,
+    migration: &mut SchemaMigration,
 ) -> Result<()> {
     struct ExistingTableState<'a> {
         table: &'a ExistingTable,
@@ -167,7 +174,7 @@ fn update_tables(
                     } else {
                         // Otherwise compatible tables might still have different columns, which
                         // requires a migration for direct tables.
-                        direct_table_migration(db, previous, table, existing_views)?;
+                        direct_table_migration(db, previous, table, existing_views, migration)?;
                         continue;
                     }
                 }
@@ -212,6 +219,7 @@ fn direct_table_migration(
     old: &InferredTableStructure,
     new: &Table,
     existing_views: &mut BTreeMap<&str, &ExistingView>,
+    migration: &mut SchemaMigration,
 ) -> Result<()> {
     debug_assert!(new.direct);
 
@@ -304,6 +312,9 @@ fn direct_table_migration(
         stmt.alter_table(&new.name);
         stmt.add_column(&new_column.column.name, "ANY");
         db.exec_safe_str(&stmt.sql)?;
+
+        // Trigger a resync to fill in values for new columns from ps_oplog.
+        migration.trigger_resync = true;
     }
 
     for dropped_column in deleted_columns {
@@ -474,6 +485,7 @@ fn powersync_replace_schema_impl(
     args: &[*mut sqlite::value],
 ) -> Result<String> {
     let db = Database::from(ctx.db_handle());
+    let mut migration = SchemaMigration::default();
     verify_in_transaction(db)?;
 
     let schema = args[0].text();
@@ -493,9 +505,18 @@ fn powersync_replace_schema_impl(
         map
     };
 
-    update_tables(db, &parsed_schema, &existing_tables, &mut existing_views)?;
+    update_tables(
+        db,
+        &parsed_schema,
+        &existing_tables,
+        &mut existing_views,
+        &mut migration,
+    )?;
     update_indexes(db, &parsed_schema)?;
     update_views(db, &parsed_schema, &mut existing_views)?;
+    if migration.trigger_resync {
+        trigger_resync(db, state)?;
+    }
 
     state.set_schema(parsed_schema);
     Ok(String::from(""))
