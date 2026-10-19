@@ -78,6 +78,16 @@ jobs:
     permissions:
       contents: write # Needed to upload the XCFramework to the draft release.
     steps:
+      - name: Generate publishing token
+        id: spm_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.SPM_APP_CLIENT_ID }}
+          private-key: ${{ secrets.SPM_APP_PRIVATE_KEY }}
+          owner: powersync-ja
+          repositories: powersync-sqlite-core-swift
+          permission-contents: write
+
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -121,7 +131,7 @@ jobs:
       - name: Dispatch release to SPM package
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
         with:
-          token: ${{ secrets.SWIFT_PUBLISH_TOKEN }}
+          token: ${{ steps.spm_token.outputs.token }}
           repository: powersync-ja/powersync-sqlite-core-swift
           event-type: spm-release
           client-payload: |-
