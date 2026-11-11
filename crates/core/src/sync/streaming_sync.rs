@@ -238,7 +238,9 @@ impl StreamingSyncIteration {
                 SyncStateMachineTransition::DataLineSaved { line: data_line }
             }
             SyncLine::KeepAlive(token) => {
-                self.adapter.increase_ttl(&self.options.active_streams)?;
+                let now = self.adapter.now()?;
+                self.adapter
+                    .increase_ttl(&self.options.active_streams, now)?;
 
                 if token.is_expired() {
                     // Token expired already - stop the connection immediately.
@@ -258,7 +260,7 @@ impl StreamingSyncIteration {
                     // iteration if it has changed.
                     let updated_request = self
                         .adapter
-                        .collect_subscription_requests(self.options.include_defaults)?;
+                        .collect_subscription_requests(self.options.include_defaults, now)?;
                     if updated_request.request
                         != self.target.explicit_stream_subscriptions().request
                     {
@@ -393,10 +395,11 @@ impl StreamingSyncIteration {
             }
             SyncEvent::UploadFinished => self.try_applying_write_after_completed_upload(event)?,
             SyncEvent::DidUpdateSubscriptions { ref active_streams } => {
-                self.adapter.increase_ttl(&active_streams)?;
+                let now = self.adapter.now()?;
+                self.adapter.increase_ttl(&active_streams, now)?;
                 let new_request = self
                     .adapter
-                    .collect_subscription_requests(self.options.include_defaults)?;
+                    .collect_subscription_requests(self.options.include_defaults, now)?;
 
                 if new_request.request != self.target.explicit_stream_subscriptions().request {
                     // This changes stream requests, start another iteration.
@@ -819,9 +822,10 @@ impl StreamingSyncIteration {
 
         let requests = adapter.collect_bucket_requests()?;
         let local_bucket_names: Vec<String> = requests.iter().map(|s| s.name.clone()).collect();
-        adapter.increase_ttl(&options.active_streams)?;
+        let now = adapter.now()?;
+        adapter.increase_ttl(&options.active_streams, now)?;
         let stream_subscriptions =
-            adapter.collect_subscription_requests(options.include_defaults)?;
+            adapter.collect_subscription_requests(options.include_defaults, now)?;
 
         let client_id = client_id(db)?;
         let checkpoint_request = if options.checkpoint_mode == CheckpointMode::Requests {
