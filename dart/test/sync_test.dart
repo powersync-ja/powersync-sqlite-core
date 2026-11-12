@@ -954,6 +954,63 @@ void _syncTests<T>({
     expect(db.select('SELECT * FROM items'), hasLength(1));
   });
 
+  group('triggers on internal tables', () {
+    void syncPut(int opId, String objectType, Object data) {
+      pushCheckpoint(
+          lastOpId: opId, buckets: [bucketDescription('a', count: opId)]);
+      pushSyncData('a', '$opId', 'row-0', 'PUT', data, objectType: objectType);
+      pushCheckpointComplete(lastOpId: '$opId');
+    }
+
+    test('synced update of existing row runs update triggers', () {
+      db.execute('CREATE TABLE trigger_log (op TEXT, id TEXT, data TEXT)');
+      for (final (op, row) in [
+        ('INSERT', 'NEW'),
+        ('UPDATE', 'NEW'),
+        ('DELETE', 'OLD'),
+      ]) {
+        db.execute('''
+CREATE TRIGGER log_$op AFTER $op ON ps_data__items BEGIN
+  INSERT INTO trigger_log VALUES ('$op', $row.id, $row.data);
+END;''');
+      }
+
+      invokeControl('start', null);
+      syncPut(1, 'items', {'col': 'a'});
+      final [first] = db.select('SELECT rowid FROM ps_data__items');
+
+      syncPut(2, 'items', {'col': 'b'});
+      final [second] = db.select('SELECT rowid FROM ps_data__items');
+
+      expect(fetchRows(), [
+        {'id': 'row-0', 'col': 'b'}
+      ]);
+      // REPLACE INTO would delete the old row without running DELETE
+      // triggers and insert the new row with a new rowid.
+      expect(second['rowid'], first['rowid']);
+      expect(db.select('SELECT * FROM trigger_log'), [
+        {'op': 'INSERT', 'id': 'row-0', 'data': '{"col":"a"}'},
+        {'op': 'UPDATE', 'id': 'row-0', 'data': '{"col":"b"}'},
+      ]);
+    });
+
+    test('synced update of untyped row keeps rowid', () {
+      invokeControl('start', null);
+      syncPut(1, 'not_in_schema', {'col': 'a'});
+      final [first] = db.select('SELECT rowid FROM ps_untyped');
+
+      syncPut(2, 'not_in_schema', {'col': 'b'});
+      expect(db.select('SELECT rowid, type, id, data FROM ps_untyped'), [
+        {
+          'rowid': first['rowid'],
+          'type': 'not_in_schema',
+          'id': 'row-0',
+          'data': '{"col":"b"}',
+        }
+      ]);
+    });
+  });
+
   group('trigger resync', () {
     test('forbidden during sync', () {
       invokeControl('start', null);
