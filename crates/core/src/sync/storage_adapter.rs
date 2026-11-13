@@ -333,8 +333,9 @@ WHERE bucket = ?1",
     pub fn collect_subscription_requests(
         &self,
         include_defaults: bool,
+        now: TimestampMicros,
     ) -> Result<RequestedStreamSubscriptions> {
-        self.delete_outdated_subscriptions()?;
+        self.delete_outdated_subscriptions(now)?;
 
         let mut subscriptions: Vec<RequestedStreamSubscription> = Vec::new();
         let mut index_to_local_id = Vec::<i64>::new();
@@ -394,8 +395,7 @@ WHERE bucket = ?1",
         })
     }
 
-    fn delete_outdated_subscriptions(&self) -> Result<()> {
-        let now = self.now()?;
+    fn delete_outdated_subscriptions(&self, now: TimestampMicros) -> Result<()> {
         let stmt = self.db.prepare_v2("DELETE FROM ps_stream_subscriptions WHERE (expires_at < ?) OR (ttl IS NULL AND NOT active)")?;
         stmt.bind_int64(1, now.0)?;
         stmt.exec()?;
@@ -403,8 +403,10 @@ WHERE bucket = ?1",
     }
 
     /// Increases the TTL for explicit subscriptions that are currently marked as active.
-    pub fn increase_ttl(&self, streams: &[StreamKey]) -> Result<()> {
-        let now = self.now()?;
+    ///
+    /// `now` must be the timestamp later passed to [Self::collect_subscription_requests], otherwise
+    /// a subscription with a zero TTL would expire between the two clock reads.
+    pub fn increase_ttl(&self, streams: &[StreamKey], now: TimestampMicros) -> Result<()> {
         let stmt = self.db.prepare_v2(
             "UPDATE ps_stream_subscriptions SET expires_at = ? + ttl * 1000000 WHERE stream_name = ? AND local_params = ? AND ttl IS NOT NULL",
         )?;
@@ -704,4 +706,70 @@ pub struct PersistedBucketProgress<'a> {
     pub bucket_id: i64,
     pub count_at_last: i64,
     pub count_since_last: i64,
+}
+
+// These tests need a linked SQLite library: `cargo test -p powersync_core --features static`.
+#[cfg(all(test, feature = "static"))]
+mod test {
+    use alloc::{string::ToString, vec};
+    use core::ptr::null_mut;
+
+    use powersync_sqlite_nostd::{self as sqlite};
+
+    use crate::{
+        sqlite3_powersync_init, sync::subscriptions::StreamKey, utils::database::Database,
+    };
+
+    use super::StorageAdapter;
+
+    #[link(name = "sqlite3")]
+    unsafe extern "C" {}
+
+    fn open_database() -> Database {
+        let mut db = null_mut();
+        assert_eq!(sqlite::open(c":memory:".as_ptr(), &mut db), 0);
+        let mut err_msg = null_mut();
+        assert_eq!(sqlite3_powersync_init(db, &mut err_msg, null_mut()), 0);
+
+        let db = Database::from(db);
+        db.exec_safe(c"BEGIN; SELECT powersync_init(); COMMIT;")
+            .unwrap();
+        db
+    }
+
+    /// Replaces the clock of the adapter with one advancing by a millisecond on every read.
+    fn use_ticking_clock(adapter: &mut StorageAdapter) {
+        let db = adapter.db;
+        db.exec_safe(c"CREATE TEMP TABLE test_clock AS SELECT 1740823200000000 AS now")
+            .unwrap();
+        adapter.time_stmt = db
+            .prepare_v2("UPDATE test_clock SET now = now + 1000 RETURNING now")
+            .unwrap();
+    }
+
+    #[test]
+    fn active_subscription_with_zero_ttl_is_not_deleted() {
+        let db = open_database();
+        let mut adapter = StorageAdapter::new(db).unwrap();
+        use_ticking_clock(&mut adapter);
+
+        db.exec_safe(
+            c"INSERT INTO ps_stream_subscriptions (stream_name, local_params, ttl, expires_at) VALUES ('a', 'null', 0, 0)",
+        )
+        .unwrap();
+        let active_streams = vec![StreamKey {
+            name: "a".to_string(),
+            params: None,
+        }];
+
+        let now = adapter.now().unwrap();
+        adapter.increase_ttl(&active_streams, now).unwrap();
+        let requested = adapter.collect_subscription_requests(true, now).unwrap();
+        assert_eq!(requested.request.subscriptions.len(), 1);
+
+        // Once the subscription is no longer active, it should expire.
+        let now = adapter.now().unwrap();
+        let requested = adapter.collect_subscription_requests(true, now).unwrap();
+        assert_eq!(requested.request.subscriptions.len(), 0);
+    }
 }

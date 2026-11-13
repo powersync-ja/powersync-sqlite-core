@@ -428,6 +428,70 @@ void main() {
       expect(row, containsPair('expires_at', timestamp(plusMinutes: 30)));
     });
 
+    syncTest('active subscriptions with a zero ttl are not deleted', (_) {
+      // Advance the clock on every read, so that two reads in the same
+      // operation never observe the same time.
+      var elapsed = Duration.zero;
+      final start = clock.now();
+      final tickingClock = Clock(() {
+        elapsed += const Duration(milliseconds: 1);
+        return start.add(elapsed);
+      });
+
+      withClock(tickingClock, () {
+        const activeStreams = [
+          {'name': 'my_stream'}
+        ];
+        List<Object?> storedSubscriptions() =>
+            db.select('SELECT stream_name FROM ps_stream_subscriptions');
+
+        control(
+          'subscriptions',
+          json.encode({
+            'subscribe': {
+              'stream': {'name': 'my_stream'},
+              'ttl': 0,
+            }
+          }),
+        );
+
+        final startInstructions =
+            control('start', json.encode({'active_streams': activeStreams}));
+        expect(
+          startInstructions,
+          contains(
+            containsPair(
+              'EstablishSyncStream',
+              containsPair(
+                'request',
+                containsPair(
+                  'streams',
+                  containsPair('subscriptions', [
+                    {
+                      'stream': 'my_stream',
+                      'parameters': null,
+                      'override_priority': null,
+                    }
+                  ]),
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(storedSubscriptions(), hasLength(1));
+
+        control('line_text', json.encode({'token_expires_in': 3600}));
+        expect(storedSubscriptions(), hasLength(1));
+
+        control('update_subscriptions', json.encode(activeStreams));
+        expect(storedSubscriptions(), hasLength(1));
+
+        // Once the subscription is no longer active, it should expire.
+        control('update_subscriptions', json.encode([]));
+        expect(storedSubscriptions(), isEmpty);
+      });
+    });
+
     syncTest('can be made implicit', (_) {
       control(
           'subscriptions',
