@@ -166,7 +166,7 @@ WHERE target.key = '{TARGET_CHECKPOINT_REQUEST_ID_KEY}'
                         None => {
                             // Prepare statement on first use
                             untyped_insert_statement.insert(self.db.prepare_v2(
-                                "REPLACE INTO ps_untyped(type, id, data) VALUES(?, ?, ?)",
+                                "INSERT INTO ps_untyped(type, id, data) VALUES(?, ?, ?) ON CONFLICT (type, id) DO UPDATE SET data = excluded.data",
                             )?)
                         }
                     };
@@ -420,10 +420,15 @@ impl<'a> ParsedSchemaTable<'a> {
                     None => cache.infer_put_statement(db, schema_version, raw_table)?,
                 },
                 TableDefinition::JsonView { ref local_table } => {
+                    // Use an upsert instead of REPLACE INTO: REPLACE deletes the existing row
+                    // without running DELETE triggers and gives the new row a different rowid,
+                    // which breaks triggers on the internal table (such as FTS indexes).
                     let mut statement = SqlBuffer::new();
-                    statement.push_str("REPLACE INTO ");
+                    statement.push_str("INSERT INTO ");
                     let _ = statement.identifier().write_str(local_table);
-                    statement.push_str("(id, data) VALUES (?, ?)");
+                    statement.push_str(
+                        "(id, data) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET data = excluded.data",
+                    );
 
                     Rc::new(PendingStatement {
                         sql: statement.sql,
